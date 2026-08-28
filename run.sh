@@ -4,7 +4,7 @@ set -euo pipefail
 
 MODEL="${MODEL:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
-IMAGE="${IMAGE:-glm53-sm121-v8}"
+IMAGE="${IMAGE:-glm53-sm121-v11}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -14,11 +14,13 @@ IFACE="${IFACE:-enp1s0f1np1}"
 HCA="${HCA:-rocep1s0f1}"
 TP="${TP:-2}"
 NNODES="${NNODES:-2}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-262144}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-327680}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 UTIL="${UTIL:-0.85}"
-# GB10 UMA: 4.14 GiB is the only KV pin that kept MTP-4 alive on TP=2.
-# Raising it or dropping the pin OOMs (NV_ERR_NO_MEMORY).
+# GB10 UMA: 4.14 GiB is the safe KV pin on TP=2. Dropping the pin OOMs
+# (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
+# ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
+# concurrent load.
 KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 # DeepGEMM arch-12 fp8 paged-MQA only accepts 64-entry pool pages. 2304 tiles that.
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
@@ -30,12 +32,15 @@ DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
 DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
-# the glm53-sm121-v9 image) or mtp (GLM's native MTP head).
-SPEC="${SPEC:-mtp}"
+# the glm53-sm121-v11 image) or mtp (GLM's native MTP head).
+SPEC="${SPEC:-dflash2}"
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
-      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":7}'
+      # 5 of the block's 7 draft slots: positions 5-6 accept <15% of the
+      # time, and every extra slot costs a KDA state copy per sequence
+      # (num_spec+1 copies), which is what starves c=4 admission at 7.
+      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":5}'
       ;;
     mtp)
       SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":4}'
@@ -104,7 +109,7 @@ maybe_drop_caches() {
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Image $IMAGE not found. Build the local glm53-sm121-v8 tag first. Do not use stock vllm/vllm-openai on sm_121." >&2
+    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v11 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
     exit 1
   fi
 }
