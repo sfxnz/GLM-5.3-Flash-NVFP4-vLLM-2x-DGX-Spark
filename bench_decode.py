@@ -12,17 +12,26 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-PROMPT = (
-    "Write a short paragraph about why sparse attention helps long-context "
-    "language models. Keep it around eighty words. No bullet points."
-)
+# Two decode regimes: prose is the low-acceptance regime (the drafter guesses
+# free text), structured is the high-acceptance regime (counting is nearly
+# deterministic, so most draft positions verify).
+PHASES = {
+    "prose": (
+        "Write a short paragraph about why sparse attention helps long-context "
+        "language models. Keep it around eighty words. No bullet points."
+    ),
+    "structured": (
+        "Count from 1 to 200. Output only the numbers, separated by commas, "
+        "with no other text."
+    ),
+}
 
 
-def stream_one(url: str, model: str, max_tokens: int) -> dict:
+def stream_one(url: str, model: str, prompt: str, max_tokens: int) -> dict:
     body = json.dumps(
         {
             "model": model,
-            "messages": [{"role": "user", "content": PROMPT}],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0,
             "stream": True,
@@ -79,11 +88,13 @@ def stream_one(url: str, model: str, max_tokens: int) -> dict:
     }
 
 
-def wave(url: str, model: str, max_tokens: int, concurrency: int) -> list[dict]:
+def wave(
+    url: str, model: str, prompt: str, max_tokens: int, concurrency: int
+) -> tuple[list[dict], float, float]:
     t0 = time.perf_counter()
     out = []
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futs = [pool.submit(stream_one, url, model, max_tokens) for _ in range(concurrency)]
+        futs = [pool.submit(stream_one, url, model, prompt, max_tokens) for _ in range(concurrency)]
         for fut in as_completed(futs):
             try:
                 out.append(fut.result())
@@ -156,43 +167,46 @@ def main() -> int:
     p.add_argument("--max-tokens", type=int, default=200)
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--concurrency", type=int, nargs="+", default=[1, 2, 4])
+    p.add_argument("--phase", choices=[*PHASES, "both"], default="both")
     args = p.parse_args()
 
+    phases = list(PHASES) if args.phase == "both" else [args.phase]
     print(
         f"url={args.url} model={args.model} max_tokens={args.max_tokens} "
-        f"runs={args.runs} concurrency={args.concurrency}",
+        f"runs={args.runs} concurrency={args.concurrency} phases={phases}",
         flush=True,
     )
     metrics_url = args.url.split("/v1/", 1)[0] + "/metrics"
     summary = []
-    for c in args.concurrency:
-        per_stream = []
-        aggs = []
-        walls = []
-        counters_before = spec_counters(metrics_url)
-        for i in range(args.runs):
-            rows, wall, agg = wave(args.url, args.model, args.max_tokens, c)
-            per_stream.extend(rows)
-            aggs.append(agg)
-            walls.append(wall)
-            dec = ",".join(f"{r['decode_tok_s']:.2f}" for r in rows)
-            ttft = ",".join(f"{r['ttft_s']:.3f}" for r in rows)
-            print(
-                f"c={c} run={i+1} wall={wall:.2f}s agg={agg:.2f} tok/s "
-                f"per_stream=[{dec}] ttft=[{ttft}]",
-                flush=True,
+    for phase in phases:
+        prompt = PHASES[phase]
+        for c in args.concurrency:
+            per_stream = []
+            aggs = []
+            counters_before = spec_counters(metrics_url)
+            for i in range(args.runs):
+                rows, wall, agg = wave(args.url, args.model, prompt, args.max_tokens, c)
+                per_stream.extend(rows)
+                aggs.append(agg)
+                dec = ",".join(f"{r['decode_tok_s']:.2f}" for r in rows)
+                ttft = ",".join(f"{r['ttft_s']:.3f}" for r in rows)
+                print(
+                    f"phase={phase} c={c} run={i+1} wall={wall:.2f}s agg={agg:.2f} tok/s "
+                    f"per_stream=[{dec}] ttft=[{ttft}]",
+                    flush=True,
+                )
+            summary.append(
+                {
+                    "phase": phase,
+                    "concurrency": c,
+                    "median_decode_tok_s": median_key(per_stream, "decode_tok_s"),
+                    "median_ttft_s": median_key(per_stream, "ttft_s"),
+                    "median_agg_tok_s": statistics.median(aggs),
+                    "median_completion_tokens": median_key(per_stream, "completion_tokens"),
+                    "n": len(per_stream),
+                    **acceptance(counters_before, spec_counters(metrics_url)),
+                }
             )
-        summary.append(
-            {
-                "concurrency": c,
-                "median_decode_tok_s": median_key(per_stream, "decode_tok_s"),
-                "median_ttft_s": median_key(per_stream, "ttft_s"),
-                "median_agg_tok_s": statistics.median(aggs),
-                "median_completion_tokens": median_key(per_stream, "completion_tokens"),
-                "n": len(per_stream),
-                **acceptance(counters_before, spec_counters(metrics_url)),
-            }
-        )
     print("SUMMARY", json.dumps(summary, indent=2))
     return 0
 
