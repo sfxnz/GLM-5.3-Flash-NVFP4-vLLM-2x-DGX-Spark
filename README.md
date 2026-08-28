@@ -36,9 +36,24 @@ On both nodes, from this repo:
 
 ```bash
 docker build -f docker/Dockerfile.sm121-v8 -t glm53-sm121-v8 docker
+docker build -f docker/Dockerfile.sm121-v9 -t glm53-sm121-v9 docker
 ```
 
-The Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
+The v8 Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
+
+The v9 Dockerfile layers the DFlash2 backport (vLLM PR [#52816](https://github.com/vllm-project/vllm/pull/52816), missing from the image's vLLM snapshot) on top of v8. Only needed for `SPEC=dflash2`.
+
+## DFlash2 drafter
+
+[incoai/GLM-5.3-Flash-DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) is a 1B block-diffusion draft model that predicts a whole block per pass. Upstream reports it beating GLM's native MTP on acceptance length across every task they measured. Decoding is lossless.
+
+```bash
+IMAGE=glm53-sm121-v9 SPEC=dflash2 ./run.sh
+```
+
+`run.sh` downloads the draft weights (~2.2 GiB, snapshot pinned) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":7}` to both ranks. `bench_decode.py` reports the measured acceptance length per concurrency block.
+
+DFlash2 numbers on this cluster are not yet published here; the table above is MTP-4. The draft model's license is CC BY-NC-ND 4.0 (research and evaluation; commercial licensing via inco.ai). The base model and this recipe are unaffected when you stay on MTP.
 
 ## Quick start
 
@@ -93,7 +108,7 @@ Stop both ranks from the head:
 | `--kv-cache-memory` | `4445787956` (4.14 GiB) |
 | `--moe-backend` | `marlin` |
 | `--block-size` | 2304 |
-| Speculative | MTP-4 |
+| Speculative | MTP-4 (`SPEC=dflash2` for DFlash2-7) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 
