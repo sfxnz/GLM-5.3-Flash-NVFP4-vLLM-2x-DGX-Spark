@@ -1,0 +1,10 @@
+FROM glm53-sm121-v10
+
+# The GLM-5-Next bespoke KV grouping rejects the DFlash draft's sliding-window
+# layers, falling back to a generic path that cannot unify the indexer page.
+# patch_v11 adds a dedicated draft KV group to the bespoke layout.
+COPY patch_v11_dflash_kv_groups.py /tmp/patch_v11_dflash_kv_groups.py
+RUN python3 /tmp/patch_v11_dflash_kv_groups.py \
+    && python3 -m compileall -q \
+        /usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py \
+    && rm /tmp/patch_v11_dflash_kv_groups.py
