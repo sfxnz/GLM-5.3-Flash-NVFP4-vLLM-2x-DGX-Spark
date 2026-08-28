@@ -100,6 +100,50 @@ def median_key(rows: list[dict], key: str) -> float:
     return statistics.median(r[key] for r in rows)
 
 
+SPEC_COUNTERS = ("num_drafts", "num_draft_tokens", "num_accepted_tokens")
+
+
+def spec_counters(metrics_url: str) -> dict[str, float] | None:
+    """Sum vLLM's spec-decode counters across label sets. None when absent."""
+    try:
+        with urllib.request.urlopen(metrics_url, timeout=10) as resp:
+            text = resp.read().decode("utf-8", "replace")
+    except (OSError, urllib.error.URLError):
+        return None
+    out = dict.fromkeys(SPEC_COUNTERS, 0.0)
+    seen = False
+    for line in text.splitlines():
+        if line.startswith("#") or not line.startswith("vllm:spec_decode_"):
+            continue
+        name = line.split("{", 1)[0].split(" ", 1)[0]
+        for counter in SPEC_COUNTERS:
+            # prometheus_client >= 0.4 exposes Counters with a _total suffix;
+            # accept the bare name too. The two forms never coexist.
+            if name in (
+                f"vllm:spec_decode_{counter}_total",
+                f"vllm:spec_decode_{counter}",
+            ):
+                out[counter] += float(line.rsplit(" ", 1)[1])
+                seen = True
+    return out if seen else None
+
+
+def acceptance(before: dict[str, float] | None, after: dict[str, float] | None) -> dict:
+    if before is None or after is None:
+        return {}
+    drafts = after["num_drafts"] - before["num_drafts"]
+    draft_tokens = after["num_draft_tokens"] - before["num_draft_tokens"]
+    accepted = after["num_accepted_tokens"] - before["num_accepted_tokens"]
+    if drafts <= 0:
+        return {}
+    return {
+        # Emitted tokens per verification step: accepted draft tokens plus the
+        # verifier's own token, the "acceptance length" from spec-decode papers.
+        "acceptance_len": 1.0 + accepted / drafts,
+        "draft_acceptance_rate": (accepted / draft_tokens) if draft_tokens > 0 else 0.0,
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
@@ -114,11 +158,13 @@ def main() -> int:
         f"runs={args.runs} concurrency={args.concurrency}",
         flush=True,
     )
+    metrics_url = args.url.split("/v1/", 1)[0] + "/metrics"
     summary = []
     for c in args.concurrency:
         per_stream = []
         aggs = []
         walls = []
+        counters_before = spec_counters(metrics_url)
         for i in range(args.runs):
             rows, wall, agg = wave(args.url, args.model, args.max_tokens, c)
             per_stream.extend(rows)
@@ -139,6 +185,7 @@ def main() -> int:
                 "median_agg_tok_s": statistics.median(aggs),
                 "median_completion_tokens": median_key(per_stream, "completion_tokens"),
                 "n": len(per_stream),
+                **acceptance(counters_before, spec_counters(metrics_url)),
             }
         )
     print("SUMMARY", json.dumps(summary, indent=2))
