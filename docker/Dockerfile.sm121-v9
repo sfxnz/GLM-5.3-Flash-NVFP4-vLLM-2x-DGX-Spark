@@ -1,0 +1,18 @@
+FROM glm53-sm121-v8
+
+# DFlash2 backport: vLLM PR #52816 (merged upstream as b389ac2946, missing from
+# this image's vLLM snapshot). dflash2_backport.diff is the PR's vllm/ changes
+# regenerated with exact context against this tree, so --fuzz=0 refuses drift.
+COPY dflash2_backport.diff /tmp/dflash2_backport.diff
+RUN cd /usr/local/lib/python3.12/dist-packages \
+    && patch -p1 --fuzz=0 --no-backup-if-mismatch < /tmp/dflash2_backport.diff \
+    && python3 -m compileall -q \
+        vllm/config/vllm.py \
+        vllm/model_executor/layers/logits_processor.py \
+        vllm/model_executor/models/qwen3_dflash.py \
+        vllm/model_executor/models/qwen3_dflash2.py \
+        vllm/model_executor/models/registry.py \
+        vllm/v1/worker/gpu/sample/gumbel.py \
+        vllm/v1/worker/gpu/spec_decode/ \
+    && grep -q '"DFlash2DraftModel"' vllm/model_executor/models/registry.py \
+    && rm /tmp/dflash2_backport.diff

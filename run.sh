@@ -26,6 +26,26 @@ HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
 SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
 SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
+DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
+DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+# SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
+# the glm53-sm121-v9 image) or mtp (GLM's native MTP head).
+SPEC="${SPEC:-mtp}"
+if [[ -z "${SPEC_CONFIG:-}" ]]; then
+  case "$SPEC" in
+    dflash2)
+      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":7}'
+      ;;
+    mtp)
+      SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":4}'
+      ;;
+    *)
+      echo "Unknown SPEC=$SPEC (want dflash2 or mtp)" >&2
+      exit 1
+      ;;
+  esac
+fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 
@@ -91,16 +111,31 @@ ensure_weights() {
   if [[ "$SKIP_DOWNLOAD" == "1" ]]; then
     return
   fi
+  local HF=""
+  HF="$(hf_bin || true)"
   if [[ -d "$SNAPSHOT" ]]; then
     log "Using pinned snapshot $SNAPSHOT"
-    return
-  fi
-  if HF=$(hf_bin); then
+  elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
     log "Downloading $MODEL (resumes under $HF_CACHE)"
     "$HF" download "$MODEL"
   else
     log "No hf CLI on PATH — vLLM will pull weights on first load"
+  fi
+  if [[ "$SPEC_CONFIG" != *'"dflash"'* ]]; then
+    return
+  fi
+  if [[ -d "$DRAFT_SNAPSHOT" ]]; then
+    log "Using pinned draft snapshot $DRAFT_SNAPSHOT"
+  elif [[ -n "$HF" ]]; then
+    export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+    log "Downloading $DRAFT_MODEL (resumes under $HF_CACHE)"
+    "$HF" download "$DRAFT_MODEL"
+  else
+    # The dflash config points at the pinned snapshot path inside the
+    # container, so vLLM cannot pull it on demand.
+    echo "Draft snapshot $DRAFT_SNAPSHOT missing and no hf CLI on PATH." >&2
+    exit 1
   fi
 }
 
@@ -193,7 +228,7 @@ start_local() {
     --enforce-eager \
     --block-size "$BLOCK_SIZE" \
     --moe-backend marlin \
-    --speculative-config '{"method":"mtp","num_speculative_tokens":4}' \
+    --speculative-config "$SPEC_CONFIG" \
     --tool-call-parser glm47 \
     --enable-auto-tool-choice \
     --reasoning-parser glm45 \
@@ -235,7 +270,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC_CONFIG='$SPEC_CONFIG' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
