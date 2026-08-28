@@ -8,17 +8,22 @@ Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the 
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
-Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median. `max-num-seqs=4`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-5.
+Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median. `max-num-seqs=4`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-5, CUDA graphs. Prose is the low-acceptance regime (free text); structured (count 1→200, same protocol as the EXL3 recipe) is the high-acceptance regime.
 
-| Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 | vs MTP-4 |
-|---|---:|---:|---:|---:|
-| 1 | 26.8 | 26.8 | 0.32 s | +8% |
-| 2 | 21.6 | 41.3 | 0.35 s | +4% |
-| 4 | 17.0 | 67.6 | 0.65 s | +4% |
+| Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 | Eager same-day |
+|---|---|---:|---:|---:|---:|
+| prose | 1 | 28.2 | 28.2 | 0.24 s | 27.6 |
+| prose | 2 | 21.1 | 42.4 | 0.35 s | 20.0 |
+| prose | 4 | 17.1 | 66.9 | 0.63 s | 17.1 |
+| structured | 1 | 51.4 | 51.3 | 0.32 s | 49.6 |
+| structured | 2 | 41.5 | 81.8 | 0.35 s | 41.8 |
+| structured | 4 | 35.7 | 142.7 | 0.39 s | 35.0 |
 
-MTP-4 on the same day measured 24.7 / 20.9 / 16.6 per stream (aggregate 24.7 / 39.6 / 65.1) at 262144 context. DFlash2-5 wins every concurrency and carries 25% more context.
+CUDA graphs (previously avoided on sm_121 with `--enforce-eager`) resolved to FULL_AND_PIECEWISE with 4 uniform-decode graphs at the 6/12/18/24-token verify shapes, captured in 27 s at zero measurable memory cost, and held stable across two full benches: +2–5% at c=1/2, flat at c=4, acceptance unchanged. Greedy output stays lossless: a counting probe verified 100+ exact sequential tokens per stream at c=4 through graph replay, and the only text divergence vs eager was a near-tie token (0.125 nat margin) that flips run-to-run in either mode.
 
-KV pool at boot: 400,497 tokens (1.22× at 327680). Acceptance length 2.9–3.0 of 6 slots on thinking-off chat prompts, 3.7+ on thinking-on math. A 318,123-token prompt (97% of the window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats this and prints acceptance per concurrency block.
+MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose the same day the DFlash2-5 default landed. DFlash2-5 wins every concurrency and carries 25% more context.
+
+KV pool at boot: 400,497 tokens (1.22× at 327680), identical eager or graphs. Acceptance length on 6 slots: 2.9–3.0 prose (draft accept ~0.40), 5.4–5.5 structured (~0.89), 3.7+ on thinking-on math. A 318,123-token prompt (97% of the window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases and prints acceptance per concurrency block.
 
 ## Requirements
 
@@ -120,6 +125,7 @@ Stop both ranks from the head:
 | `--kv-cache-memory` | `4445787956` (4.14 GiB) |
 | `--moe-backend` | `marlin` |
 | `--block-size` | 2304 |
+| CUDA graphs | on, capture ladder 1/2/4 + 6/12/18/24 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-5 (`SPEC=mtp` for MTP-4) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
@@ -143,7 +149,8 @@ Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCC
 ## Repeat the decode bench
 
 ```bash
-python3 bench_decode.py
+python3 bench_decode.py                    # both phases, c=1,2,4, 3 runs
+python3 bench_decode.py --phase structured # one phase only
 ```
 
 ## Logs

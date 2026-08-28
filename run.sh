@@ -51,6 +51,16 @@ if [[ -z "${SPEC_CONFIG:-}" ]]; then
       ;;
   esac
 fi
+# CUDA graphs (default). Measured vs eager on this cluster: prose 28.2/21.1/17.1
+# vs 27.6/20.0/17.1 per stream at c=1/2/4, structured 51.4/41.5/35.7 vs
+# 49.6/41.8/35.0. Zero capture memory cost, same 400,497-token KV pool.
+# ENFORCE_EAGER=1 is the rollback. The runner rounds capture sizes up to
+# multiples of num_speculative_tokens+1, so for DFlash2-5 the FULL-graph ladder
+# lands on 6/12/18/24, the verify shapes for 1-4 sequences at max-num-seqs 4.
+ENFORCE_EAGER="${ENFORCE_EAGER:-0}"
+if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
+  COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,6,12,18,24]}'
+fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
@@ -205,7 +215,14 @@ start_local() {
     rank_args+=(--headless)
   fi
 
-  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY"
+  local eager_args=()
+  if [[ "$ENFORCE_EAGER" == "1" ]]; then
+    eager_args+=(--enforce-eager)
+  else
+    eager_args+=(--compilation-config "$COMPILATION_CONFIG")
+  fi
+
+  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER"
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart no \
@@ -232,7 +249,7 @@ start_local() {
     --kv-cache-memory "$KV_CACHE_MEMORY" \
     --gpu-memory-utilization "$UTIL" \
     --max-num-seqs "$MAX_NUM_SEQS" \
-    --enforce-eager \
+    "${eager_args[@]}" \
     --block-size "$BLOCK_SIZE" \
     --moe-backend marlin \
     --speculative-config "$SPEC_CONFIG" \
@@ -278,7 +295,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC_CONFIG='$SPEC_CONFIG' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC_CONFIG='$SPEC_CONFIG' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
