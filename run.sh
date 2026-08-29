@@ -4,7 +4,7 @@ set -euo pipefail
 
 MODEL="${MODEL:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
-IMAGE="${IMAGE:-glm53-sm121-v8}"
+IMAGE="${IMAGE:-glm53-sm121-v11}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -14,11 +14,13 @@ IFACE="${IFACE:-enp1s0f1np1}"
 HCA="${HCA:-rocep1s0f1}"
 TP="${TP:-2}"
 NNODES="${NNODES:-2}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-262144}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-327680}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
 UTIL="${UTIL:-0.85}"
-# GB10 UMA: 4.14 GiB is the only KV pin that kept MTP-4 alive on TP=2.
-# Raising it or dropping the pin OOMs (NV_ERR_NO_MEMORY).
+# GB10 UMA: 4.14 GiB is the safe KV pin on TP=2. Dropping the pin OOMs
+# (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
+# ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
+# concurrent load.
 KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 # DeepGEMM arch-12 fp8 paged-MQA only accepts 64-entry pool pages. 2304 tiles that.
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
@@ -26,8 +28,43 @@ HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
 SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
 SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
+DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
+DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+# SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
+# the glm53-sm121-v11 image) or mtp (GLM's native MTP head).
+SPEC="${SPEC:-dflash2}"
+if [[ -z "${SPEC_CONFIG:-}" ]]; then
+  case "$SPEC" in
+    dflash2)
+      # 5 of the block's 7 draft slots: positions 5-6 accept <15% of the
+      # time, and every extra slot costs a KDA state copy per sequence
+      # (num_spec+1 copies), which is what starves c=4 admission at 7.
+      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":5}'
+      ;;
+    mtp)
+      SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":4}'
+      ;;
+    *)
+      echo "Unknown SPEC=$SPEC (want dflash2 or mtp)" >&2
+      exit 1
+      ;;
+  esac
+fi
+# CUDA graphs (default). Measured vs eager on this cluster: prose 28.2/21.1/17.1
+# vs 27.6/20.0/17.1 per stream at c=1/2/4, structured 51.4/41.5/35.7 vs
+# 49.6/41.8/35.0. Zero capture memory cost, same 400,497-token KV pool.
+# ENFORCE_EAGER=1 is the rollback. The runner rounds capture sizes up to
+# multiples of num_speculative_tokens+1, so for DFlash2-5 the FULL-graph ladder
+# lands on 6/12/18/24, the verify shapes for 1-4 sequences at max-num-seqs 4.
+ENFORCE_EAGER="${ENFORCE_EAGER:-0}"
+if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
+  COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,6,12,18,24]}'
+fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
+# Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -82,7 +119,7 @@ maybe_drop_caches() {
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Image $IMAGE not found. Build the local glm53-sm121-v8 tag first. Do not use stock vllm/vllm-openai on sm_121." >&2
+    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v11 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
     exit 1
   fi
 }
@@ -91,16 +128,31 @@ ensure_weights() {
   if [[ "$SKIP_DOWNLOAD" == "1" ]]; then
     return
   fi
+  local HF=""
+  HF="$(hf_bin || true)"
   if [[ -d "$SNAPSHOT" ]]; then
     log "Using pinned snapshot $SNAPSHOT"
-    return
-  fi
-  if HF=$(hf_bin); then
+  elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
     log "Downloading $MODEL (resumes under $HF_CACHE)"
     "$HF" download "$MODEL"
   else
     log "No hf CLI on PATH — vLLM will pull weights on first load"
+  fi
+  if [[ "$SPEC_CONFIG" != *'"dflash"'* ]]; then
+    return
+  fi
+  if [[ -d "$DRAFT_SNAPSHOT" ]]; then
+    log "Using pinned draft snapshot $DRAFT_SNAPSHOT"
+  elif [[ -n "$HF" ]]; then
+    export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+    log "Downloading $DRAFT_MODEL (resumes under $HF_CACHE)"
+    "$HF" download "$DRAFT_MODEL"
+  else
+    # The dflash config points at the pinned snapshot path inside the
+    # container, so vLLM cannot pull it on demand.
+    echo "Draft snapshot $DRAFT_SNAPSHOT missing and no hf CLI on PATH." >&2
+    exit 1
   fi
 }
 
@@ -163,7 +215,14 @@ start_local() {
     rank_args+=(--headless)
   fi
 
-  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY"
+  local eager_args=()
+  if [[ "$ENFORCE_EAGER" == "1" ]]; then
+    eager_args+=(--enforce-eager)
+  else
+    eager_args+=(--compilation-config "$COMPILATION_CONFIG")
+  fi
+
+  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER"
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart no \
@@ -190,16 +249,17 @@ start_local() {
     --kv-cache-memory "$KV_CACHE_MEMORY" \
     --gpu-memory-utilization "$UTIL" \
     --max-num-seqs "$MAX_NUM_SEQS" \
-    --enforce-eager \
+    "${eager_args[@]}" \
     --block-size "$BLOCK_SIZE" \
     --moe-backend marlin \
-    --speculative-config '{"method":"mtp","num_speculative_tokens":4}' \
+    --speculative-config "$SPEC_CONFIG" \
     --tool-call-parser glm47 \
     --enable-auto-tool-choice \
     --reasoning-parser glm45 \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     --served-model-name "$SERVED_NAME" \
-    --trust-remote-code
+    --trust-remote-code \
+    $EXTRA_ARGS
 }
 
 wait_ready() {
@@ -235,7 +295,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC_CONFIG='$SPEC_CONFIG' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else

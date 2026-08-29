@@ -1,0 +1,10 @@
+FROM glm53-sm121-v9
+
+# DFlash needs target hidden states via the EAGLE3 interface, which the
+# fork-only Glm5Next model does not implement. patch_v10 adds the capture with
+# the SGLang-verified mHC contraction semantics.
+COPY patch_v10_dflash_glm5.py /tmp/patch_v10_dflash_glm5.py
+RUN python3 /tmp/patch_v10_dflash_glm5.py \
+    && python3 -m compileall -q \
+        /usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py \
+    && rm /tmp/patch_v10_dflash_glm5.py

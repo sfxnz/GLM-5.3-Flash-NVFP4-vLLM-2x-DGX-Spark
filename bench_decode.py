@@ -12,17 +12,26 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-PROMPT = (
-    "Write a short paragraph about why sparse attention helps long-context "
-    "language models. Keep it around eighty words. No bullet points."
-)
+# Two decode regimes: prose is the low-acceptance regime (the drafter guesses
+# free text), structured is the high-acceptance regime (counting is nearly
+# deterministic, so most draft positions verify).
+PHASES = {
+    "prose": (
+        "Write a short paragraph about why sparse attention helps long-context "
+        "language models. Keep it around eighty words. No bullet points."
+    ),
+    "structured": (
+        "Count from 1 to 200. Output only the numbers, separated by commas, "
+        "with no other text."
+    ),
+}
 
 
-def stream_one(url: str, model: str, max_tokens: int) -> dict:
+def stream_one(url: str, model: str, prompt: str, max_tokens: int) -> dict:
     body = json.dumps(
         {
             "model": model,
-            "messages": [{"role": "user", "content": PROMPT}],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0,
             "stream": True,
@@ -79,13 +88,20 @@ def stream_one(url: str, model: str, max_tokens: int) -> dict:
     }
 
 
-def wave(url: str, model: str, max_tokens: int, concurrency: int) -> list[dict]:
+def wave(
+    url: str, model: str, prompt: str, max_tokens: int, concurrency: int
+) -> tuple[list[dict], float, float]:
     t0 = time.perf_counter()
     out = []
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futs = [pool.submit(stream_one, url, model, max_tokens) for _ in range(concurrency)]
+        futs = [pool.submit(stream_one, url, model, prompt, max_tokens) for _ in range(concurrency)]
         for fut in as_completed(futs):
-            out.append(fut.result())
+            try:
+                out.append(fut.result())
+            except Exception as exc:  # noqa: BLE001 - keep the wave's other streams
+                print(f"stream failed: {exc}", file=sys.stderr, flush=True)
+    if not out:
+        raise RuntimeError("every stream in the wave failed")
     wall = time.perf_counter() - t0
     decode_tokens = sum(max(r["completion_tokens"] - 1, 0) for r in out)
     # Shared wall clock after the first token of the slowest-to-start stream is messy.
@@ -100,6 +116,50 @@ def median_key(rows: list[dict], key: str) -> float:
     return statistics.median(r[key] for r in rows)
 
 
+SPEC_COUNTERS = ("num_drafts", "num_draft_tokens", "num_accepted_tokens")
+
+
+def spec_counters(metrics_url: str) -> dict[str, float] | None:
+    """Sum vLLM's spec-decode counters across label sets. None when absent."""
+    try:
+        with urllib.request.urlopen(metrics_url, timeout=10) as resp:
+            text = resp.read().decode("utf-8", "replace")
+    except (OSError, urllib.error.URLError):
+        return None
+    out = dict.fromkeys(SPEC_COUNTERS, 0.0)
+    seen = False
+    for line in text.splitlines():
+        if line.startswith("#") or not line.startswith("vllm:spec_decode_"):
+            continue
+        name = line.split("{", 1)[0].split(" ", 1)[0]
+        for counter in SPEC_COUNTERS:
+            # prometheus_client >= 0.4 exposes Counters with a _total suffix;
+            # accept the bare name too. The two forms never coexist.
+            if name in (
+                f"vllm:spec_decode_{counter}_total",
+                f"vllm:spec_decode_{counter}",
+            ):
+                out[counter] += float(line.rsplit(" ", 1)[1])
+                seen = True
+    return out if seen else None
+
+
+def acceptance(before: dict[str, float] | None, after: dict[str, float] | None) -> dict:
+    if before is None or after is None:
+        return {}
+    drafts = after["num_drafts"] - before["num_drafts"]
+    draft_tokens = after["num_draft_tokens"] - before["num_draft_tokens"]
+    accepted = after["num_accepted_tokens"] - before["num_accepted_tokens"]
+    if drafts <= 0:
+        return {}
+    return {
+        # Emitted tokens per verification step: accepted draft tokens plus the
+        # verifier's own token, the "acceptance length" from spec-decode papers.
+        "acceptance_len": 1.0 + accepted / drafts,
+        "draft_acceptance_rate": (accepted / draft_tokens) if draft_tokens > 0 else 0.0,
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
@@ -107,40 +167,46 @@ def main() -> int:
     p.add_argument("--max-tokens", type=int, default=200)
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--concurrency", type=int, nargs="+", default=[1, 2, 4])
+    p.add_argument("--phase", choices=[*PHASES, "both"], default="both")
     args = p.parse_args()
 
+    phases = list(PHASES) if args.phase == "both" else [args.phase]
     print(
         f"url={args.url} model={args.model} max_tokens={args.max_tokens} "
-        f"runs={args.runs} concurrency={args.concurrency}",
+        f"runs={args.runs} concurrency={args.concurrency} phases={phases}",
         flush=True,
     )
+    metrics_url = args.url.split("/v1/", 1)[0] + "/metrics"
     summary = []
-    for c in args.concurrency:
-        per_stream = []
-        aggs = []
-        walls = []
-        for i in range(args.runs):
-            rows, wall, agg = wave(args.url, args.model, args.max_tokens, c)
-            per_stream.extend(rows)
-            aggs.append(agg)
-            walls.append(wall)
-            dec = ",".join(f"{r['decode_tok_s']:.2f}" for r in rows)
-            ttft = ",".join(f"{r['ttft_s']:.3f}" for r in rows)
-            print(
-                f"c={c} run={i+1} wall={wall:.2f}s agg={agg:.2f} tok/s "
-                f"per_stream=[{dec}] ttft=[{ttft}]",
-                flush=True,
+    for phase in phases:
+        prompt = PHASES[phase]
+        for c in args.concurrency:
+            per_stream = []
+            aggs = []
+            counters_before = spec_counters(metrics_url)
+            for i in range(args.runs):
+                rows, wall, agg = wave(args.url, args.model, prompt, args.max_tokens, c)
+                per_stream.extend(rows)
+                aggs.append(agg)
+                dec = ",".join(f"{r['decode_tok_s']:.2f}" for r in rows)
+                ttft = ",".join(f"{r['ttft_s']:.3f}" for r in rows)
+                print(
+                    f"phase={phase} c={c} run={i+1} wall={wall:.2f}s agg={agg:.2f} tok/s "
+                    f"per_stream=[{dec}] ttft=[{ttft}]",
+                    flush=True,
+                )
+            summary.append(
+                {
+                    "phase": phase,
+                    "concurrency": c,
+                    "median_decode_tok_s": median_key(per_stream, "decode_tok_s"),
+                    "median_ttft_s": median_key(per_stream, "ttft_s"),
+                    "median_agg_tok_s": statistics.median(aggs),
+                    "median_completion_tokens": median_key(per_stream, "completion_tokens"),
+                    "n": len(per_stream),
+                    **acceptance(counters_before, spec_counters(metrics_url)),
+                }
             )
-        summary.append(
-            {
-                "concurrency": c,
-                "median_decode_tok_s": median_key(per_stream, "decode_tok_s"),
-                "median_ttft_s": median_key(per_stream, "ttft_s"),
-                "median_agg_tok_s": statistics.median(aggs),
-                "median_completion_tokens": median_key(per_stream, "completion_tokens"),
-                "n": len(per_stream),
-            }
-        )
     print("SUMMARY", json.dumps(summary, indent=2))
     return 0
 
