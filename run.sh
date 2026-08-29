@@ -15,8 +15,14 @@ HCA="${HCA:-rocep1s0f1}"
 TP="${TP:-2}"
 NNODES="${NNODES:-2}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-327680}"
-MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-2}"
 UTIL="${UTIL:-0.85}"
+KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
+NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-7}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
+FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHAT_TEMPLATE="${CHAT_TEMPLATE:-$SCRIPT_DIR/chat_template.jinja}"
 # GB10 UMA: 4.14 GiB is the safe KV pin on TP=2. Dropping the pin OOMs
 # (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
 # ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
@@ -37,10 +43,11 @@ SPEC="${SPEC:-dflash2}"
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
-      # 5 of the block's 7 draft slots: positions 5-6 accept <15% of the
-      # time, and every extra slot costs a KDA state copy per sequence
-      # (num_spec+1 copies), which is what starves c=4 admission at 7.
-      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":5}'
+      # Default is the trained block (7 of 8). That occupancy fits two
+      # sequences on the 4.14 GiB pin. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4
+      # is the four-way rollback (positions 5-6 accept <15% on prose, and
+      # each extra slot is a KDA copy that starves the 4th request at 7).
+      SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":'"$NUM_SPECULATIVE_TOKENS"'}'
       ;;
     mtp)
       SPEC_CONFIG='{"method":"mtp","num_speculative_tokens":4}'
@@ -51,15 +58,28 @@ if [[ -z "${SPEC_CONFIG:-}" ]]; then
       ;;
   esac
 fi
-# CUDA graphs (default). Measured vs eager on this cluster: prose 28.2/21.1/17.1
-# vs 27.6/20.0/17.1 per stream at c=1/2/4, structured 51.4/41.5/35.7 vs
-# 49.6/41.8/35.0. Zero capture memory cost, same 400,497-token KV pool.
-# ENFORCE_EAGER=1 is the rollback. The runner rounds capture sizes up to
-# multiples of num_speculative_tokens+1, so for DFlash2-5 the FULL-graph ladder
-# lands on 6/12/18/24, the verify shapes for 1-4 sequences at max-num-seqs 4.
+# CUDA graphs (default). Capture sizes are 1/2/4 plus (num_spec+1)×{1..MAX_NUM_SEQS}.
+# ENFORCE_EAGER=1 is the rollback.
 ENFORCE_EAGER="${ENFORCE_EAGER:-0}"
 if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
-  COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,6,12,18,24]}'
+  if [[ "$SPEC" == dflash2 ]]; then
+    step=$((NUM_SPECULATIVE_TOKENS + 1))
+    sizes="1,2,4"
+    i=1
+    while (( i <= MAX_NUM_SEQS )); do
+      sizes+=",$((step * i))"
+      i=$((i + 1))
+    done
+    COMPILATION_CONFIG='{"cudagraph_capture_sizes":['"$sizes"']}'
+  else
+    COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,8,16,24]}'
+  fi
+fi
+# fp8 hybrid pool is ~400k tokens on the 4.14 GiB pin. Native 1,048,576 does not
+# fit. Packed NVFP4 KV is a different image/backend, not MAX_MODEL_LEN on this pin.
+if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
+  echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
+  exit 1
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
@@ -222,7 +242,18 @@ start_local() {
     eager_args+=(--compilation-config "$COMPILATION_CONFIG")
   fi
 
-  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER"
+  local vol_args=(-v "${HF_CACHE}:${HF_HOME_IN_CONTAINER}")
+  local template_args=()
+  if [[ "$rank" == "0" && -f "$CHAT_TEMPLATE" ]]; then
+    vol_args+=(-v "${CHAT_TEMPLATE}:/chat_template.jinja:ro")
+    template_args+=(--chat-template /chat_template.jinja)
+  fi
+  local batched_args=()
+  if [[ -n "$MAX_NUM_BATCHED_TOKENS" ]]; then
+    batched_args+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
+  fi
+
+  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart no \
@@ -233,7 +264,7 @@ start_local() {
     --device /dev/infiniband \
     --cap-add IPC_LOCK \
     --ulimit memlock=-1:-1 \
-    -v "${HF_CACHE}:${HF_HOME_IN_CONTAINER}" \
+    "${vol_args[@]}" \
     "${env_args[@]}" \
     "$IMAGE" \
     "$serve_model" \
@@ -245,10 +276,11 @@ start_local() {
     --master-port "$MASTER_PORT" \
     "${rank_args[@]}" \
     --max-model-len "$MAX_MODEL_LEN" \
-    --kv-cache-dtype fp8_e4m3 \
+    --kv-cache-dtype "$KV_CACHE_DTYPE" \
     --kv-cache-memory "$KV_CACHE_MEMORY" \
     --gpu-memory-utilization "$UTIL" \
     --max-num-seqs "$MAX_NUM_SEQS" \
+    "${batched_args[@]}" \
     "${eager_args[@]}" \
     --block-size "$BLOCK_SIZE" \
     --moe-backend marlin \
@@ -257,6 +289,7 @@ start_local() {
     --enable-auto-tool-choice \
     --reasoning-parser glm45 \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
+    "${template_args[@]}" \
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
@@ -295,7 +328,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC_CONFIG='$SPEC_CONFIG' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
