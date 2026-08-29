@@ -15,10 +15,10 @@ HCA="${HCA:-rocep1s0f1}"
 TP="${TP:-2}"
 NNODES="${NNODES:-2}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-327680}"
-MAX_NUM_SEQS="${MAX_NUM_SEQS:-4}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-2}"
 UTIL="${UTIL:-0.85}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
-NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-5}"
+NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-7}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
 FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,10 +43,10 @@ SPEC="${SPEC:-dflash2}"
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
-      # Default 5 of the block's 7 draft slots. Positions 5-6 accept <15% on
-      # prose, and every extra slot costs a KDA state copy per sequence
-      # (num_spec+1 copies), which is what starves c=4 admission at 7.
-      # NUM_SPECULATIVE_TOKENS=6/7 is an experiment knob, not the published default.
+      # Default is the trained block (7 of 8). That occupancy fits two
+      # sequences on the 4.14 GiB pin. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4
+      # is the four-way rollback (positions 5-6 accept <15% on prose, and
+      # each extra slot is a KDA copy that starves the 4th request at 7).
       SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":'"$NUM_SPECULATIVE_TOKENS"'}'
       ;;
     mtp)

@@ -91,13 +91,13 @@ def main() -> int:
         "IMAGE": "glm53-sm121-v11",
         "PORT": "8000",
         "MAX_MODEL_LEN": "327680",
-        "MAX_NUM_SEQS": "4",
+        "MAX_NUM_SEQS": "2",
         "KV_CACHE_MEMORY": "4445787956",
         "BLOCK_SIZE": "2304",
         "SPEC": "dflash2",
         "SERVED_NAME": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
         "CONTAINER_NAME": "glm53-flash-nvfp4",
-        "NUM_SPECULATIVE_TOKENS": "5",
+        "NUM_SPECULATIVE_TOKENS": "7",
         "KV_CACHE_DTYPE": "fp8_e4m3",
     }
     for var, want in expected.items():
