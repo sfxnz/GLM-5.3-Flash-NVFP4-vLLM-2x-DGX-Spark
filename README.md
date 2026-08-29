@@ -66,9 +66,15 @@ DFlash2 is the default drafter (`SPEC=dflash2`). Switch back with:
 SPEC=mtp ./run.sh
 ```
 
-`run.sh` downloads the draft weights (~2.2 GiB, snapshot pinned) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":5}` to both ranks.
+`run.sh` downloads the draft weights (~2.2 GiB, snapshot pinned) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":$NUM_SPECULATIVE_TOKENS}` to both ranks. Default is 5. CUDA graph sizes are derived as 1/2/4 plus `(num_spec+1)×{1..MAX_NUM_SEQS}`.
 
-Why 5 and not the block's full 7: acceptance at draft positions 5–6 is under 15%, and each speculative slot costs a per-sequence KDA state copy (`num_spec+1` copies). At 7 slots the state of 4 sequences no longer fits the pool, so the 4th request queues for ~10 s at c=4; at 5 slots all four admit immediately and c=1 is faster too (26.8 vs 26.0). Going down to 4 slots truncates the block-diffusion draft too hard (acceptance 2.8, c=1 drops to 20.6).
+Why 5 and not the block's full 7: acceptance at draft positions 5–6 is under 15% on prose, and each speculative slot costs a per-sequence KDA state copy (`num_spec+1` copies). At 7 slots the state of 4 sequences no longer fits the pool, so the 4th request queues for ~10 s at c=4; at 5 slots all four admit immediately and c=1 is faster too (26.8 vs 26.0). Going down to 4 slots truncates the block-diffusion draft too hard (acceptance 2.8, c=1 drops to 20.6).
+
+Optional high-acceptance occupancy, measured on this cluster, not the default. Full DFlash2 block at two sequences. Structured c=1 went 50.7 → 61.9 tok/s. Prose c=1 did not rise. Drops the published c=4 lane:
+
+```bash
+NUM_SPECULATIVE_TOKENS=7 MAX_NUM_SEQS=2 ./run.sh
+```
 
 The draft model's license is CC BY-NC-ND 4.0 (research and evaluation; commercial licensing via inco.ai). The base model and this recipe are unaffected when you stay on MTP.
 
@@ -126,11 +132,16 @@ Stop both ranks from the head:
 | `--moe-backend` | `marlin` |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 6/12/18/24 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-5 (`SPEC=mtp` for MTP-4) |
+| Speculative | DFlash2-5 (`NUM_SPECULATIVE_TOKENS=7 MAX_NUM_SEQS=2` for the full block; `SPEC=mtp` for MTP-4) |
+| Chat template | `chat_template.jinja` (honors `enable_thinking`) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 
 `--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
+
+Native `max_position_embeddings` is 1,048,576. This pin yields a ~400k-token fp8 hybrid pool (1.22× at 327,680). A 1M request needs ~8.2 GiB of this layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Packed NVFP4 MLA KV is the published 2× GB10 path that actually needles 1M. It is a different attention backend and a different image, and it measured ~22 tok/s prose versus 28 here. This recipe does not pretend one flag set holds both numbers.
+
+`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template always opens `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`.
 
 ## Environment
 
