@@ -4,7 +4,7 @@ set -euo pipefail
 
 MODEL="${MODEL:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
-IMAGE="${IMAGE:-glm53-sm121-v11}"
+IMAGE="${IMAGE:-glm53-sm121-v12}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -32,13 +32,18 @@ KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
+# Optional verified load-time o_proj transplant; inert unless ABLIT=1.
+ABLIT="${ABLIT:-0}"
+ABLIT_DIR="${ABLIT_DIR:-$HF_CACHE/glm53-ablit}"
+ABLIT_LAYERS="${ABLIT_LAYERS:-15-45}"
+ABLIT_VERIFIED=0
 SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
 SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
 DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
-# the glm53-sm121-v11 image) or mtp (GLM's native MTP head).
+# the glm53-sm121-v11+ image) or mtp (GLM's native MTP head).
 SPEC="${SPEC:-dflash2}"
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
@@ -139,7 +144,7 @@ maybe_drop_caches() {
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v11 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
+    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v12 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
     exit 1
   fi
 }
@@ -176,6 +181,54 @@ ensure_weights() {
   fi
 }
 
+ensure_ablit() {
+  case "$ABLIT" in
+    0) return ;;
+    1) ;;
+    *) echo "ABLIT must be 0 or 1, got: $ABLIT" >&2; exit 1 ;;
+  esac
+  if [[ "$ABLIT_VERIFIED" == 1 ]]; then
+    return
+  fi
+  log "Verifying ABLIT donor tensors under $ABLIT_DIR"
+  python3 - "$ABLIT_DIR" "$ABLIT_LAYERS" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+
+root = Path(sys.argv[1]) / "transplant"
+wanted = set()
+for part in sys.argv[2].split(","):
+    part = part.strip()
+    if "-" in part:
+        lo, hi = map(int, part.split("-", 1))
+        if lo > hi:
+            raise SystemExit(f"inverted ABLIT_LAYERS range: {part}")
+        wanted.update(range(lo, hi + 1))
+    elif part:
+        wanted.add(int(part))
+if not wanted:
+    raise SystemExit("ABLIT_LAYERS is empty")
+manifest_path = root / "MANIFEST.json"
+if not manifest_path.is_file():
+    raise SystemExit(f"missing {manifest_path}; run ablit/fetch_transplant.py")
+manifest = json.loads(manifest_path.read_text())
+metadata = {int(k): v for k, v in manifest.get("layers", {}).items()}
+for layer in sorted(wanted):
+    info = metadata.get(layer)
+    path = root / f"L{layer}.bin"
+    if info is None or not path.is_file():
+        raise SystemExit(f"missing donor layer {layer} under {root}")
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        while chunk := file.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    if path.stat().st_size != int(info["nbytes"]) or digest.hexdigest() != info["sha256"]:
+        raise SystemExit(f"donor layer {layer} failed size/sha256 verification")
+print(f"verified {len(wanted)} donor tensors")
+PY
+  ABLIT_VERIFIED=1
+}
+
 stop_local() {
   if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     log "Removing existing container $CONTAINER_NAME"
@@ -190,9 +243,10 @@ start_local() {
     echo "docker not found" >&2
     exit 1
   fi
+  ensure_image
+  ensure_ablit
   maybe_drop_caches
   stop_local
-  ensure_image
   ensure_weights
 
   local serve_model
@@ -243,6 +297,14 @@ start_local() {
   fi
 
   local vol_args=(-v "${HF_CACHE}:${HF_HOME_IN_CONTAINER}")
+  if [[ "$ABLIT" == 1 ]]; then
+    vol_args+=(-v "${ABLIT_DIR}:/opt/glm53/ablit:ro")
+    env_args+=(
+      -e "ABLIT=1"
+      -e "ABLIT_DIR=/opt/glm53/ablit"
+      -e "ABLIT_LAYERS=$ABLIT_LAYERS"
+    )
+  fi
   local template_args=()
   if [[ "$rank" == "0" && -f "$CHAT_TEMPLATE" ]]; then
     vol_args+=(-v "${CHAT_TEMPLATE}:/chat_template.jinja:ro")
@@ -253,7 +315,7 @@ start_local() {
     batched_args+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
   fi
 
-  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
+  log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC ablit=$ABLIT"
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart no \
@@ -324,11 +386,13 @@ ROLE="$(detect_role)"
 log "role=$ROLE host=$(host_short)"
 
 if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
+  ensure_image
+  ensure_ablit
   if command -v ssh >/dev/null 2>&1 && ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" true >/dev/null 2>&1; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' ABLIT='$ABLIT' ABLIT_DIR='$ABLIT_DIR' ABLIT_LAYERS='$ABLIT_LAYERS' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else

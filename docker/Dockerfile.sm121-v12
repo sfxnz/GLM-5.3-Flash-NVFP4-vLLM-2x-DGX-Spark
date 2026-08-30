@@ -1,0 +1,13 @@
+FROM glm53-sm121-v11
+
+# Optional, in-memory o_proj transplant. ABLIT=0 leaves loaded weights unchanged;
+# ABLIT=1 reads verified donor tensors from /opt/glm53/ablit.
+COPY ablit_runtime.py patch_v12_ablit.py test_v12_ablit.py /opt/glm53/
+RUN cd /opt/glm53 \
+    && python3 test_v12_ablit.py \
+    && python3 patch_v12_ablit.py \
+    && python3 -m compileall -q \
+        /usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py \
+        /usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/mtp.py \
+        /usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/glm53_ablit.py \
+    && rm test_v12_ablit.py patch_v12_ablit.py
