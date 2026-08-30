@@ -173,6 +173,9 @@ def main() -> int:
     need(tools)
     need(needle)
     need(hermes)
+    smoke = scripts / "smoke.sh"
+    if smoke.exists() and '"temperature": 0' not in smoke.read_text():
+        failures.append("smoke.sh missing temperature 0")
     if thinking.exists():
         src = thinking.read_text()
         if "enable_thinking" not in src or "leaked_think" not in src:

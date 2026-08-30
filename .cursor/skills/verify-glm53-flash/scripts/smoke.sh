@@ -20,6 +20,7 @@ cat >"$OUT/request.json" <<'JSON'
   "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
   "messages": [{"role": "user", "content": "Say hello in one sentence."}],
   "max_tokens": 64,
+  "temperature": 0,
   "chat_template_kwargs": {"enable_thinking": false}
 }
 JSON
