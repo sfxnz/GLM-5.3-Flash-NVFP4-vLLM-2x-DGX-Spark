@@ -4,7 +4,7 @@ Serve [LibertAIDAI/GLM-5.3-Flash-NVFP4](https://huggingface.co/LibertAIDAI/GLM-5
 
 320B total / 18B active. Weight-only NVFP4 on routed experts (~181 GiB). Native context is 1,048,576. This recipe serves `--max-model-len` 327680 with the DFlash2 block-diffusion drafter (7 speculative tokens, two sequences).
 
-Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v11` first.
+Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v12` first.
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
@@ -42,6 +42,7 @@ docker build -f docker/Dockerfile.sm121-v8 -t glm53-sm121-v8 docker
 docker build -f docker/Dockerfile.sm121-v9 -t glm53-sm121-v9 docker
 docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
 docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
+docker build -f docker/Dockerfile.sm121-v12 -t glm53-sm121-v12 docker
 ```
 
 The v8 Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
@@ -51,6 +52,8 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 - v9 backports DFlash2 support, vLLM PR [#52816](https://github.com/vllm-project/vllm/pull/52816), missing from the image's vLLM snapshot.
 - v10 teaches the fork-only Glm5Next model to capture aux hidden states for the drafter (the mHC stream contraction follows the reference integration, sglang [#36708](https://github.com/sgl-project/sglang/pull/36708)).
 - v11 adds a dedicated draft KV group to the GLM5 bespoke KV layout so the draft's sliding-window layers share the pool.
+
+The v12 layer installs the optional ABLIT load hook. It is inert by default, so `ABLIT=0` leaves the loaded weights unchanged from v11.
 
 ## DFlash2 drafter
 
@@ -73,6 +76,28 @@ NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4 ./run.sh
 Positions 5–6 accept under 15% on prose, which is why that rollback does not lose much free-text speed. Structured decode is the one that pays for the full block.
 
 The draft model's license is CC BY-NC-ND 4.0 (research and evaluation; commercial licensing via inco.ai). The base model and this recipe are unaffected when you stay on MTP.
+
+## Optional ABLIT transplant
+
+`ABLIT=1` replaces only the unquantized BF16 attention `o_proj` weights in layers 15–44 after the stock NVFP4 checkpoint loads. Native MTP also replaces layer 45; the external DFlash2 drafter is not modified. Checkpoint files remain untouched.
+
+Fetch the published donor tensors once on the head, then copy them to the same path on the worker:
+
+```bash
+export ABLIT_DIR="$HOME/.cache/huggingface/glm53-ablit"
+python3 ablit/fetch_transplant.py
+rsync -a --info=progress2 "$ABLIT_DIR/" spark2:"$ABLIT_DIR/"
+```
+
+Enable the transplant on the next container start:
+
+```bash
+ABLIT=1 ./run.sh
+```
+
+The launcher verifies all 31 files against the donor manifest before stopping either running rank. The runtime verifies each tensor again as it is loaded. Missing, incompatible, or corrupt tensors fail closed. `ABLIT=0` remains the stock path.
+
+The fetcher and load-hook design are adapted from [MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks) under its MIT license. The ~2.7 GB transplant comes from [dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4](https://huggingface.co/dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4); its model license applies.
 
 ## Quick start
 
@@ -118,7 +143,7 @@ Stop both ranks from the head:
 
 | Setting | Value |
 |---|---|
-| Image | `glm53-sm121-v11` (local) |
+| Image | `glm53-sm121-v12` (local; ABLIT hook off by default) |
 | Model | `LibertAIDAI/GLM-5.3-Flash-NVFP4` |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
@@ -149,6 +174,7 @@ export HCA=rocep1s0f1
 export PORT=8000
 export MAX_MODEL_LEN=327680
 export MAX_NUM_SEQS=2
+export ABLIT=0 # set 1 to enable the verified donor transplant on restart
 ```
 
 Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`.
