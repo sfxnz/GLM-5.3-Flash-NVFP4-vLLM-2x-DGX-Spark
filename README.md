@@ -12,14 +12,14 @@ Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median.
 
 | Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
 |---|---|---:|---:|---:|
-| prose | 1 | 27.3 | 27.3 | 0.34 s |
-| prose | 2 | 20.4 | 40.4 | 0.58 s |
-| structured | 1 | 61.9 | 61.9 | 0.33 s |
-| structured | 2 | 53.9 | 107.7 | 0.37 s |
+| prose | 1 | 26.7 | 26.7 | 0.33 s |
+| prose | 2 | 20.2 | 33.9 | 0.36 s |
+| structured | 1 | 66.9 | 66.9 | 0.33 s |
+| structured | 2 | 57.0 | 113.2 | 0.35 s |
 
 Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. That is the structured-decode win (50.7 → 61.9 at c=1 versus DFlash2-5 / four sequences). Prose c=1 did not rise. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). Greedy count stays lossless: 200 consecutive integers with thinking off.
 
-MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases at c=1,2.
+MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1467 tok/s (TTFT 7.5 s, 10950 prompt tokens). Repeating that prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
 
 ## Requirements
 
@@ -137,7 +137,7 @@ Stop both ranks from the head:
 
 Native `max_position_embeddings` is 1,048,576. This pin yields a ~400k-token fp8 hybrid pool (1.22× at 327,680). A 1M request needs ~8.2 GiB of this layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Packed NVFP4 MLA KV is the published 2× GB10 path that actually needles 1M. It is a different attention backend and a different image, and it measured ~22 tok/s prose versus 28 here. This recipe does not pretend one flag set holds both numbers.
 
-`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template always opens `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`.
+`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template always opens `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. Thinking off now seeds an empty `<think></think>` so a Hermes-style tool follow-up does not prefix `</think>` onto `content`.
 
 ## Environment
 
