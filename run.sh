@@ -46,9 +46,11 @@ if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
       # Default is the trained block (7 of 8). That occupancy fits two
-      # sequences on the 4.14 GiB pin. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4
-      # is the four-way rollback (positions 5-6 accept <15% on prose, and
-      # each extra slot is a KDA copy that starves the 4th request at 7).
+      # sequences on the 4.14 GiB pin. MAX_NUM_SEQS=3 does not starve the
+      # third stream (TTFT ~0.4 s, even per-stream) but structured c=2
+      # fell 59.5→50.7. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4 is the
+      # four-way rollback (positions 5-6 accept <15% on prose, and each
+      # extra slot is a KDA copy that starves the 4th request at 7).
       SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":'"$NUM_SPECULATIVE_TOKENS"'}'
       ;;
     mtp)
