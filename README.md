@@ -12,14 +12,14 @@ Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median.
 
 | Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
 |---|---|---:|---:|---:|
-| prose | 1 | 26.7 | 26.7 | 0.33 s |
-| prose | 2 | 20.2 | 33.9 | 0.36 s |
-| structured | 1 | 66.9 | 66.9 | 0.33 s |
-| structured | 2 | 57.0 | 113.2 | 0.35 s |
+| prose | 1 | 17.5 | 17.5 | 0.34 s |
+| prose | 2 | 16.3 | 31.3 | 0.40 s |
+| structured | 1 | 68.1 | 68.1 | 0.33 s |
+| structured | 2 | 59.5 | 118.9 | 0.38 s |
 
-Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. That is the structured-decode win (50.7 → 61.9 at c=1 versus DFlash2-5 / four sequences). Prose c=1 did not rise. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). Greedy count stays lossless: 200 consecutive integers with thinking off.
+Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476).
 
-MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1467 tok/s (TTFT 7.5 s, 10950 prompt tokens). Repeating that prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
+MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
 
 ## Requirements
 
