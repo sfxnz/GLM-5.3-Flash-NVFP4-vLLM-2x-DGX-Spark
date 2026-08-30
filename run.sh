@@ -81,6 +81,11 @@ if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UN
   echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
 fi
+if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s\n' \
+    "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG"
+  exit 0
+fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").

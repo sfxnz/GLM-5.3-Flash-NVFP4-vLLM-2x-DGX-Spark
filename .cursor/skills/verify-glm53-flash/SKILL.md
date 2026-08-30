@@ -83,5 +83,8 @@ All under `.cursor/skills/verify-glm53-flash/scripts/`. `lib.sh` is sourced by t
 | `recipe-lint.py` | GitHub-ready recipe feature |
 | `smoke.sh` | README chat-completions smoke |
 | `count_probe.py` | Greedy 1→200 consecutive-integer gate |
-| `needle_probe.py` | Long-prompt needle retrieval (`--prompt-tokens`) |
+| `thinking_off_probe.py` | Thinking-off completion; fail on empty `content` or `<think>` leak |
+| `tool_call_probe.py` | Tools request; fail unless a parsed `get_weather` tool call |
+| `hermes_probe.py` | User → parsed tool_calls → role=tool → assistant content with no think leak |
+| `needle_probe.py` | Unique-salt needle retrieval (`--prompt-tokens`); prints `prefill_tok_s` |
 | `cleanup.sh` | End of a run, and after every failed iteration |
