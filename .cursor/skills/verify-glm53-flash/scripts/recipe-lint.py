@@ -297,6 +297,17 @@ def main() -> int:
     )
     if min_kv.returncode == 0 or "327168" not in min_kv.stderr:
         failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3886945403 did not refuse the 3.62 GiB display pin")
+    cutlass = subprocess.run(
+        ["bash", str(run_sh_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VALIDATE_ONLY": "1", "MOE_BACKEND": "flashinfer_cutlass"},
+    )
+    if cutlass.returncode == 0 or "Stay on marlin" not in cutlass.stderr:
+        failures.append(
+            "VALIDATE_ONLY=1 MOE_BACKEND=flashinfer_cutlass did not refuse the cutlass UMA OOM path"
+        )
 
     print(f"repo={REPO}")
     for w in warnings:

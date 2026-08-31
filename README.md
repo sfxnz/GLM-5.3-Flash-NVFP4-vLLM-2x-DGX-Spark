@@ -126,7 +126,7 @@ Stop both ranks from the head:
 | `--max-num-seqs` | 2 |
 | `--kv-cache-dtype` | `fp8_e4m3` |
 | `--kv-cache-memory` | `4445787956` (4.14 GiB) |
-| `--moe-backend` | `marlin` (`MOE_BACKEND=flashinfer_cutlass` does not boot on `glm53-sm121-v11`) |
+| `--moe-backend` | `marlin` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2) |
 | Checkpoint | `caca4e6a4ebbd66f159d3d2fc256683fd6e27177` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
@@ -135,7 +135,7 @@ Stop both ranks from the head:
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 
-The 2026-08-30 LibertAI checkpoint ships real per-projection `input_scale` tensors. Marlin still never reads them. `flashinfer_cutlass` on this image dies at FlashInfer JIT (`nvrtc.h` missing in `glm53-sm121-v11`). Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar.
+The 2026-08-30 LibertAI checkpoint ships real per-projection `input_scale` tensors. Marlin still never reads them. `flashinfer_cutlass` is not a path on 2× GB10. v11 dies at JIT (`nvrtc.h` missing). v12 with `cuda-nvrtc-dev-13-0` got past that and then global-OOM'd spark2 during `cudafe++` after 90.67 GiB weights (`NV_ERR_NO_MEMORY`, ~18 GiB left). `run.sh` refuses any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar.
 
 `--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Two concurrent 20k-word needles (Tony's three-way 20k shape, at two sequences) and two concurrent 64k-word needles (~98k prompt tokens each) returned `hit=1` with docker `OOMKilled=false`. `MemAvailable` stayed about 8 GiB. Tony's anti-oom kill was three sequences at this pin. Occupancy gate: `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2`. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
 
