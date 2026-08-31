@@ -132,16 +132,17 @@ def main() -> int:
         if want not in readme:
             failures.append(f"README does not mention run.sh default {var}={want}")
 
-    # LibertAI 2026-08-30 calibrated input_scale lives on HEAD (caca4e6).
-    # This recipe stays on aa28e1f + marlin: marlin never reads an activation
-    # scale, and ensure_weights short-circuits when the pin directory exists.
-    pin = "aa28e1f54130286c95fee10d0705c74ce8743734"
-    if f"snapshots/{pin}" not in run_sh:
-        failures.append(f"run.sh SNAPSHOT is no longer pinned to {pin}")
-    if "--moe-backend marlin" not in run_sh:
-        failures.append("run.sh no longer passes --moe-backend marlin")
-    if "--reasoning-parser glm45" not in run_sh:
-        failures.append("run.sh no longer passes --reasoning-parser glm45")
+    pin = "caca4e6a4ebbd66f159d3d2fc256683fd6e27177"
+    if f'SNAPSHOT_REV="${{SNAPSHOT_REV:-{pin}}}"' not in run_sh and f"snapshots/{pin}" not in run_sh:
+        failures.append(f"run.sh SNAPSHOT_REV default is no longer {pin}")
+    if 'MOE_BACKEND="${MOE_BACKEND:-marlin}"' not in run_sh:
+        failures.append("run.sh MOE_BACKEND default is no longer marlin")
+    if '--moe-backend "$MOE_BACKEND"' not in run_sh and "--moe-backend marlin" not in run_sh:
+        failures.append("run.sh no longer passes --moe-backend from MOE_BACKEND")
+    if 'REASONING_PARSER="${REASONING_PARSER:-glm45}"' not in run_sh:
+        failures.append("run.sh REASONING_PARSER default is no longer glm45")
+    if '--reasoning-parser "$REASONING_PARSER"' not in run_sh and "--reasoning-parser glm45" not in run_sh:
+        failures.append("run.sh no longer passes --reasoning-parser from REASONING_PARSER")
     if "VLLM_GLM53_MOE_INPUT_SCALE" in run_sh:
         failures.append("run.sh must not set VLLM_GLM53_MOE_INPUT_SCALE (1.0 underflows per-block fp8 scales)")
     if 'if [[ -d "$SNAPSHOT" ]]; then' not in run_sh:
