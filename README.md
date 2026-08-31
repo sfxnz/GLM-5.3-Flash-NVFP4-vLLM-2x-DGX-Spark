@@ -12,14 +12,14 @@ Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median.
 
 | Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
 |---|---|---:|---:|---:|
-| prose | 1 | 27.3 | 27.3 | 0.34 s |
-| prose | 2 | 20.4 | 40.4 | 0.58 s |
-| structured | 1 | 61.9 | 61.9 | 0.33 s |
-| structured | 2 | 53.9 | 107.7 | 0.37 s |
+| prose | 1 | 19.7 | 19.7 | 0.34 s |
+| prose | 2 | 16.3 | 31.0 | 0.36 s |
+| structured | 1 | 67.1 | 67.1 | 0.34 s |
+| structured | 2 | 59.9 | 119.7 | 0.37 s |
 
-Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. That is the structured-decode win (50.7 → 61.9 at c=1 versus DFlash2-5 / four sequences). Prose c=1 did not rise. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). Greedy count stays lossless: 200 consecutive integers with thinking off.
+Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. `MAX_NUM_SEQS=3` at DFlash2-7 does not starve the third stream, but structured c=2 fell 59.5 → 50.7. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). `ENFORCE_EAGER=1` is the rollback; it slowed structured c=1 68.1 → 65.0. Adding capture size 3 to the ladder was inside noise. Capture size 24 at two sequences was unused and stayed inside noise. `VLLM_USE_BREAKABLE_CUDAGRAPH=0` slowed structured c=2 59.7 → 52.1. Leave the engine auto-on. `--async-scheduling` boots with DFlash2-7 and keeps FULL_AND_PIECEWISE graphs. Versus this table every cell stayed inside noise. Versus the restore before, prose c=2 fell 16.98 → 15.19. Leave it off. Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476). Tony's 3.0 GiB KV pin cannot boot `--max-model-len` 327680 (vLLM wants 3.62 GiB). The displayed 3.62 GiB pin (3886945403) still estimates max len 327168 and refuses. A 4.0 GiB pin boots but structured c=2 fell 59.5 → 52.4.
 
-MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. `python3 bench_decode.py` repeats both phases at c=1,2.
+MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. A first concurrent structured wave on this boot can median ~52 tok/s while `VLLM::Worker_TP0` has ~1.3 GiB in swap (host `vm.swappiness=60`, 6.1 GiB swap used). This table is a second frozen wave after those pages faulted in. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo. `python3 bench_decode.py` repeats both phases at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
 
 ## Requirements
 
@@ -104,6 +104,7 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
     "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
     "messages": [{"role": "user", "content": "Say hello in one sentence."}],
     "max_tokens": 64,
+    "temperature": 0,
     "chat_template_kwargs": {"enable_thinking": false}
   }'
 ```
@@ -125,7 +126,8 @@ Stop both ranks from the head:
 | `--max-num-seqs` | 2 |
 | `--kv-cache-dtype` | `fp8_e4m3` |
 | `--kv-cache-memory` | `4445787956` (4.14 GiB) |
-| `--moe-backend` | `marlin` |
+| `--moe-backend` | `marlin` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2) |
+| Checkpoint | `caca4e6a4ebbd66f159d3d2fc256683fd6e27177` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4) |
@@ -133,11 +135,13 @@ Stop both ranks from the head:
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 
-`--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
+The 2026-08-30 LibertAI checkpoint ships real per-projection `input_scale` tensors. Marlin still never reads them. `flashinfer_cutlass` is not a path on 2× GB10. v11 dies at JIT (`nvrtc.h` missing). v12 with `cuda-nvrtc-dev-13-0` got past that and then global-OOM'd spark2 during `cudafe++` after 90.67 GiB weights (`NV_ERR_NO_MEMORY`, ~18 GiB left). `run.sh` refuses any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar.
+
+`--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Two concurrent 20k-word needles (Tony's three-way 20k shape, at two sequences) and two concurrent 64k-word needles (~98k prompt tokens each) returned `hit=1` with docker `OOMKilled=false`. `MemAvailable` stayed about 8 GiB. Tony's anti-oom kill was three sequences at this pin. Occupancy gate: `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2`. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
 
 Native `max_position_embeddings` is 1,048,576. This pin yields a ~400k-token fp8 hybrid pool (1.22× at 327,680). A 1M request needs ~8.2 GiB of this layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Packed NVFP4 MLA KV is the published 2× GB10 path that actually needles 1M. It is a different attention backend and a different image, and it measured ~22 tok/s prose versus 28 here. This recipe does not pretend one flag set holds both numbers.
 
-`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template always opens `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`.
+`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template always opens `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. Thinking off now seeds an empty `<think></think>` so a Hermes-style tool follow-up does not prefix `</think>` onto `content`.
 
 ## Environment
 

@@ -46,4 +46,5 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [GitHub-ready recipe](./github-ready-recipe.md) covers the clone-and-follow-README surface: files, licenses, image chain, documented defaults.
 - [Serve smoke](./serve-smoke.md) covers the README curl against `/v1/chat/completions`.
 - [Decode bench](./decode-bench.md) covers `python3 bench_decode.py` prose and structured phases.
+- [Quality probes](./quality-probes.md) covers thinking-off leak, parsed tool calls, greedy count, and unique-salt prefill.
 - [Serve start and stop](./serve-start-stop.md) covers `./run.sh` and `./stop.sh` on both Sparks.

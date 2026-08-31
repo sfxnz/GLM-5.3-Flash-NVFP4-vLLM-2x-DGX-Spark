@@ -19,21 +19,33 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-2}"
 UTIL="${UTIL:-0.85}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
 NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-7}"
+# Empty: vLLM sets 2048 under DFlash2. 4096 at seqs=2 shrank the fp8 pool
+# (372877→363476) and slowed structured c=2 (55.5→51.6). Leave unset.
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
 FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
+FORCE_UNSAFE_MOE="${FORCE_UNSAFE_MOE:-0}"
+# Empty: engine auto-enables breakable CUDA graphs. 0 slowed structured
+# c=1 69.4→67.0 and c=2 59.7→52.1. Leave unset.
+VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHAT_TEMPLATE="${CHAT_TEMPLATE:-$SCRIPT_DIR/chat_template.jinja}"
 # GB10 UMA: 4.14 GiB is the safe KV pin on TP=2. Dropping the pin OOMs
 # (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
 # ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
-# concurrent load.
+# concurrent load. Tony's 3.0 GiB pin (3221225472) cannot hold 327680
+# (vLLM wants 3.62 GiB; estimated max len 239616). 4.0 GiB boots but
+# structured c=2 fell 59.5→52.4 (pool 372877→361577).
 KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 # DeepGEMM arch-12 fp8 paged-MQA only accepts 64-entry pool pages. 2304 tiles that.
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
-SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
-SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/aa28e1f54130286c95fee10d0705c74ce8743734"
+# caca4e6 adds calibrated MoE input_scale (LibertAI 2026-08-30). aa28e1f is the rollback.
+SNAPSHOT_REV="${SNAPSHOT_REV:-caca4e6a4ebbd66f159d3d2fc256683fd6e27177}"
+SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/${SNAPSHOT_REV}"
+SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/${SNAPSHOT_REV}"
+MOE_BACKEND="${MOE_BACKEND:-marlin}"
+REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
 DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
@@ -44,9 +56,11 @@ if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
       # Default is the trained block (7 of 8). That occupancy fits two
-      # sequences on the 4.14 GiB pin. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4
-      # is the four-way rollback (positions 5-6 accept <15% on prose, and
-      # each extra slot is a KDA copy that starves the 4th request at 7).
+      # sequences on the 4.14 GiB pin. MAX_NUM_SEQS=3 does not starve the
+      # third stream (TTFT ~0.4 s, even per-stream) but structured c=2
+      # fell 59.5→50.7. NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4 is the
+      # four-way rollback (positions 5-6 accept <15% on prose, and each
+      # extra slot is a KDA copy that starves the 4th request at 7).
       SPEC_CONFIG='{"method":"dflash","model":"'"$DRAFT_SNAPSHOT_IN_CONTAINER"'","num_speculative_tokens":'"$NUM_SPECULATIVE_TOKENS"'}'
       ;;
     mtp)
@@ -80,6 +94,23 @@ fi
 if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
   echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
+fi
+# 327680 needs more than the displayed 3.62 GiB (3886945403 still estimates
+# max len 327168). 3.0 GiB estimates 239616. 4.14 GiB is the known-good pin.
+if [[ "$MAX_MODEL_LEN" -gt 239616 && "$KV_CACHE_MEMORY" -le 3886945403 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
+  echo "KV pin $KV_CACHE_MEMORY cannot hold --max-model-len $MAX_MODEL_LEN (need more than 3.62 GiB; 3886945403 estimates max len 327168). Tony's 3.0 GiB pin is a 262144-ctx budget. FORCE_UNSAFE_CTX=1 overrides." >&2
+  exit 1
+fi
+# CUTLASS fused-MoE JIT exhausted the ~18 GiB left after 90.67 GiB weights.
+if [[ "$MOE_BACKEND" != marlin && "$FORCE_UNSAFE_MOE" != 1 ]]; then
+  echo "MOE_BACKEND=$MOE_BACKEND OOM'd spark2 during flashinfer_cutlass JIT after 90.67 GiB weights (global UMA, NV_ERR_NO_MEMORY). Stay on marlin. FORCE_UNSAFE_MOE=1 overrides." >&2
+  exit 1
+fi
+if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s\n' \
+    "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
+    "$SNAPSHOT_REV" "$MOE_BACKEND"
+  exit 0
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
@@ -218,6 +249,9 @@ start_local() {
     -e "NCCL_CUMEM_ENABLE=0"
     -e "NCCL_DEBUG=WARN"
   )
+  if [[ -n "${VLLM_USE_BREAKABLE_CUDAGRAPH}" ]]; then
+    env_args+=(-e "VLLM_USE_BREAKABLE_CUDAGRAPH=$VLLM_USE_BREAKABLE_CUDAGRAPH")
+  fi
   local host_ip="$HEAD_IP"
   if [[ "$rank" != "0" ]]; then
     host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
@@ -283,11 +317,11 @@ start_local() {
     "${batched_args[@]}" \
     "${eager_args[@]}" \
     --block-size "$BLOCK_SIZE" \
-    --moe-backend marlin \
+    --moe-backend "$MOE_BACKEND" \
     --speculative-config "$SPEC_CONFIG" \
     --tool-call-parser glm47 \
     --enable-auto-tool-choice \
-    --reasoning-parser glm45 \
+    --reasoning-parser "$REASONING_PARSER" \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     "${template_args[@]}" \
     --served-model-name "$SERVED_NAME" \
@@ -328,7 +362,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
