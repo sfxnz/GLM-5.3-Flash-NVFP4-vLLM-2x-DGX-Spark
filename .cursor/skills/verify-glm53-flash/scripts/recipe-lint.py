@@ -246,6 +246,15 @@ def main() -> int:
     )
     if tiny_kv.returncode == 0 or "3.62 GiB" not in tiny_kv.stderr:
         failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3221225472 did not refuse the 3.0 GiB pin")
+    min_kv = subprocess.run(
+        ["bash", str(run_sh_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VALIDATE_ONLY": "1", "KV_CACHE_MEMORY": "3886945403"},
+    )
+    if min_kv.returncode == 0 or "327168" not in min_kv.stderr:
+        failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3886945403 did not refuse the 3.62 GiB display pin")
 
     print(f"repo={REPO}")
     for w in warnings:

@@ -86,9 +86,10 @@ if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UN
   echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
 fi
-# 327680 needs ~3.62 GiB of this hybrid fp8 layout. 3.0 GiB estimates max len 239616.
-if [[ "$MAX_MODEL_LEN" -gt 239616 && "$KV_CACHE_MEMORY" -lt 3886945403 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
-  echo "KV pin $KV_CACHE_MEMORY cannot hold --max-model-len $MAX_MODEL_LEN (need ~3.62 GiB). Tony's 3.0 GiB pin is a 262144-ctx budget. FORCE_UNSAFE_CTX=1 overrides." >&2
+# 327680 needs more than the displayed 3.62 GiB (3886945403 still estimates
+# max len 327168). 3.0 GiB estimates 239616. 4.14 GiB is the known-good pin.
+if [[ "$MAX_MODEL_LEN" -gt 239616 && "$KV_CACHE_MEMORY" -le 3886945403 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
+  echo "KV pin $KV_CACHE_MEMORY cannot hold --max-model-len $MAX_MODEL_LEN (need more than 3.62 GiB; 3886945403 estimates max len 327168). Tony's 3.0 GiB pin is a 262144-ctx budget. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
 fi
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
