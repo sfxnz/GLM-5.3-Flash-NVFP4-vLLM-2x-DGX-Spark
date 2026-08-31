@@ -28,7 +28,8 @@ CHAT_TEMPLATE="${CHAT_TEMPLATE:-$SCRIPT_DIR/chat_template.jinja}"
 # GB10 UMA: 4.14 GiB is the safe KV pin on TP=2. Dropping the pin OOMs
 # (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
 # ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
-# concurrent load.
+# concurrent load. Tony's 3.0 GiB pin (3221225472) cannot hold 327680
+# (vLLM wants 3.62 GiB; estimated max len 239616).
 KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 # DeepGEMM arch-12 fp8 paged-MQA only accepts 64-entry pool pages. 2304 tiles that.
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
@@ -83,6 +84,11 @@ fi
 # fit. Packed NVFP4 KV is a different image/backend, not MAX_MODEL_LEN on this pin.
 if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
   echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
+  exit 1
+fi
+# 327680 needs ~3.62 GiB of this hybrid fp8 layout. 3.0 GiB estimates max len 239616.
+if [[ "$MAX_MODEL_LEN" -gt 239616 && "$KV_CACHE_MEMORY" -lt 3886945403 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
+  echo "KV pin $KV_CACHE_MEMORY cannot hold --max-model-len $MAX_MODEL_LEN (need ~3.62 GiB). Tony's 3.0 GiB pin is a 262144-ctx budget. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
 fi
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then

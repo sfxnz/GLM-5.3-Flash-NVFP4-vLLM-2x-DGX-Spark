@@ -237,6 +237,15 @@ def main() -> int:
     )
     if refuse.returncode == 0 or "cannot hold --max-model-len" not in refuse.stderr:
         failures.append("VALIDATE_ONLY=1 MAX_MODEL_LEN=1048576 did not refuse the fp8 1M window")
+    tiny_kv = subprocess.run(
+        ["bash", str(run_sh_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VALIDATE_ONLY": "1", "KV_CACHE_MEMORY": "3221225472"},
+    )
+    if tiny_kv.returncode == 0 or "3.62 GiB" not in tiny_kv.stderr:
+        failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3221225472 did not refuse the 3.0 GiB pin")
 
     print(f"repo={REPO}")
     for w in warnings:
