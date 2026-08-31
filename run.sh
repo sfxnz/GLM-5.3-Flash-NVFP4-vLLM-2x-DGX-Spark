@@ -29,7 +29,8 @@ CHAT_TEMPLATE="${CHAT_TEMPLATE:-$SCRIPT_DIR/chat_template.jinja}"
 # (NV_ERR_NO_MEMORY). Raising it boots but degrades: 5.0 GiB slowed decode
 # ~20% at every concurrency (UMA pressure), and 5.14 GiB crashed under
 # concurrent load. Tony's 3.0 GiB pin (3221225472) cannot hold 327680
-# (vLLM wants 3.62 GiB; estimated max len 239616).
+# (vLLM wants 3.62 GiB; estimated max len 239616). 4.0 GiB boots but
+# structured c=2 fell 59.5→52.4 (pool 372877→361577).
 KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 # DeepGEMM arch-12 fp8 paged-MQA only accepts 64-entry pool pages. 2304 tiles that.
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
