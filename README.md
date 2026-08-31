@@ -134,7 +134,7 @@ Stop both ranks from the head:
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 
-`--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
+`--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Two concurrent 20k-word needles (Tony's three-way 20k shape, at two sequences) and two concurrent 64k-word needles (~98k prompt tokens each) returned `hit=1` with docker `OOMKilled=false`. `MemAvailable` stayed about 8 GiB. Tony's anti-oom kill was three sequences at this pin. Occupancy gate: `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2`. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
 
 Native `max_position_embeddings` is 1,048,576. This pin yields a ~400k-token fp8 hybrid pool (1.22× at 327,680). A 1M request needs ~8.2 GiB of this layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Packed NVFP4 MLA KV is the published 2× GB10 path that actually needles 1M. It is a different attention backend and a different image, and it measured ~22 tok/s prose versus 28 here. This recipe does not pretend one flag set holds both numbers.
 

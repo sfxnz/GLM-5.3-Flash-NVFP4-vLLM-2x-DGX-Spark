@@ -198,6 +198,8 @@ def main() -> int:
         src = needle.read_text()
         if "prefill_tok_s" not in src or "--salt" not in src or "ttft_s" not in src:
             failures.append("needle_probe.py missing prefill_tok_s, ttft_s, or --salt")
+        if "--concurrency" not in src or "serve_alive" not in src:
+            failures.append("needle_probe.py missing --concurrency or serve_alive")
         dry = subprocess.run(
             [sys.executable, str(needle), "--prompt-tokens", "100", "--salt", "lint", "--dry-run"],
             check=False,
@@ -206,6 +208,26 @@ def main() -> int:
         )
         if dry.returncode != 0 or "dry_run=1" not in dry.stdout:
             failures.append(f"needle_probe.py --dry-run failed: {dry.stderr.strip() or dry.stdout.strip()}")
+        dry2 = subprocess.run(
+            [
+                sys.executable,
+                str(needle),
+                "--prompt-tokens",
+                "100",
+                "--salt",
+                "lint",
+                "--concurrency",
+                "2",
+                "--dry-run",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if dry2.returncode != 0 or "dry_run=1" not in dry2.stdout or "n=2" not in dry2.stdout:
+            failures.append(
+                f"needle_probe.py --concurrency 2 --dry-run failed: {dry2.stderr.strip() or dry2.stdout.strip()}"
+            )
 
     try:
         got_72 = shipped_dflash2_sizes(run_sh, 7, 2)

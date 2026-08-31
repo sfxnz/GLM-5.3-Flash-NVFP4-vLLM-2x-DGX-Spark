@@ -86,5 +86,5 @@ All under `.cursor/skills/verify-glm53-flash/scripts/`. `lib.sh` is sourced by t
 | `thinking_off_probe.py` | Thinking-off completion; fail on empty `content` or `<think>` leak |
 | `tool_call_probe.py` | Tools request; fail unless a parsed `get_weather` tool call |
 | `hermes_probe.py` | User → parsed tool_calls → role=tool → assistant content with no think leak |
-| `needle_probe.py` | Unique-salt needle retrieval (`--prompt-tokens`); prints `prefill_tok_s` |
+| `needle_probe.py` | Unique-salt needle retrieval (`--prompt-tokens`); `--concurrency 2` is advertised occupancy and fails if `/v1/models` dies |
 | `cleanup.sh` | End of a run, and after every failed iteration |

@@ -7,6 +7,7 @@ Thinking-off completions put the answer in `message.content` with no leaked `<th
 - `thinking-off` runs `thinking_off_probe.py` and requires non-empty `content` with no `<think>` leak.
 - `tool-call` runs `tool_call_probe.py` and requires a parsed `get_weather` tool call.
 - `prefill-needle` runs `needle_probe.py --prompt-tokens N` with a unique `--salt` and prints `prefill_tok_s`.
+- `prefill-occupancy` runs `needle_probe.py --prompt-tokens 20480 --concurrency 2` (advertised `--max-num-seqs`) and requires both hits plus `serve_alive=1`.
 - `count-greedy` runs `count_probe.py` and requires a long consecutive integer run.
 - `hermes-tools` runs `hermes_probe.py` and requires a parsed tool call, then a `role=tool` follow-up with non-empty assistant `content` and no `<think>` leak.
 
@@ -20,6 +21,7 @@ python3 .cursor/skills/verify-glm53-flash/scripts/tool_call_probe.py
 python3 .cursor/skills/verify-glm53-flash/scripts/hermes_probe.py
 python3 .cursor/skills/verify-glm53-flash/scripts/count_probe.py
 python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 8192
+python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2
 ```
 
 ## Driving it with verify-glm53
@@ -33,6 +35,7 @@ Preconditions:
 - **Tool call.** Run `python3 .cursor/skills/verify-glm53-flash/scripts/tool_call_probe.py`. Exit `0`. Stdout has `n_tool_calls` greater than 0 and `names` containing `get_weather`.
 - **Greedy count.** Run `python3 .cursor/skills/verify-glm53-flash/scripts/count_probe.py`. Exit `0`. `consecutive` is at least `--need` (default 80).
 - **Prefill needle.** Run `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 8192`. Exit `0`. Stdout contains `hit=1`, `prompt_tokens=` greater than 0, `wall_s=`, `ttft_s=`, and `prefill_tok_s=`. The `SUMMARY` JSON repeats those fields.
+- **Prefill occupancy.** Run `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2`. Exit `0`. Two streams print `hit=1`. The last `SUMMARY` JSON has `n` 2, `failed` 0, and `serve_alive` 1. Doctor still prints `status=ready`. Docker `OOMKilled` stays false.
 - **Hermes tools loop.** Run `python3 .cursor/skills/verify-glm53-flash/scripts/hermes_probe.py`. Exit `0`. Turn 1 has a parsed `get_weather` tool call. Turn 2 is HTTP 200 with non-empty `content` and `leaked_think=0`.
 - **Proof.** Save each command's stdout plus a doctor dump.
 
@@ -43,3 +46,4 @@ Preconditions:
 - `count_probe.py` is the lossless gate. `bench_decode.py --phase structured` is tok/s, not exact 1–200.
 - A tools request that dumps glm47 XML into `content` without `message.tool_calls` is a fail. The recipe serves `--tool-call-parser glm47`.
 - A tool follow-up that prefixes `</think>` onto `content` is a fail. Thinking-off seeds an empty `<think></think>` in `chat_template.jinja`. The live process only picks that up after a restart.
+- `--concurrency 2` is the advertised occupancy OOM gate. Tony's anti-oom kill was three 20k prefills. This recipe stays at two sequences. The probe fails if `/v1/models` dies after the pair.
