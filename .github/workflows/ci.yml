@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recipe-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 .cursor/skills/verify-glm53-flash/scripts/recipe-lint.py
+
+  validate-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: run.sh dry-run with the shipped defaults
+        run: VALIDATE_ONLY=1 ./run.sh
+      - name: run.sh refuses a 1M window on the fp8 pin
+        run: |
+          if VALIDATE_ONLY=1 MAX_MODEL_LEN=1048576 ./run.sh; then
+            echo "run.sh accepted MAX_MODEL_LEN=1048576 without FORCE_UNSAFE_CTX" >&2
+            exit 1
+          fi
+      - name: run.sh refuses a non-marlin MoE backend
+        run: |
+          if VALIDATE_ONLY=1 MOE_BACKEND=flashinfer_cutlass ./run.sh; then
+            echo "run.sh accepted MOE_BACKEND=flashinfer_cutlass without FORCE_UNSAFE_MOE" >&2
+            exit 1
+          fi
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck -S warning run.sh stop.sh .cursor/skills/verify-glm53-flash/scripts/*.sh

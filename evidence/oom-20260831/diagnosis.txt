@@ -1,0 +1,19 @@
+host_reported=spark1
+kernel_oom_host=spark2
+spark2_docker=OOMKilled=true Exit=0 FinishedAt=2026-08-31T11:19:38Z
+spark1_docker=OOMKilled=false Exit=255 FinishedAt=2026-08-31T11:21:55Z
+image=glm53-sm121-v12
+snapshot=caca4e6a4ebbd66f159d3d2fc256683fd6e27177
+moe_backend=flashinfer_cutlass
+weights_gib=90.67
+spark2_avail_ram_at_load_start=20.34GiB
+spark2_avail_ram_at_draft_load=18.21GiB
+spark1_avail_ram_at_draft_load=17.50GiB
+constraint=CONSTRAINT_NONE global_oom
+killed=VLLM::Worker_TP pid=3315704
+invokers=dockerd, cudafe++, gsd-media-keys
+nvrm=NV_ERR_NO_MEMORY after kill
+mechanism=flashinfer_cutlass fused-MoE JIT (needs nvrtc.h from v12) after 90.67GiB UMA weights; remaining ~18GiB exhausted during cudafe++/graph capture
+spark1_symptom=shm_broadcast hang then exit 255 after TP partner died
+do_not_retry=MOE_BACKEND=flashinfer_cutlass IMAGE=glm53-sm121-v12
+restore=IMAGE=glm53-sm121-v11 MOE_BACKEND=marlin SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177

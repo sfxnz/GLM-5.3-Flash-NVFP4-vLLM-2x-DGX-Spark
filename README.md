@@ -21,6 +21,8 @@ Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences.
 
 MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. A first concurrent structured wave on this boot can median ~52 tok/s while `VLLM::Worker_TP0` has ~1.3 GiB in swap (host `vm.swappiness=60`, 6.1 GiB swap used). This table is a second frozen wave after those pages faulted in. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo. `python3 bench_decode.py` repeats both phases at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
 
+Receipts for these numbers are in [`evidence/`](evidence/): `trail.tsv` and `decision.tsv` (what was tried, kept, reverted), `hypotheses.md`, and per-iteration `bench.txt` / `run.log` / `doctor.txt`.
+
 ## Requirements
 
 - Two DGX Sparks on the QSFP RoCE link (stock `10.100.8.1` / `10.100.8.2`)
