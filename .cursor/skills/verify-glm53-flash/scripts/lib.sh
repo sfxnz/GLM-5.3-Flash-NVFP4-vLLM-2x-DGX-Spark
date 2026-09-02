@@ -1,4 +1,7 @@
 # Shared paths and the same env defaults as run.sh. Source from the other helpers.
+# shellcheck shell=bash
+# SC2034: these variables are read by the scripts that source this file.
+# shellcheck disable=SC2034
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
