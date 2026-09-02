@@ -1,0 +1,87 @@
+url=http://127.0.0.1:8000/v1/chat/completions model=LibertAIDAI/GLM-5.3-Flash-NVFP4 max_tokens=200 runs=3 concurrency=[1, 2, 4] phases=['prose', 'structured']
+phase=prose c=1 run=1 wall=9.34s agg=21.91 tok/s per_stream=[21.91] ttft=[0.300]
+phase=prose c=1 run=2 wall=7.36s agg=27.67 tok/s per_stream=[27.68] ttft=[0.315]
+phase=prose c=1 run=3 wall=7.77s agg=26.17 tok/s per_stream=[26.17] ttft=[0.322]
+phase=prose c=2 run=1 wall=15.26s agg=35.86 tok/s per_stream=[16.11,23.95] ttft=[6.947,6.947]
+phase=prose c=2 run=2 wall=9.42s agg=43.06 tok/s per_stream=[22.55,21.09] ttft=[0.359,0.358]
+phase=prose c=2 run=3 wall=10.21s agg=40.20 tok/s per_stream=[21.26,20.21] ttft=[0.356,0.356]
+phase=prose c=4 run=1 wall=14.28s agg=50.90 tok/s per_stream=[10.62,15.82,15.86,13.89] ttft=[0.859,0.859,0.859,0.233]
+phase=prose c=4 run=2 wall=19.29s agg=44.45 tok/s per_stream=[13.37,12.84,18.25,15.19] ttft=[6.342,6.342,6.186,6.185]
+phase=prose c=4 run=3 wall=11.89s agg=49.81 tok/s per_stream=[11.32,12.48,17.46,17.30] ttft=[0.382,0.541,0.383,0.383]
+phase=structured c=1 run=1 wall=3.91s agg=55.46 tok/s per_stream=[55.47] ttft=[0.319]
+phase=structured c=1 run=2 wall=3.81s agg=55.78 tok/s per_stream=[55.79] ttft=[0.238]
+phase=structured c=1 run=3 wall=3.80s agg=55.59 tok/s per_stream=[55.60] ttft=[0.223]
+phase=structured c=2 run=1 wall=5.07s agg=85.03 tok/s per_stream=[42.83,44.15] ttft=[0.221,0.565]
+phase=structured c=2 run=2 wall=5.09s agg=84.96 tok/s per_stream=[42.79,44.12] ttft=[0.233,0.578]
+phase=structured c=2 run=3 wall=5.08s agg=85.00 tok/s per_stream=[42.81,44.14] ttft=[0.223,0.567]
+phase=structured c=4 run=1 wall=5.80s agg=153.35 tok/s per_stream=[37.37,38.35,38.35,38.35] ttft=[0.224,0.612,0.611,0.611]
+phase=structured c=4 run=2 wall=5.82s agg=152.79 tok/s per_stream=[37.26,38.21,38.21,38.21] ttft=[0.228,0.614,0.614,0.614]
+phase=structured c=4 run=3 wall=5.86s agg=151.89 tok/s per_stream=[37.03,38.00,37.99,37.99] ttft=[0.227,0.617,0.615,0.615]
+SUMMARY [
+  {
+    "phase": "prose",
+    "concurrency": 1,
+    "median_decode_tok_s": 26.172287541568732,
+    "median_ttft_s": 0.31537455500802025,
+    "median_agg_tok_s": 26.169747688517848,
+    "median_completion_tokens": 196,
+    "n": 3,
+    "acceptance_len": 2.638392857142857,
+    "draft_acceptance_rate": 0.32767857142857143
+  },
+  {
+    "phase": "prose",
+    "concurrency": 2,
+    "median_decode_tok_s": 21.177530829755938,
+    "median_ttft_s": 0.3589520355017157,
+    "median_agg_tok_s": 40.20479515509561,
+    "median_completion_tokens": 199.0,
+    "n": 6,
+    "acceptance_len": 2.838961038961039,
+    "draft_acceptance_rate": 0.3677922077922078
+  },
+  {
+    "phase": "prose",
+    "concurrency": 4,
+    "median_decode_tok_s": 14.53832662957721,
+    "median_ttft_s": 0.8586067059950437,
+    "median_agg_tok_s": 49.80828567232761,
+    "median_completion_tokens": 192.0,
+    "n": 12,
+    "acceptance_len": 2.452127659574468,
+    "draft_acceptance_rate": 0.2904255319148936
+  },
+  {
+    "phase": "structured",
+    "concurrency": 1,
+    "median_decode_tok_s": 55.60324920382019,
+    "median_ttft_s": 0.23808285500854254,
+    "median_agg_tok_s": 55.590386114055306,
+    "median_completion_tokens": 200,
+    "n": 3,
+    "acceptance_len": 6.0,
+    "draft_acceptance_rate": 1.0
+  },
+  {
+    "phase": "structured",
+    "concurrency": 2,
+    "median_decode_tok_s": 43.47237910997594,
+    "median_ttft_s": 0.39910667200456373,
+    "median_agg_tok_s": 85.00373796144541,
+    "median_completion_tokens": 200.0,
+    "n": 6,
+    "acceptance_len": 6.0,
+    "draft_acceptance_rate": 1.0
+  },
+  {
+    "phase": "structured",
+    "concurrency": 4,
+    "median_decode_tok_s": 38.102507021674896,
+    "median_ttft_s": 0.6128008300001966,
+    "median_agg_tok_s": 152.78806724573033,
+    "median_completion_tokens": 200.0,
+    "n": 12,
+    "acceptance_len": 6.0,
+    "draft_acceptance_rate": 1.0
+  }
+]
