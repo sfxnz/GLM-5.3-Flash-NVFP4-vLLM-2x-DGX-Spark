@@ -1,0 +1,98 @@
+# Source of truth for the values that repeat across run.sh, README.md and CI.
+# Edit here, then `python3 kit/render.py`. CI runs `python3 kit/render.py --check`.
+# Every scalar is used as the string you typed (0.80 stays 0.80). `null` means none.
+# `&name` anchors a value; `*name` reuses it, so a pinned value is written once.
+
+model:
+  id: &model LibertAIDAI/GLM-5.3-Flash-NVFP4
+  revision: &revision caca4e6a4ebbd66f159d3d2fc256683fd6e27177
+  served_name: &served_name LibertAIDAI/GLM-5.3-Flash-NVFP4
+  family: GLM-5.3-Flash
+  params: 320B total / 18B active
+  quant: NVFP4 (weight-only, routed experts)
+  draft: incoai/GLM-5.3-Flash-DFlash2 @ 7d74cdd881ed7e32c31175984a67823127b66cfe
+
+image:
+  base: vllm/vllm-openai:glm53-flash-arm64-cu130
+  digest: null
+  local_tag: &image glm53-sm121-v11
+  build: docker/Dockerfile.sm121-v8 -> v9 -> v10 -> v11
+
+engine:
+  name: vllm
+  version: null
+
+hardware:
+  shape: 2x DGX Spark (GB10)
+  nnodes: &nnodes 2
+  tp: &tp 2
+
+serve:
+  # The `# BEGIN generated` block of run.sh, in run.sh order. Each key renders as NAME="${NAME:-value}".
+  env:
+    MODEL: *model
+    SERVED_NAME: *served_name
+    IMAGE: *image
+    CONTAINER_NAME: glm53-flash-nvfp4
+    PORT: 8000
+    MASTER_PORT: 29521
+    HEAD_IP: 10.100.8.1
+    WORKER_HOST: spark2
+    IFACE: enp1s0f1np1
+    HCA: rocep1s0f1
+    TP: *tp
+    NNODES: *nnodes
+    MAX_MODEL_LEN: 327680
+    MAX_NUM_SEQS: 2
+    UTIL: 0.85
+    KV_CACHE_DTYPE: fp8_e4m3
+    NUM_SPECULATIVE_TOKENS: 7
+    MAX_NUM_BATCHED_TOKENS: ""
+    FORCE_UNSAFE_CTX: 0
+    FORCE_UNSAFE_MOE: 0
+    VLLM_USE_BREAKABLE_CUDAGRAPH: ""
+    CHAT_TEMPLATE: $SCRIPT_DIR/chat_template.jinja
+    KV_CACHE_MEMORY: 4445787956
+    BLOCK_SIZE: 2304
+    HF_CACHE: $HOME/.cache/huggingface
+    SNAPSHOT_REV: *revision
+    MOE_BACKEND: marlin
+    REASONING_PARSER: glm45
+    DRAFT_MODEL: incoai/GLM-5.3-Flash-DFlash2
+    SPEC: dflash2
+
+readme:
+  # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
+  defaults:
+    - Image: "`{IMAGE}` (local)"
+    - Model: "`{MODEL}`"
+    - "`--tensor-parallel-size` / `--nnodes`": "{TP} / {NNODES}"
+    - "`--max-model-len`": "{MAX_MODEL_LEN}"
+    - "`--max-num-seqs`": "{MAX_NUM_SEQS}"
+    - "`--kv-cache-dtype`": "`{KV_CACHE_DTYPE}`"
+    - "`--kv-cache-memory`": "`{KV_CACHE_MEMORY}` (4.14 GiB)"
+    - "`--moe-backend`": "`{MOE_BACKEND}` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
+    - Checkpoint: "`{SNAPSHOT_REV}` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back)"
+    - "`--block-size`": "{BLOCK_SIZE}"
+    - CUDA graphs: "on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
+    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4)"
+    - Chat template: "`chat_template.jinja` (honors `enable_thinking`)"
+    - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
+    - API: "`http://<head>:{PORT}/v1`"
+
+measured:
+  # The README decode table. One row per (phase, concurrency); a row's three numbers come from one
+  # bench_decode.py run. evidence: the file under evidence/ that contains them, or null while there is none.
+  decode:
+    conditions: streamed greedy, thinking off, 200 completion tokens, 3-run median; max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
+    units: {decode: tok/s per stream (median), aggregate: tok/s, ttft_p50: s}
+    rows:
+      - {phase: prose, concurrency: 1, decode: 19.7, aggregate: 19.7, ttft_p50: 0.34, evidence: null}
+      - {phase: prose, concurrency: 2, decode: 16.3, aggregate: 31.0, ttft_p50: 0.36, evidence: null}
+      - {phase: structured, concurrency: 1, decode: 67.1, aggregate: 67.1, ttft_p50: 0.34, evidence: evidence/iter-h-snap/bench.txt}
+      - {phase: structured, concurrency: 2, decode: 59.9, aggregate: 119.7, ttft_p50: 0.37, evidence: null}
+
+links:
+  model: https://huggingface.co/LibertAIDAI/GLM-5.3-Flash-NVFP4
+  draft: https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2
+  repo: https://github.com/sfxnz/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark

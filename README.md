@@ -10,12 +10,14 @@ Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the 
 
 Decode only. Streamed greedy, thinking off, 200 completion tokens, 3-run median. `max-num-seqs=2`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs. Prose is the low-acceptance regime (free text); structured (count 1→200, same protocol as the EXL3 recipe) is the high-acceptance regime.
 
+<!-- BEGIN generated measured from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
 |---|---|---:|---:|---:|
 | prose | 1 | 19.7 | 19.7 | 0.34 s |
 | prose | 2 | 16.3 | 31.0 | 0.36 s |
 | structured | 1 | 67.1 | 67.1 | 0.34 s |
 | structured | 2 | 59.9 | 119.7 | 0.37 s |
+<!-- END generated measured -->
 
 Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. `MAX_NUM_SEQS=3` at DFlash2-7 does not starve the third stream, but structured c=2 fell 59.5 → 50.7. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). `ENFORCE_EAGER=1` is the rollback; it slowed structured c=1 68.1 → 65.0. Adding capture size 3 to the ladder was inside noise. Capture size 24 at two sequences was unused and stayed inside noise. `VLLM_USE_BREAKABLE_CUDAGRAPH=0` slowed structured c=2 59.7 → 52.1. Leave the engine auto-on. `--async-scheduling` boots with DFlash2-7 and keeps FULL_AND_PIECEWISE graphs. Versus this table every cell stayed inside noise. Versus the restore before, prose c=2 fell 16.98 → 15.19. Leave it off. Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476). Tony's 3.0 GiB KV pin cannot boot `--max-model-len` 327680 (vLLM wants 3.62 GiB). The displayed 3.62 GiB pin (3886945403) still estimates max len 327168 and refuses. A 4.0 GiB pin boots but structured c=2 fell 59.5 → 52.4.
 
@@ -119,6 +121,7 @@ Stop both ranks from the head:
 
 ## Defaults
 
+<!-- BEGIN generated defaults from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Setting | Value |
 |---|---|
 | Image | `glm53-sm121-v11` (local) |
@@ -136,6 +139,7 @@ Stop both ranks from the head:
 | Chat template | `chat_template.jinja` (honors `enable_thinking`) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
+<!-- END generated defaults -->
 
 The 2026-08-30 LibertAI checkpoint ships real per-projection `input_scale` tensors. Marlin still never reads them. `flashinfer_cutlass` is not a path on 2× GB10. v11 dies at JIT (`nvrtc.h` missing). v12 with `cuda-nvrtc-dev-13-0` got past that and then global-OOM'd spark2 during `cudafe++` after 90.67 GiB weights (`NV_ERR_NO_MEMORY`, ~18 GiB left). `run.sh` refuses any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar.
 

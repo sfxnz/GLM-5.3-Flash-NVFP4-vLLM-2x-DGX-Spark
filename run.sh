@@ -2,6 +2,7 @@
 # GLM-5.3-Flash NVFP4 on 2x DGX Spark (GB10) — vLLM TP=2
 set -euo pipefail
 
+# BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
 IMAGE="${IMAGE:-glm53-sm121-v11}"
@@ -52,6 +53,7 @@ DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
 # the glm53-sm121-v11 image) or mtp (GLM's native MTP head).
 SPEC="${SPEC:-dflash2}"
+# END generated
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)

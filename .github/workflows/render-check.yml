@@ -1,0 +1,17 @@
+name: render-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  render-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: pip install pyyaml
+      - run: python3 kit/render.py --check
