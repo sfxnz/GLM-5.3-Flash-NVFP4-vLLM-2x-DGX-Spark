@@ -1,0 +1,59 @@
+url=http://127.0.0.1:8000/v1/chat/completions model=LibertAIDAI/GLM-5.3-Flash-NVFP4 max_tokens=200 runs=3 concurrency=[1, 2] phases=['prose', 'structured'] chat_template_kwargs={"enable_thinking": false}
+phase=prose c=1 run=1 wall=4.68s agg=21.18 tok/s per_stream=[21.18] ttft=[0.245]
+phase=prose c=1 run=2 wall=5.42s agg=18.85 tok/s per_stream=[18.85] ttft=[0.326]
+phase=prose c=1 run=3 wall=6.39s agg=16.86 tok/s per_stream=[16.86] ttft=[0.343]
+phase=prose c=2 run=1 wall=11.50s agg=37.86 tok/s per_stream=[18.94,18.93] ttft=[6.539,6.539]
+phase=prose c=2 run=2 wall=5.92s agg=34.98 tok/s per_stream=[17.42,18.03] ttft=[0.369,0.369]
+phase=prose c=2 run=3 wall=7.42s agg=27.93 tok/s per_stream=[16.39,14.89] ttft=[0.364,0.363]
+phase=structured c=1 run=1 wall=3.15s agg=70.00 tok/s per_stream=[70.02] ttft=[0.309]
+phase=structured c=1 run=2 wall=3.31s agg=66.90 tok/s per_stream=[66.92] ttft=[0.333]
+phase=structured c=1 run=3 wall=3.34s agg=66.20 tok/s per_stream=[66.21] ttft=[0.335]
+phase=structured c=2 run=1 wall=3.69s agg=119.20 tok/s per_stream=[59.62,59.62] ttft=[0.347,0.348]
+phase=structured c=2 run=2 wall=3.70s agg=119.67 tok/s per_stream=[59.86,59.85] ttft=[0.379,0.378]
+phase=structured c=2 run=3 wall=3.68s agg=120.37 tok/s per_stream=[60.20,60.20] ttft=[0.375,0.375]
+SUMMARY [
+  {
+    "phase": "prose",
+    "concurrency": 1,
+    "median_decode_tok_s": 18.854100822317804,
+    "median_ttft_s": 0.32585087200277485,
+    "median_agg_tok_s": 18.84994525941638,
+    "median_completion_tokens": 97,
+    "n": 3,
+    "acceptance_len": 2.201492537313433,
+    "draft_acceptance_rate": 0.17164179104477612
+  },
+  {
+    "phase": "prose",
+    "concurrency": 2,
+    "median_decode_tok_s": 17.725441685534996,
+    "median_ttft_s": 0.36907335551222786,
+    "median_agg_tok_s": 34.978613521823114,
+    "median_completion_tokens": 95.0,
+    "n": 6,
+    "acceptance_len": 2.4683544303797467,
+    "draft_acceptance_rate": 0.20976491862567812
+  },
+  {
+    "phase": "structured",
+    "concurrency": 1,
+    "median_decode_tok_s": 66.91741208279107,
+    "median_ttft_s": 0.33279059498454444,
+    "median_agg_tok_s": 66.90448498981858,
+    "median_completion_tokens": 200,
+    "n": 3,
+    "acceptance_len": 7.8441558441558445,
+    "draft_acceptance_rate": 0.9777365491651205
+  },
+  {
+    "phase": "structured",
+    "concurrency": 2,
+    "median_decode_tok_s": 59.85523384014887,
+    "median_ttft_s": 0.37466137450246606,
+    "median_agg_tok_s": 119.66908888272702,
+    "median_completion_tokens": 200.0,
+    "n": 6,
+    "acceptance_len": 8.0,
+    "draft_acceptance_rate": 1.0
+  }
+]

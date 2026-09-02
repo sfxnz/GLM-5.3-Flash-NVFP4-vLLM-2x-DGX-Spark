@@ -6,10 +6,10 @@ cd "$REPO"
 ITER="${1:?usage: run-iter.sh <id>}"
 OUT="evidence/iter-$ITER"
 mkdir -p "$OUT"
-export STATE_DIR=".cursor/skills/verify-glm53-flash/.run-state"
+export STATE_DIR=".run-state"
 mkdir -p "$STATE_DIR"
 
-doctor() { .cursor/skills/verify-glm53-flash/scripts/doctor.sh; }
+doctor() { kit/doctor.sh .; }
 
 echo "==> stopping previous serve"
 ./stop.sh | tee "$OUT/stop.txt"
@@ -36,8 +36,8 @@ if [[ "$drc" -ne 0 ]]; then
   exit "$drc"
 fi
 
-python3 .cursor/skills/verify-glm53-flash/scripts/count_probe.py >"$OUT/count.txt" 2>&1
-python3 bench_decode.py >"$OUT/bench.txt" 2>&1
+python3 kit/probes/count.py . "$OUT" >"$OUT/count.txt" 2>&1
+python3 kit/bench_decode.py --recipe . --phase both --out "$OUT" >/dev/null 2>&1
 python3 - "$OUT/bench.txt" <<'PY'
 import json, pathlib, sys
 text = pathlib.Path(sys.argv[1]).read_text()

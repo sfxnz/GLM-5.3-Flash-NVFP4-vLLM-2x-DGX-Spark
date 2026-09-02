@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: python3 .cursor/skills/verify-glm53-flash/scripts/recipe-lint.py
+      - run: pip install pyyaml
+      - run: python3 kit/recipe_lint.py .
 
   validate-only:
     runs-on: ubuntu-latest
@@ -43,4 +44,4 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: shellcheck -S warning run.sh stop.sh .cursor/skills/verify-glm53-flash/scripts/*.sh
+      - run: shellcheck -S warning run.sh stop.sh kit/*.sh kit/probes/*.sh
