@@ -1,0 +1,86 @@
+INFO 09-02 20:43:31 [model.py:679] Resolved architecture: Glm5NextForConditionalGeneration
+INFO 09-02 20:43:31 [model.py:1972] Using max model len 327680
+INFO 09-02 20:43:34 [cache.py:282] Using fp8_e4m3 data type to store kv cache. It reduces the GPU memory footprint and boosts the performance. Meanwhile, it may cause accuracy drop without a proper scaling factor
+INFO 09-02 20:43:34 [arg_utils.py:2168] Inferred data_parallel_rank 0 from node_rank 1
+INFO 09-02 20:43:39 [model.py:679] Resolved architecture: DFlash2DraftModel
+INFO 09-02 20:43:39 [model.py:1972] Using max model len 1048576
+INFO 09-02 20:43:39 [speculative.py:1256] Overriding draft model max model len from 1048576 to 327680
+INFO 09-02 20:43:39 [config.py:605] Mamba cache mode is set to 'align' for Glm5NextForConditionalGeneration by default when prefix caching is enabled
+WARNING 09-02 20:43:39 [modelopt.py:1012] Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4). Please note that the format is experimental and could change in future.
+INFO 09-02 20:43:39 [vllm.py:1336] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+INFO 09-02 20:43:39 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+WARNING 09-02 20:43:39 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or decrease num_speculative_tokens.
+INFO 09-02 20:43:39 [compilation.py:329] Enabled custom fusions: norm_quant, act_quant
+INFO 09-02 20:43:39 [serve.py:216] Launching vLLM (v0.1.dev20051+g487ecf187) headless multiproc executor, with head node address 10.100.8.1:29521 for torch.distributed process group.
+(Worker pid=327) INFO 09-02 20:43:46 [parallel_state.py:1638] world_size=2 rank=1 local_rank=0 distributed_init_method=tcp://10.100.8.1:29521 backend=nccl
+(Worker pid=327) WARNING 09-02 20:44:28 [symm_mem.py:67] SymmMemCommunicator: Device capability 12.1 not supported, communicator is not available.
+(Worker pid=327) WARNING 09-02 20:44:28 [custom_all_reduce.py:254] Custom collectives are disabled because this multi-node group does not support MNNVL multicast.
+(Worker pid=327) INFO 09-02 20:44:30 [parallel_state.py:1982] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP rank 1, EPLB rank N/A
+(Worker pid=327) INFO 09-02 20:44:30 [gpu_worker.py:386] Using V2 Model Runner
+(Worker_TP1 pid=327) INFO 09-02 20:44:30 [model_runner.py:353] Loading model from scratch...
+(Worker_TP1 pid=327) INFO 09-02 20:44:30 [cuda.py:592] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(Worker_TP1 pid=327) INFO 09-02 20:44:30 [mm_encoder_attention.py:375] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(Worker_TP1 pid=327) INFO 09-02 20:44:30 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(Worker_TP1 pid=327) WARNING 09-02 20:44:30 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or decrease num_speculative_tokens.
+(Worker_TP1 pid=327) INFO 09-02 20:44:31 [cuda.py:533] Using FLASHINFER_MLA_SPARSE_SM90 attention backend out of potential backends: ['FLASHINFER_MLA_SPARSE_SM90', 'FLASHINFER_MLA_SPARSE_SM120'].
+(Worker_TP1 pid=327) INFO 09-02 20:44:31 [selector.py:217] Using HND KV cache layout for FLASHINFER_MLA_SPARSE_SM90 backend.
+(Worker_TP1 pid=327) WARNING 09-02 20:44:31 [mla_attention.py:567] No MLA prefill backend supports this model; sparse MLA will use the top-k MQA path only (no dense-MHA prefill).
+(Worker_TP1 pid=327) INFO 09-02 20:44:31 [deep_gemm.py:191] deep_gemm not found in site-packages, trying vendored vllm.third_party.deep_gemm
+(Worker_TP1 pid=327) INFO 09-02 20:44:31 [deep_gemm.py:136] DeepGEMM E8M0 enabled on current platform.
+(Worker_TP1 pid=327) INFO 09-02 20:44:31 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+(Worker_TP1 pid=327) INFO 09-02 20:44:34 [weight_utils.py:858] Filesystem type for checkpoints: EXT4. Checkpoint size: 181.30 GiB. Available RAM: 20.55 GiB.
+(Worker_TP1 pid=327) INFO 09-02 20:44:34 [weight_utils.py:888] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre) and the checkpoint size (181.30 GiB) exceeds 90% of available RAM (20.55 GiB).
+(Worker_TP1 pid=327) INFO 09-02 20:47:52 [default_loader.py:430] Loading weights took 197.46 seconds
+(Worker_TP1 pid=327) WARNING 09-02 20:47:52 [modelopt.py:1534] w1_weight_scale_2 must match w3_weight_scale_2. Accuracy may be affected.
+(Worker_TP1 pid=327) WARNING 09-02 20:47:52 [marlin_utils_fp4.py:354] Your GPU does not have native support for FP4 computation but FP4 quantization is being used. Weight-only FP4 compression will be used leveraging the Marlin kernel. This may degrade performance for compute-heavy workloads.
+(Worker_TP1 pid=327) INFO 09-02 20:47:55 [nvfp4.py:564] Using MoEPrepareAndFinalizeNoDPEPModular
+(Worker_TP1 pid=327) INFO 09-02 20:48:21 [eagle3_utils.py:28] Using Eagle3 auxiliary layers from config: (6, 15, 25, 34, 43)
+(Worker_TP1 pid=327) INFO 09-02 20:48:22 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(Worker_TP1 pid=327) INFO 09-02 20:48:23 [cuda.py:533] Using FLASHINFER attention backend out of potential backends: ['FLASHINFER', 'TRITON_ATTN'].
+(Worker_TP1 pid=327) INFO 09-02 20:48:24 [weight_utils.py:858] Filesystem type for checkpoints: EXT4. Checkpoint size: 2.18 GiB. Available RAM: 18.25 GiB.
+(Worker_TP1 pid=327) INFO 09-02 20:48:24 [weight_utils.py:881] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+(Worker_TP1 pid=327) INFO 09-02 20:48:27 [default_loader.py:430] Loading weights took 3.22 seconds
+(Worker_TP1 pid=327) WARNING 09-02 20:48:27 [speculator.py:195] Draft model DFlash2Qwen3ForCausalLM does not support external multimodal embeddings. Embeddings from the target model will not be passed to the drafter; using text-only draft inputs instead.
+(Worker_TP1 pid=327) INFO 09-02 20:48:36 [model_runner.py:374] Model loading took 90.67 GiB and 246.122374 seconds
+(Worker_TP1 pid=327) INFO 09-02 20:48:36 [interface.py:926] Setting attention block size to 4608 tokens to ensure that attention page size is >= mamba page size.
+(Worker_TP1 pid=327) INFO 09-02 20:48:36 [interface.py:950] Padding mamba page size by 0.70% to ensure that mamba page size and attention page size are exactly equal.
+INFO 09-02 20:55:50 [torch_utils.py:262] Reducing Torch threads from 20 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(Worker_TP1 pid=327) INFO 09-02 20:55:53 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP1 pid=327) 2026-09-02 20:56:11  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:56:16  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_pre_big_fuse_with_norm_tilelang`
+(Worker_TP1 pid=327) 2026-09-02 20:56:16  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:56:17  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_post_tilelang`
+(Worker_TP1 pid=327) /usr/local/lib/python3.12/dist-packages/triton/language/core.py:2284: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
+(Worker_TP1 pid=327)   warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
+[20:56:16] : Warning: T.vectorized loop over `i_hci` with extent 4 is lowered as a serial loop because TileLang could not find a valid vectorization plan. Scalar accumulator updates inside the loop are a common cause; move reductions to T.unroll or T.serial if this is intended.
+(Worker_TP1 pid=327) INFO 09-02 20:57:56 [gpu_worker.py:492] Initial free memory 111.67 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP1 pid=327) INFO 09-02 20:57:57 [indexer.py:729] DSA indexer decode path: use_flattening=True supports_varlen=False (next_n=8, use_fp4_indexer_cache=False)
+(Worker_TP1 pid=327) INFO 09-02 20:57:57 [flashinfer.py:889] FlashInfer resolved query dtypes: prefill=torch.bfloat16, decode=torch.bfloat16, decode_backend=xqa, kv_cache_dtype=torch.float8_e4m3fn, arch=sm121
+(Worker_TP1 pid=327) INFO 09-02 20:57:57 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(Worker_TP1 pid=327) INFO 09-02 20:57:58 [spec_decode_rejection_warmup.py:64] Warming up spec-decode rejection sampler kernels (vocab=154880, num_spec=7, dtype_pairs=[('torch.bfloat16', 'torch.float32'), ('torch.float32', 'torch.float32'), ('torch.bfloat16', 'torch.bfloat16'), ('torch.float32', 'torch.bfloat16')], block_verify=False).
+(Worker_TP1 pid=327) INFO 09-02 20:58:00 [kernel_warmup.py:95] Warming up ll_bf16 router GEMM kernels for shapes: ((4096, 288),).
+(Worker_TP1 pid=327) WARNING 09-02 20:59:14 [flashinfer.py:1308] Using FlashInfer for draft model non-causal attention; TRTLLM can still be used for target model causal attention.
+(Worker_TP1 pid=327) INFO 09-02 20:59:20 [breakable_cudagraph.py:288] Breakable CUDA graph enabled
+(Worker_TP1 pid=327) 2026-09-02 20:59:21  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:59:26  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_pre_big_fuse_with_norm_tilelang`
+(Worker_TP1 pid=327) 2026-09-02 20:59:27  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:59:27  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_fused_tilelang`
+(Worker_TP1 pid=327) 2026-09-02 20:58:02,345 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+(Worker_TP1 pid=327) /usr/local/lib/python3.12/dist-packages/triton/language/core.py:2284: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
+(Worker_TP1 pid=327)   warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
+(Worker_TP1 pid=327) 2026-09-02 20:59:20,025 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends
+(Worker_TP1 pid=327) 2026-09-02 20:59:28  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:59:33  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_pre_big_fuse_with_norm_tilelang`
+(Worker_TP1 pid=327) 2026-09-02 20:59:36  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:59:37  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_fused_tilelang`
+(Worker_TP1 pid=327) 2026-09-02 20:59:37  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=327) 2026-09-02 20:59:42  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:137): TileLang completes to compile kernel `mhc_pre_big_fuse_with_norm_tilelang`
+(Worker_TP1 pid=327) INFO 09-02 20:59:45 [speculator.py:137] Capturing model for DFlash2 speculator...
+(Worker_TP1 pid=327) INFO 09-02 20:59:45 [model_runner.py:1012] Graph capturing finished in 26 secs, took -0.25 GiB
+(Worker_TP1 pid=327) INFO 09-02 21:00:28 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP1 pid=327) INFO 09-02 21:00:29 [torch_utils.py:262] Reducing Torch threads from 20 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(Worker_TP1 pid=327) WARNING 09-02 21:03:54 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _compute_local_logits_stats_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=327) WARNING 09-02 21:03:54 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _rejection_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=327) WARNING 09-02 21:03:54 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _resample_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=327) WARNING 09-02 21:06:13 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _prepare_dflash_inputs_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=327) WARNING 09-02 21:06:21 [jit_monitor.py:135] TileLang JIT compilation during inference: mhc_pre_big_fuse_with_norm_tilelang. This causes a latency spike; consider extending warmup to cover this shape/config.
