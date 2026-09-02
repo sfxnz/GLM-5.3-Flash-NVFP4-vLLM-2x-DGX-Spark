@@ -1,0 +1,43 @@
+==> probe smoke
+ok model=LibertAIDAI/GLM-5.3-Flash-NVFP4 chars=35
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/smoke.txt
+==> probe smoke PASS
+==> probe count
+consecutive=200 need=80 nums=200
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/count.txt
+==> probe count PASS
+==> probe thinking_off
+content_chars=4 leaked_think=0 reasoning_chars=0 reasoning_leak=0
+SUMMARY {"content": "PING", "reasoning_content": ""}
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/thinking_off.txt
+==> probe thinking_off PASS
+==> probe tool_call
+n_tool_calls=1 names=['get_weather'] finish_reason=tool_calls content_chars=0
+SUMMARY {"tool_calls": [{"id": "chatcmpl-tool-9939a9975fec3d2d", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Wellington\"}"}}], "finish_reason": "tool_calls"}
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/tool_call.txt
+==> probe tool_call PASS
+==> probe hermes_two_turn
+turn1 http=200 n_tool_calls=1 names=['get_weather']
+turn2 http=200 content_chars=71 leaked_think=0
+SUMMARY {"turn1_names": ["get_weather"], "turn2_content": "The current weather in Wellington is **12\u00b0C** with an **overcast** sky.", "http": [200, 200]}
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/hermes_two_turn.txt
+==> probe hermes_two_turn PASS
+==> probe needle
+hit=1 prompt_tokens=17081 wall_s=24.970 ttft_s=24.506 prefill_tok_s=697.0 salt=S1788390675964854037 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 17081, "wall_s": 24.97, "ttft_s": 24.506, "prefill_tok_s": 697.0, "salt": "S1788390675964854037"}
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/needle-8192.txt
+hit=1 prompt_tokens=46091 wall_s=63.446 ttft_s=62.997 prefill_tok_s=731.6 salt=S1788390700938070206-0 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 46091, "wall_s": 63.446, "ttft_s": 62.997, "prefill_tok_s": 731.6, "salt": "S1788390700938070206-0"}
+hit=1 prompt_tokens=46091 wall_s=34.116 ttft_s=31.218 prefill_tok_s=1476.4 salt=S1788390700938070206-1 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 46091, "wall_s": 34.116, "ttft_s": 31.218, "prefill_tok_s": 1476.4, "salt": "S1788390700938070206-1"}
+SUMMARY {"n": 2, "failed": 0, "serve_alive": 1, "errors": []}
+verdict=PASS
+evidence=evidence/parity-20260902T225109Z/needle-20480-c2.txt
+==> probe needle PASS
+evidence=evidence/parity-20260902T225109Z/probes.json

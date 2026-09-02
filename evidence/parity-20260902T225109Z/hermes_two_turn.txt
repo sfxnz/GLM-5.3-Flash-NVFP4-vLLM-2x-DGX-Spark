@@ -1,0 +1,186 @@
+--- request turn1
+{
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather in Wellington right now? Use the get_weather tool."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "max_tokens": 256,
+  "temperature": 0,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+--- response turn1
+{
+  "id": "chatcmpl-aec3720567ce3790",
+  "object": "chat.completion",
+  "created": 1788390668,
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": null,
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "tool_calls": [
+          {
+            "id": "chatcmpl-tool-92b4c48534464196",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Wellington\"}"
+            }
+          }
+        ],
+        "reasoning": null
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls",
+      "stop_reason": 154829,
+      "token_ids": null,
+      "routed_experts": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.1.dev20051+g487ecf187-tp2-649b32c3",
+  "usage": {
+    "prompt_tokens": 172,
+    "total_tokens": 184,
+    "completion_tokens": 12,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null,
+  "prompt_token_ids": null,
+  "prompt_text": null,
+  "kv_transfer_params": null,
+  "ec_transfer_params": null,
+  "metrics": null
+}
+http_status turn1=200
+turn1 http=200 n_tool_calls=1 names=['get_weather']
+--- request turn2
+{
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather in Wellington right now? Use the get_weather tool."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "chatcmpl-tool-92b4c48534464196",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\": \"Wellington\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "chatcmpl-tool-92b4c48534464196",
+      "content": "{\"city\": \"Wellington\", \"temp_c\": 12, \"sky\": \"overcast\"}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    }
+  ],
+  "max_tokens": 128,
+  "temperature": 0,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+--- response turn2
+{
+  "id": "chatcmpl-8a4267c13d95c469",
+  "object": "chat.completion",
+  "created": 1788390668,
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The current weather in Wellington is **12°C** with an **overcast** sky.",
+        "refusal": null,
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "reasoning": null
+      },
+      "logprobs": null,
+      "finish_reason": "stop",
+      "stop_reason": 154827,
+      "token_ids": null,
+      "routed_experts": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.1.dev20051+g487ecf187-tp2-649b32c3",
+  "usage": {
+    "prompt_tokens": 210,
+    "total_tokens": 229,
+    "completion_tokens": 19,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null,
+  "prompt_token_ids": null,
+  "prompt_text": null,
+  "kv_transfer_params": null,
+  "ec_transfer_params": null,
+  "metrics": null
+}
+http_status turn2=200
+turn2 http=200 content_chars=71 leaked_think=0
+SUMMARY {"turn1_names": ["get_weather"], "turn2_content": "The current weather in Wellington is **12\u00b0C** with an **overcast** sky.", "http": [200, 200]}
+verdict=PASS
