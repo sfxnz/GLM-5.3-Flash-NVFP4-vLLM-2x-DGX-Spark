@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Read-only: is this GLM-5.3-Flash serve worth driving?
-# Exit: 0 ready, 1 missing, 2 loading, 3 mismatch
+# vendored from sfxnz/forge kit @ 6f40808
+# Read-only: is this recipe's serve ready on every rank? Usage: kit/doctor.sh <recipe-dir>
+# Prints one line: status=ready|missing|loading|mismatch|worker-down container=... worker=up|down|skipped ...
+# Exit: 0 ready on all ranks, 1 missing, 2 loading, 3 mismatch (image, served name or
+# max_model_len differ from recipe.yaml), 4 head ready but the worker container is not running.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+recipe_load "${1:?usage: kit/doctor.sh <recipe-dir>}"
 
-status=missing
 container_state="absent"
 image_running=""
 api_ok=0
@@ -13,23 +16,19 @@ model_id=""
 max_model_len=""
 spec_method=""
 worker="skipped"
-owned_by_verify=0
 
-if [[ -f "$STATE_DIR/started" ]]; then
-  owned_by_verify=1
-fi
-
-if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
   container_state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo unknown)"
   image_running="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
 fi
 
-if curl -sf --max-time 3 "${API}/models" >/tmp/verify-glm53-models.$$ 2>/dev/null; then
+models_tmp="$(mktemp)"
+trap 'rm -f "$models_tmp"' EXIT
+if curl -sf --max-time 3 "${API}/models" >"$models_tmp" 2>/dev/null; then
   api_ok=1
-  model_id="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"][0]["id"])' /tmp/verify-glm53-models.$$)"
-  max_model_len="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"][0].get("max_model_len",""))' /tmp/verify-glm53-models.$$)"
+  model_id="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"][0]["id"])' "$models_tmp")"
+  max_model_len="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["data"][0].get("max_model_len",""))' "$models_tmp")"
 fi
-rm -f /tmp/verify-glm53-models.$$
 
 if [[ "$container_state" == "running" ]]; then
   spec_method="$(
@@ -49,9 +48,8 @@ print(spec)
   )"
 fi
 
-if command -v ssh >/dev/null 2>&1; then
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" \
-      "docker ps --format '{{.Names}}' | grep -qx '$CONTAINER_NAME'" >/dev/null 2>&1; then
+if [[ "$NNODES" -gt 1 ]] && command -v ssh >/dev/null 2>&1; then
+  if worker_container_up; then
     worker=up
   else
     worker=down
@@ -72,13 +70,15 @@ elif [[ "$api_ok" -eq 1 ]]; then
   if [[ "$model_id" != "$SERVED_NAME" ]]; then
     mismatch=1
   fi
-  expect_len="${MAX_MODEL_LEN:-327680}"
-  if [[ "$max_model_len" != "$expect_len" ]]; then
+  if [[ -n "$MAX_MODEL_LEN" && "$max_model_len" != "$MAX_MODEL_LEN" ]]; then
     mismatch=1
   fi
   if [[ "$mismatch" -eq 1 ]]; then
     status=mismatch
     exit_code=3
+  elif [[ "$NNODES" -gt 1 && "$worker" != up ]]; then
+    status="worker-down"
+    exit_code=4
   else
     status=ready
     exit_code=0
@@ -88,17 +88,6 @@ else
   exit_code=1
 fi
 
-cat <<EOF
-status=$status
-container=$CONTAINER_NAME
-container_state=$container_state
-image=$image_running
-api=$API
-model=$model_id
-max_model_len=$max_model_len
-spec=$spec_method
-worker=$worker
-owned_by_verify=$owned_by_verify
-exit=$exit_code
-EOF
+printf 'status=%s worker=%s container=%s container_state=%s image=%s api=%s model=%s max_model_len=%s spec=%s exit=%s\n' \
+  "$status" "$worker" "$CONTAINER_NAME" "$container_state" "$image_running" "$API" "$model_id" "$max_model_len" "$spec_method" "$exit_code"
 exit "$exit_code"

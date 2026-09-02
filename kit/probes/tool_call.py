@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""OpenAI tools request. Fail unless the model returns a parsed tool call."""
+# vendored from sfxnz/forge kit @ 6f40808
+"""OpenAI tools request. Fail unless the model returns a parsed get_weather tool call.
+
+    kit/probes/tool_call.py <recipe-dir> <evidence-dir>
+"""
 from __future__ import annotations
 
-import argparse
 import json
 import sys
-import urllib.request
+
+from _probe import Probe
 
 WEATHER_TOOL = {
     "type": "function",
@@ -22,14 +26,11 @@ WEATHER_TOOL = {
 
 
 def main() -> int:
-    p = argparse.ArgumentParser()
-    p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
-    p.add_argument("--model", default="LibertAIDAI/GLM-5.3-Flash-NVFP4")
-    p.add_argument("--max-tokens", type=int, default=256)
-    args = p.parse_args()
-    body = json.dumps(
+    probe = Probe("tool_call", __doc__)
+    probe.parse()
+    code, payload = probe.post(
         {
-            "model": args.model,
+            "model": probe.recipe.served_name,
             "messages": [
                 {
                     "role": "user",
@@ -38,16 +39,13 @@ def main() -> int:
             ],
             "tools": [WEATHER_TOOL],
             "tool_choice": "auto",
-            "max_tokens": args.max_tokens,
+            "max_tokens": 256,
             "temperature": 0,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": probe.recipe.chat_template_kwargs,
         }
-    ).encode()
-    req = urllib.request.Request(
-        args.url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        payload = json.load(resp)
+    if code != 200:
+        return probe.finish(False, f"http_{code}")
     choice = (payload.get("choices") or [{}])[0]
     message = choice.get("message") or {}
     tool_calls = message.get("tool_calls") or []
@@ -57,18 +55,16 @@ def main() -> int:
         names.append(fn.get("name") or tc.get("name") or "")
     finish = choice.get("finish_reason")
     content = message.get("content") or ""
-    print(
+    probe.say(
         f"n_tool_calls={len(tool_calls)} names={names} finish_reason={finish} "
         f"content_chars={len(content)}"
     )
-    print("SUMMARY", json.dumps({"tool_calls": tool_calls, "finish_reason": finish}))
+    probe.say("SUMMARY " + json.dumps({"tool_calls": tool_calls, "finish_reason": finish}))
     if not tool_calls:
-        print(json.dumps(message, indent=2)[:1500], file=sys.stderr)
-        return 1
+        return probe.finish(False, "no_tool_calls")
     if "get_weather" not in names:
-        print(f"unexpected tool names {names}", file=sys.stderr)
-        return 1
-    return 0
+        return probe.finish(False, f"unexpected_tool_names={names}")
+    return probe.finish(True)
 
 
 if __name__ == "__main__":

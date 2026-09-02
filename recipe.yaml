@@ -94,3 +94,78 @@ links:
   model: https://huggingface.co/LibertAIDAI/GLM-5.3-Flash-NVFP4
   draft: https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2
   repo: https://github.com/sfxnz/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark
+
+bench:
+  # kit/bench_decode.py: URL is http://127.0.0.1:{PORT}/v1/chat/completions, model is model.served_name.
+  # chat_template_kwargs turn thinking off for this model; every kit probe sends the same kwargs.
+  chat_template_kwargs: {enable_thinking: false}
+
+probes:
+  # kit/probes/run-all.sh runs these in order. A bare name has no params; {name: params} passes them.
+  - smoke
+  - count
+  - thinking_off
+  - tool_call
+  - hermes_two_turn
+  - needle: [8192, {tokens: 20480, concurrency: 2}]
+
+lint:
+  # kit/recipe_lint.py: the recipe-specific expectations. Generic checks live in the script.
+  required_files:
+    - chat_template.jinja
+    - docker/Dockerfile.sm121-v8
+    - docker/Dockerfile.sm121-v9
+    - docker/Dockerfile.sm121-v10
+    - docker/Dockerfile.sm121-v11
+    - docker/dflash2_backport.diff
+    - docker/patch_v10_dflash_glm5.py
+    - docker/patch_v11_dflash_kv_groups.py
+  contains:
+    README.md:
+      - Recipe scripts are MIT
+      - CC BY-NC-ND
+      - docker build -f docker/Dockerfile.sm121-v8
+      - docker build -f docker/Dockerfile.sm121-v9
+      - docker build -f docker/Dockerfile.sm121-v10
+      - docker build -f docker/Dockerfile.sm121-v11
+      - ./run.sh
+      - ./stop.sh
+      - python3 kit/bench_decode.py
+      - http://127.0.0.1:8000/v1/chat/completions
+      - SPEC=mtp
+      - LibertAIDAI/GLM-5.3-Flash-NVFP4
+      - glm53-sm121-v11
+      - Say hello in one sentence.
+      - enable_thinking
+      - "`marlin`"
+      - "`glm45`"
+    run.sh:
+      - '--moe-backend "$MOE_BACKEND"'
+      - '--reasoning-parser "$REASONING_PARSER"'
+      - 'if [[ -d "$SNAPSHOT" ]]; then'
+      - Do not use stock vllm/vllm-openai on sm_121
+      - FORCE_UNSAFE_CTX
+      - cannot hold --max-model-len
+      - $NUM_SPECULATIVE_TOKENS
+      - '"method":"dflash"'
+    chat_template.jinja:
+      - enable_thinking | default(true)
+      - "{{- '<think></think>' -}}"
+  forbids:
+    run.sh:
+      - VLLM_GLM53_MOE_INPUT_SCALE   # 1.0 underflows per-block fp8 scales
+  readme_mentions_env: [IMAGE, PORT, MAX_MODEL_LEN, MAX_NUM_SEQS, KV_CACHE_MEMORY, BLOCK_SIZE, SPEC, SERVED_NAME, CONTAINER_NAME, NUM_SPECULATIVE_TOKENS, KV_CACHE_DTYPE]
+  dockerfile_from:
+    docker/Dockerfile.sm121-v8: vllm/vllm-openai:glm53-flash-arm64-cu130
+    docker/Dockerfile.sm121-v9: glm53-sm121-v8
+    docker/Dockerfile.sm121-v10: glm53-sm121-v9
+    docker/Dockerfile.sm121-v11: glm53-sm121-v10
+  expect_cases:
+    # dflash2 CUDA-graph ladder: 1/2/4 plus (spec+1)x{1..MAX_NUM_SEQS}
+    - {env: {}, expect: '"cudagraph_capture_sizes":[1,2,4,8,16]'}
+    - {env: {NUM_SPECULATIVE_TOKENS: "5", MAX_NUM_SEQS: "4"}, expect: '"cudagraph_capture_sizes":[1,2,4,6,12,18,24]'}
+  refuse_cases:
+    - {env: {MAX_MODEL_LEN: "1048576"}, expect: cannot hold --max-model-len}
+    - {env: {KV_CACHE_MEMORY: "3221225472"}, expect: 3.62 GiB}
+    - {env: {KV_CACHE_MEMORY: "3886945403"}, expect: "327168"}
+    - {env: {MOE_BACKEND: flashinfer_cutlass}, expect: Stay on marlin}

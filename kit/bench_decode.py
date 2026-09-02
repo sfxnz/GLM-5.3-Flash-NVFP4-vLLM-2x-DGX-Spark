@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Streamed decode bench against a live OpenAI-compatible /v1/chat/completions."""
+# vendored from sfxnz/forge kit @ 6f40808
+"""Streamed decode bench against a live OpenAI-compatible /v1/chat/completions. The frozen ruler.
+
+    kit/bench_decode.py --recipe <recipe-dir> --phase prose|structured|both --out <evidence-dir>
+
+Semantics (do not change; the README decode tables are comparable only while these hold):
+streamed greedy (temperature 0), thinking off (recipe.yaml bench.chat_template_kwargs),
+200 completion tokens, 3 runs per (phase, concurrency), concurrency 1 and 2, per-stream median
+decode tok/s, aggregate tok/s per wave, TTFT p50. A failed stream or a completion_tokens==0
+stream fails the wave.
+
+Writes <out>/bench.txt (stdout copy, ends with the SUMMARY JSON) and <out>/bench.json: one object
+per phase x concurrency row using the recipe.yaml measured.decode.rows field names
+(phase, concurrency, decode, aggregate, ttft_p50) plus n, completion_tokens and, when the serve
+exposes vllm:spec_decode_* counters, acceptance_len and draft_acceptance_rate.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +23,13 @@ import json
 import statistics
 import sys
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from kitlib import Recipe  # noqa: E402
 
 # Two decode regimes: prose is the low-acceptance regime (the drafter guesses
 # free text), structured is the high-acceptance regime (counting is nearly
@@ -27,7 +46,7 @@ PHASES = {
 }
 
 
-def stream_one(url: str, model: str, prompt: str, max_tokens: int) -> dict:
+def stream_one(url: str, model: str, prompt: str, max_tokens: int, chat_template_kwargs: dict) -> dict:
     body = json.dumps(
         {
             "model": model,
@@ -36,7 +55,7 @@ def stream_one(url: str, model: str, prompt: str, max_tokens: int) -> dict:
             "temperature": 0,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": chat_template_kwargs,
         }
     ).encode()
     req = urllib.request.Request(
@@ -89,19 +108,26 @@ def stream_one(url: str, model: str, prompt: str, max_tokens: int) -> dict:
 
 
 def wave(
-    url: str, model: str, prompt: str, max_tokens: int, concurrency: int
+    url: str, model: str, prompt: str, max_tokens: int, concurrency: int, chat_template_kwargs: dict | None = None
 ) -> tuple[list[dict], float, float]:
+    kwargs = chat_template_kwargs or {}
     t0 = time.perf_counter()
     out = []
+    errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futs = [pool.submit(stream_one, url, model, prompt, max_tokens) for _ in range(concurrency)]
+        futs = [pool.submit(stream_one, url, model, prompt, max_tokens, kwargs) for _ in range(concurrency)]
         for fut in as_completed(futs):
             try:
                 out.append(fut.result())
-            except Exception as exc:  # noqa: BLE001 - keep the wave's other streams
+            except Exception as exc:  # noqa: BLE001
                 print(f"stream failed: {exc}", file=sys.stderr, flush=True)
+                errors.append(exc)
+    if errors:
+        raise RuntimeError(f"{len(errors)} stream(s) in the wave failed")
     if not out:
         raise RuntimeError("every stream in the wave failed")
+    if any(int(r["completion_tokens"]) == 0 for r in out):
+        raise RuntimeError("a stream returned completion_tokens==0")
     wall = time.perf_counter() - t0
     decode_tokens = sum(max(r["completion_tokens"] - 1, 0) for r in out)
     # Shared wall clock after the first token of the slowest-to-start stream is messy.
@@ -160,23 +186,60 @@ def acceptance(before: dict[str, float] | None, after: dict[str, float] | None) 
     }
 
 
+class Tee:
+    """Print to stdout and collect the same text for bench.txt."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def __call__(self, text: str) -> None:
+        print(text, flush=True)
+        self.lines.append(text)
+
+
+def to_row(summary: dict) -> dict:
+    row = {
+        "phase": summary["phase"],
+        "concurrency": summary["concurrency"],
+        "decode": summary["median_decode_tok_s"],
+        "aggregate": summary["median_agg_tok_s"],
+        "ttft_p50": summary["median_ttft_s"],
+        "completion_tokens": summary["median_completion_tokens"],
+        "n": summary["n"],
+    }
+    for k in ("acceptance_len", "draft_acceptance_rate"):
+        if k in summary:
+            row[k] = summary[k]
+    return row
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
-    p.add_argument("--model", default="LibertAIDAI/GLM-5.3-Flash-NVFP4")
+    p.add_argument("--recipe", required=True, help="recipe directory (reads recipe.yaml)")
+    p.add_argument("--out", required=True, help="evidence directory for bench.txt and bench.json")
+    p.add_argument("--phase", choices=[*PHASES, "both"], default="both")
+    p.add_argument("--url", default=None, help="override the /v1/chat/completions URL")
+    p.add_argument("--model", default=None, help="override the served model name")
     p.add_argument("--max-tokens", type=int, default=200)
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--concurrency", type=int, nargs="+", default=[1, 2])
-    p.add_argument("--phase", choices=[*PHASES, "both"], default="both")
     args = p.parse_args()
 
+    recipe = Recipe(args.recipe)
+    url = args.url or recipe.completions_url
+    model = args.model or recipe.served_name
+    kwargs = recipe.chat_template_kwargs
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    say = Tee()
+
     phases = list(PHASES) if args.phase == "both" else [args.phase]
-    print(
-        f"url={args.url} model={args.model} max_tokens={args.max_tokens} "
-        f"runs={args.runs} concurrency={args.concurrency} phases={phases}",
-        flush=True,
+    say(
+        f"url={url} model={model} max_tokens={args.max_tokens} "
+        f"runs={args.runs} concurrency={args.concurrency} phases={phases} "
+        f"chat_template_kwargs={json.dumps(kwargs, sort_keys=True)}"
     )
-    metrics_url = args.url.split("/v1/", 1)[0] + "/metrics"
+    metrics_url = url.split("/v1/", 1)[0] + "/metrics"
     summary = []
     for phase in phases:
         prompt = PHASES[phase]
@@ -185,15 +248,14 @@ def main() -> int:
             aggs = []
             counters_before = spec_counters(metrics_url)
             for i in range(args.runs):
-                rows, wall, agg = wave(args.url, args.model, prompt, args.max_tokens, c)
+                rows, wall, agg = wave(url, model, prompt, args.max_tokens, c, kwargs)
                 per_stream.extend(rows)
                 aggs.append(agg)
                 dec = ",".join(f"{r['decode_tok_s']:.2f}" for r in rows)
                 ttft = ",".join(f"{r['ttft_s']:.3f}" for r in rows)
-                print(
+                say(
                     f"phase={phase} c={c} run={i+1} wall={wall:.2f}s agg={agg:.2f} tok/s "
-                    f"per_stream=[{dec}] ttft=[{ttft}]",
-                    flush=True,
+                    f"per_stream=[{dec}] ttft=[{ttft}]"
                 )
             summary.append(
                 {
@@ -207,7 +269,10 @@ def main() -> int:
                     **acceptance(counters_before, spec_counters(metrics_url)),
                 }
             )
-    print("SUMMARY", json.dumps(summary, indent=2))
+    say("SUMMARY " + json.dumps(summary, indent=2))
+    (out_dir / "bench.txt").write_text("\n".join(say.lines) + "\n")
+    (out_dir / "bench.json").write_text(json.dumps([to_row(s) for s in summary], indent=2) + "\n")
+    print(f"evidence={out_dir}/bench.txt {out_dir}/bench.json", flush=True)
     return 0
 
 
