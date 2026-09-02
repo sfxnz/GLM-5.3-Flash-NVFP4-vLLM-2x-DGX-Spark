@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ d5ac088
 # Vendor the kit into a recipe repo, or check that the vendored copy matches forge.
 #   kit/sync.sh <recipe-path>           write kit/*.sh kit/*.py kit/probes/* into <recipe-path>/kit/
 #   kit/sync.sh --check <recipe-path>   exit 1 if any vendored file differs from forge (stamp line ignored)
 # Every vendored file starts with `# vendored from sfxnz/forge kit @ <sha>`.
+# Run from a vendored copy (this file carries the stamp line), the forge kit is
+# ${FORGE_KIT:-$HOME/projects/ai-lab/forge/kit}, not the directory this file sits in.
 set -euo pipefail
 kit="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if grep -q '^# vendored from sfxnz/forge kit @ ' "${BASH_SOURCE[0]}"; then
+  kit="${FORGE_KIT:-$HOME/projects/ai-lab/forge/kit}"
+  if [[ ! -f "$kit/sync.sh" ]]; then
+    echo "vendored copy: forge kit not found at $kit (set FORGE_KIT)" >&2
+    exit 2
+  fi
+  echo "vendored copy: forge kit is $kit"
+fi
 check=0
 if [[ "${1:-}" == "--check" ]]; then
   check=1
