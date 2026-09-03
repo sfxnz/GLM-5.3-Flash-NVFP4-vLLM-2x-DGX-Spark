@@ -1,0 +1,43 @@
+==> probe smoke
+ok model=LibertAIDAI/GLM-5.3-Flash-NVFP4 chars=34
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/smoke.txt
+==> probe smoke PASS
+==> probe count
+consecutive=200 need=80 nums=200
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/count.txt
+==> probe count PASS
+==> probe thinking_off
+content_chars=4 leaked_think=0 reasoning_chars=0 reasoning_leak=0
+SUMMARY {"content": "PING", "reasoning_content": ""}
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/thinking_off.txt
+==> probe thinking_off PASS
+==> probe tool_call
+n_tool_calls=1 names=['get_weather'] finish_reason=tool_calls content_chars=0
+SUMMARY {"tool_calls": [{"id": "chatcmpl-tool-93c78d9ccea14d6f", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Wellington\"}"}}], "finish_reason": "tool_calls"}
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/tool_call.txt
+==> probe tool_call PASS
+==> probe hermes_two_turn
+turn1 http=200 n_tool_calls=1 names=['get_weather']
+turn2 http=200 content_chars=71 leaked_think=0
+SUMMARY {"turn1_names": ["get_weather"], "turn2_content": "The current weather in Wellington is **12\u00b0C** with an **overcast** sky.", "http": [200, 200]}
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/hermes_two_turn.txt
+==> probe hermes_two_turn PASS
+==> probe needle
+hit=1 prompt_tokens=16400 wall_s=20.318 ttft_s=18.335 prefill_tok_s=894.4 salt=S1788398631380403516 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 16400, "wall_s": 20.318, "ttft_s": 18.335, "prefill_tok_s": 894.4, "salt": "S1788398631380403516"}
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/needle-8192.txt
+hit=1 prompt_tokens=42681 wall_s=59.150 ttft_s=58.748 prefill_tok_s=726.5 salt=S1788398651700812805-0 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 42681, "wall_s": 59.15, "ttft_s": 58.748, "prefill_tok_s": 726.5, "salt": "S1788398651700812805-0"}
+hit=1 prompt_tokens=42681 wall_s=33.183 ttft_s=29.422 prefill_tok_s=1450.7 salt=S1788398651700812805-1 needle=NEEDLECODE-7F3A91C2
+SUMMARY {"hit": 1, "prompt_tokens": 42681, "wall_s": 33.183, "ttft_s": 29.422, "prefill_tok_s": 1450.7, "salt": "S1788398651700812805-1"}
+SUMMARY {"n": 2, "failed": 0, "serve_alive": 1, "errors": []}
+verdict=PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/needle-20480-c2.txt
+==> probe needle PASS
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H1-20260903-20260903T010419Z/probes.json
