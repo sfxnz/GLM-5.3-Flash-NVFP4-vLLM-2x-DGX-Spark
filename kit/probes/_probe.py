@@ -1,4 +1,4 @@
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """Common frame for the Python probes: args, recipe access, the <probe>.txt evidence file.
 
 Each probe writes <evidence-dir>/<name>.txt holding the request, the response, the HTTP status

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 # README smoke: one /v1/chat/completions call ("Say hello in one sentence.", max_tokens 64, greedy,
 # thinking off). Usage: kit/probes/smoke.sh <recipe-dir> <evidence-dir>
 # Writes <evidence-dir>/smoke.txt (request, response, http status, verdict). Does not start or stop the serve.

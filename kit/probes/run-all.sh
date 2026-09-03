@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 # Run every probe enabled in recipe.yaml `probes:`. Usage: kit/probes/run-all.sh <recipe-dir> <evidence-dir>
 # Each probe writes <evidence-dir>/<probe>.txt; this writes <evidence-dir>/probes.json and exits
 # non-zero if any enabled probe failed. Probes: smoke count thinking_off tool_call hermes_two_turn needle vision.

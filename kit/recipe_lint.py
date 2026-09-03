@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """Clone-shape checks for any recipe repo. No GPU, no serve. Usage: python3 kit/recipe_lint.py <recipe-dir>
 
 Generic checks (every recipe):
   required files, run.sh/stop.sh executable, MIT LICENSE, recipe.yaml has bench:/probes:/lint:,
   `kit/render.py --check` (`--strict` unless lint.strict_evidence is false), the kit's bench phases and
   probe markers, a script for every enabled probe, needle --dry-run at c=1 and c=2,
-  `VALIDATE_ONLY=1 ./run.sh` passes and prints `validate-only`.
+  `kit/redact.py --check evidence` finds no secret, `VALIDATE_ONLY=1 ./run.sh` passes and prints `validate-only`.
 Recipe-specific expectations live in recipe.yaml `lint:`:
   required_files: [path, ...]                    files the clone must ship
   contains: {path: [snippet, ...]}               text each file must contain (README.md, run.sh, ...)
@@ -40,6 +40,7 @@ GENERIC_FILES = (
     "kit/doctor.sh",
     "kit/bench_decode.py",
     "kit/recipe_lint.py",
+    "kit/redact.py",
     "kit/probes/run-all.sh",
 )
 
@@ -117,6 +118,11 @@ def main() -> int:
         r = run(render_cmd, repo)
         if r.returncode != 0:
             fail(f"{' '.join(render_cmd[1:])} failed: {(r.stderr or r.stdout).strip().splitlines()[-1]}")
+
+    if (repo / "kit/redact.py").exists() and (repo / "evidence").is_dir():
+        r = run([sys.executable, "kit/redact.py", "--check", "evidence"], repo)
+        if r.returncode != 0:
+            fail(f"kit/redact.py --check evidence: {' '.join(r.stdout.split())}")
 
     for rel, markers in KIT_MARKERS.items():
         src = text_of(rel)

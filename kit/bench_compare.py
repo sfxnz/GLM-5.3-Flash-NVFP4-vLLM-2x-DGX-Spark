@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """Compare two bench.json files row by row. Usage: kit/bench_compare.py <reference.json> <new.json> [--tol 0.05]
 
 Accepts both row schemas: the kit's (decode, aggregate, ttft_p50) and the pre-kit SUMMARY names

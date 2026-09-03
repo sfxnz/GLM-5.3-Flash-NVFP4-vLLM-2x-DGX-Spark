@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """Greedy count probe. Fail unless the completion contains a long consecutive run of integers.
 
     kit/probes/count.py <recipe-dir> <evidence-dir>   (params: count: {need: 80, max_tokens: 512})

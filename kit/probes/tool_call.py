@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """OpenAI tools request. Fail unless the model returns a parsed get_weather tool call.
 
     kit/probes/tool_call.py <recipe-dir> <evidence-dir>
