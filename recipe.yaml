@@ -161,9 +161,10 @@ lint:
     docker/Dockerfile.sm121-v10: glm53-sm121-v9
     docker/Dockerfile.sm121-v11: glm53-sm121-v10
   expect_cases:
-    # dflash2 CUDA-graph ladder: 1/2/4 plus (spec+1)x{1..MAX_NUM_SEQS}
-    - {env: {}, expect: '"cudagraph_capture_sizes":[1,2,4,8,16]'}
-    - {env: {NUM_SPECULATIVE_TOKENS: "5", MAX_NUM_SEQS: "4"}, expect: '"cudagraph_capture_sizes":[1,2,4,6,12,18,24]'}
+    # dflash2 CUDA-graph ladder: 1/2/4 plus (spec+1)x{1..MAX_NUM_SEQS}. Pin every input: these test
+    # the derivation, not the defaults, so a hillclimb keep that moves a default does not fail lint.
+    - {env: {SPEC: dflash2, NUM_SPECULATIVE_TOKENS: "7", MAX_NUM_SEQS: "2"}, expect: '"cudagraph_capture_sizes":[1,2,4,8,16]'}
+    - {env: {SPEC: dflash2, NUM_SPECULATIVE_TOKENS: "5", MAX_NUM_SEQS: "4"}, expect: '"cudagraph_capture_sizes":[1,2,4,6,12,18,24]'}
   refuse_cases:
     - {env: {MAX_MODEL_LEN: "1048576"}, expect: cannot hold --max-model-len}
     - {env: {KV_CACHE_MEMORY: "3221225472"}, expect: 3.62 GiB}
