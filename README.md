@@ -132,8 +132,8 @@ Stop both ranks from the head:
 | `--moe-backend` | `marlin` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2) |
 | Checkpoint | `caca4e6a4ebbd66f159d3d2fc256683fd6e27177` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back) |
 | `--block-size` | 2304 |
-| CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4) |
+| CUDA graphs | on, capture ladder 1/2/4 + 6/12 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
+| Speculative | DFlash2-5 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking`) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
