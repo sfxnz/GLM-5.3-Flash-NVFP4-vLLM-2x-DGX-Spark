@@ -46,7 +46,7 @@ serve:
     MAX_NUM_SEQS: 2
     UTIL: 0.85
     KV_CACHE_DTYPE: fp8_e4m3
-    NUM_SPECULATIVE_TOKENS: 7
+    NUM_SPECULATIVE_TOKENS: 5
     MAX_NUM_BATCHED_TOKENS: ""
     FORCE_UNSAFE_CTX: 0
     FORCE_UNSAFE_MOE: 0
@@ -74,7 +74,7 @@ readme:
     - "`--moe-backend`": "`{MOE_BACKEND}` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
     - Checkpoint: "`{SNAPSHOT_REV}` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back)"
     - "`--block-size`": "{BLOCK_SIZE}"
-    - CUDA graphs: "on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
+    - CUDA graphs: "on, capture ladder 1/2/4 + 6/12 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4)"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking`)"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
@@ -161,9 +161,10 @@ lint:
     docker/Dockerfile.sm121-v10: glm53-sm121-v9
     docker/Dockerfile.sm121-v11: glm53-sm121-v10
   expect_cases:
-    # dflash2 CUDA-graph ladder: 1/2/4 plus (spec+1)x{1..MAX_NUM_SEQS}
-    - {env: {}, expect: '"cudagraph_capture_sizes":[1,2,4,8,16]'}
-    - {env: {NUM_SPECULATIVE_TOKENS: "5", MAX_NUM_SEQS: "4"}, expect: '"cudagraph_capture_sizes":[1,2,4,6,12,18,24]'}
+    # dflash2 CUDA-graph ladder: 1/2/4 plus (spec+1)x{1..MAX_NUM_SEQS}. Pin every input: these test
+    # the derivation, not the defaults, so a hillclimb keep that moves a default does not fail lint.
+    - {env: {SPEC: dflash2, NUM_SPECULATIVE_TOKENS: "7", MAX_NUM_SEQS: "2"}, expect: '"cudagraph_capture_sizes":[1,2,4,8,16]'}
+    - {env: {SPEC: dflash2, NUM_SPECULATIVE_TOKENS: "5", MAX_NUM_SEQS: "4"}, expect: '"cudagraph_capture_sizes":[1,2,4,6,12,18,24]'}
   refuse_cases:
     - {env: {MAX_MODEL_LEN: "1048576"}, expect: cannot hold --max-model-len}
     - {env: {KV_CACHE_MEMORY: "3221225472"}, expect: 3.62 GiB}

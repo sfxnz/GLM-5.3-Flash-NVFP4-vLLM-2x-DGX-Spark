@@ -1,0 +1,59 @@
+--- request
+{
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Reply with exactly the word PING and nothing else."
+    }
+  ],
+  "max_tokens": 64,
+  "temperature": 0,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+--- response
+{
+  "id": "chatcmpl-8281d97edbb27ad5",
+  "object": "chat.completion",
+  "created": 1788401347,
+  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "PING",
+        "refusal": null,
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "reasoning": null
+      },
+      "logprobs": null,
+      "finish_reason": "stop",
+      "stop_reason": 154827,
+      "token_ids": null,
+      "routed_experts": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.1.dev20051+g487ecf187-tp2-595b2bc8",
+  "usage": {
+    "prompt_tokens": 24,
+    "total_tokens": 26,
+    "completion_tokens": 2,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null,
+  "prompt_token_ids": null,
+  "prompt_text": null,
+  "kv_transfer_params": null,
+  "ec_transfer_params": null,
+  "metrics": null
+}
+http_status=200
+content_chars=4 leaked_think=0 reasoning_chars=0 reasoning_leak=0
+SUMMARY {"content": "PING", "reasoning_content": ""}
+verdict=PASS

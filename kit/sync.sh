@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vendored from sfxnz/forge kit @ d5ac088
+# vendored from sfxnz/forge kit @ 6285f70
 # Vendor the kit into a recipe repo, or check that the vendored copy matches forge.
 #   kit/sync.sh <recipe-path>           write kit/*.sh kit/*.py kit/probes/* into <recipe-path>/kit/
 #   kit/sync.sh --check <recipe-path>   exit 1 if any vendored file differs from forge (stamp line ignored)

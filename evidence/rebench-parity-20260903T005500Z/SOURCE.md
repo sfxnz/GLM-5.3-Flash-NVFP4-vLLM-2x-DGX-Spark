@@ -1,0 +1,1 @@
+Copy of evidence/parity-20260902T225109Z/bench.json (kit parity run 2, the verdict run). Placed under rebench-* so /hillclimb-night Preflight (newest evidence/rebench-*/bench.json) uses tonight's measured numbers as the baseline instead of rebench-20260902T204243Z.

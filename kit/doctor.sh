@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 # Read-only: is this recipe's serve ready on every rank? Usage: kit/doctor.sh <recipe-dir>
 # Prints one line: status=ready|missing|loading|mismatch|worker-down container=... worker=up|down|skipped ...
 # Exit: 0 ready on all ranks, 1 missing, 2 loading, 3 mismatch (image, served name or

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# vendored from sfxnz/forge kit @ 6f40808
+# vendored from sfxnz/forge kit @ 6285f70
 """Thinking-off completion. Fail if content is empty or <think> leaks.
 
     kit/probes/thinking_off.py <recipe-dir> <evidence-dir>

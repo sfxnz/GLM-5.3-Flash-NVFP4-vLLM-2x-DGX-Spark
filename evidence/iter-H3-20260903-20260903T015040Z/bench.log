@@ -1,0 +1,32 @@
+url=http://127.0.0.1:8000/v1/chat/completions model=LibertAIDAI/GLM-5.3-Flash-NVFP4 max_tokens=200 runs=3 concurrency=[1, 2] phases=['prose'] chat_template_kwargs={"enable_thinking": false}
+phase=prose c=1 run=1 wall=4.93s agg=21.14 tok/s per_stream=[21.14] ttft=[0.250]
+phase=prose c=1 run=2 wall=5.97s agg=17.40 tok/s per_stream=[17.40] ttft=[0.341]
+phase=prose c=1 run=3 wall=6.07s agg=16.94 tok/s per_stream=[16.94] ttft=[0.341]
+phase=prose c=2 run=1 wall=11.95s agg=24.12 tok/s per_stream=[17.91,18.67] ttft=[0.330,6.481]
+phase=prose c=2 run=2 wall=11.50s agg=26.16 tok/s per_stream=[17.91,21.24] ttft=[0.339,6.600]
+phase=prose c=2 run=3 wall=9.20s agg=29.01 tok/s per_stream=[24.55,21.37] ttft=[0.367,4.658]
+SUMMARY [
+  {
+    "phase": "prose",
+    "concurrency": 1,
+    "median_decode_tok_s": 17.40373122962343,
+    "median_ttft_s": 0.34058389798155986,
+    "median_agg_tok_s": 17.39996704576542,
+    "median_completion_tokens": 99,
+    "n": 3,
+    "acceptance_len": 2.167883211678832,
+    "draft_acceptance_rate": 0.16684045881126172
+  },
+  {
+    "phase": "prose",
+    "concurrency": 2,
+    "median_decode_tok_s": 19.95216958729381,
+    "median_ttft_s": 2.5125112240057206,
+    "median_agg_tok_s": 26.155612602080858,
+    "median_completion_tokens": 104.0,
+    "n": 6,
+    "acceptance_len": 2.3422053231939164,
+    "draft_acceptance_rate": 0.19174361759913092
+  }
+]
+evidence=/home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H3-20260903-20260903T015040Z/bench.txt /home/sfxnz/projects/ai-lab/.wt/GLM-kit/evidence/iter-H3-20260903-20260903T015040Z/bench.json
