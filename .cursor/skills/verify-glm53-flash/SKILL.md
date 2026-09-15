@@ -44,12 +44,13 @@ Read-only. Exit `0` ready, `1` missing, `2` loading (container up, API not answe
 
 Harness is the scripts plus curl and `python3 bench_decode.py`. Read `features/README.md`, then the matching feature file. Stable handles:
 
-- Completions: `POST http://127.0.0.1:8000/v1/chat/completions` with `"model": "LibertAIDAI/GLM-5.3-Flash-NVFP4"`.
+- Completions: `POST http://127.0.0.1:8000/v1/chat/completions` with `"model": "nvidia/GLM-5.3-Flash-NVFP4"`.
 - Models: `GET http://127.0.0.1:8000/v1/models`.
 - Metrics: `GET http://127.0.0.1:8000/metrics` (`vllm:spec_decode_*_total`).
 - Smoke: `.cursor/skills/verify-glm53-flash/scripts/smoke.sh` (README payload: “Say hello in one sentence.”, `max_tokens` 64, thinking off).
+- Vision: `python3 smoke_vision.py` (OpenAI `image_url`; must not return “is not a multimodal model”).
 - Recipe clone-shape: `python3 .cursor/skills/verify-glm53-flash/scripts/recipe-lint.py`.
-- Bench: `python3 bench_decode.py` from the repo root (see `features/decode-bench.md`).
+- Bench: `python3 bench_decode.py` from the repo root (published score is prose only; see `features/decode-bench.md`).
 
 Do not call vLLM-internal setters, dummy loaders, or `--load-format dummy` as proof of the published recipe.
 
@@ -82,6 +83,7 @@ All under `.cursor/skills/verify-glm53-flash/scripts/`. `lib.sh` is sourced by t
 | `doctor.sh` | First, and whenever the serve looks off |
 | `recipe-lint.py` | GitHub-ready recipe feature |
 | `smoke.sh` | README chat-completions smoke |
+| `smoke_vision.py` (repo root) | OpenAI `image_url`; fail on “is not a multimodal model” |
 | `count_probe.py` | Greedy 1→200 consecutive-integer gate |
 | `thinking_off_probe.py` | Thinking-off completion; fail on empty `content` or `<think>` leak |
 | `tool_call_probe.py` | Tools request; fail unless a parsed `get_weather` tool call |

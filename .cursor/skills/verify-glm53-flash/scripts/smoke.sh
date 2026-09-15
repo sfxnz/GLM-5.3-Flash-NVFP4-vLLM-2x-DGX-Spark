@@ -17,7 +17,7 @@ fi
 
 cat >"$OUT/request.json" <<'JSON'
 {
-  "model": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+  "model": "nvidia/GLM-5.3-Flash-NVFP4",
   "messages": [{"role": "user", "content": "Say hello in one sentence."}],
   "max_tokens": 64,
   "temperature": 0,
@@ -39,7 +39,7 @@ if code != "200":
 body = json.load(open(path))
 content = (((body.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
 model = body.get("model") or ""
-if model != "LibertAIDAI/GLM-5.3-Flash-NVFP4":
+if model != "nvidia/GLM-5.3-Flash-NVFP4":
     raise SystemExit(f"unexpected model {model!r}")
 if not content:
     raise SystemExit("empty message content")

@@ -3,8 +3,8 @@
 set -euo pipefail
 
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
-MODEL="${MODEL:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
-SERVED_NAME="${SERVED_NAME:-LibertAIDAI/GLM-5.3-Flash-NVFP4}"
+MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
+SERVED_NAME="${SERVED_NAME:-nvidia/GLM-5.3-Flash-NVFP4}"
 IMAGE="${IMAGE:-glm53-sm121-v11}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
@@ -25,6 +25,8 @@ NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-7}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
 FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
 FORCE_UNSAFE_MOE="${FORCE_UNSAFE_MOE:-0}"
+FORCE_UNSAFE_VISION="${FORCE_UNSAFE_VISION:-0}"
+LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
 # Empty: engine auto-enables breakable CUDA graphs. 0 slowed structured
 # c=1 69.4→67.0 and c=2 59.7→52.1. Leave unset.
 VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-}"
@@ -41,10 +43,9 @@ KV_CACHE_MEMORY="${KV_CACHE_MEMORY:-4445787956}"
 BLOCK_SIZE="${BLOCK_SIZE:-2304}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
-# caca4e6 adds calibrated MoE input_scale (LibertAI 2026-08-30). aa28e1f is the rollback.
-SNAPSHOT_REV="${SNAPSHOT_REV:-caca4e6a4ebbd66f159d3d2fc256683fd6e27177}"
-SNAPSHOT="${HF_CACHE}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/${SNAPSHOT_REV}"
-SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/${SNAPSHOT_REV}"
+# Official NVIDIA ModelOpt pin. LibertAI rollback is
+# MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177
+SNAPSHOT_REV="${SNAPSHOT_REV:-09b04e5e74bca08ca8549fc736d4cdd8624bfde3}"
 MOE_BACKEND="${MOE_BACKEND:-marlin}"
 REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
@@ -54,6 +55,13 @@ DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3
 # the glm53-sm121-v11 image) or mtp (GLM's native MTP head).
 SPEC="${SPEC:-dflash2}"
 # END generated
+hub_slug="models--${MODEL//\//--}"
+SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
+SNAPSHOT_IN_CONTAINER="${SNAPSHOT_IN_CONTAINER:-${HF_HOME_IN_CONTAINER}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
+# L.A.I.L VL cap. A max-size image+video dummy OOMs UMA; this is not that dummy.
+if [[ "$LANGUAGE_MODEL_ONLY" == "0" && -z "${LIMIT_MM_PER_PROMPT:-}" ]]; then
+  LIMIT_MM_PER_PROMPT='{"image":4,"video":1}'
+fi
 if [[ -z "${SPEC_CONFIG:-}" ]]; then
   case "$SPEC" in
     dflash2)
@@ -106,6 +114,10 @@ fi
 # CUTLASS fused-MoE JIT exhausted the ~18 GiB left after 90.67 GiB weights.
 if [[ "$MOE_BACKEND" != marlin && "$FORCE_UNSAFE_MOE" != 1 ]]; then
   echo "MOE_BACKEND=$MOE_BACKEND OOM'd spark2 during flashinfer_cutlass JIT after 90.67 GiB weights (global UMA, NV_ERR_NO_MEMORY). Stay on marlin. FORCE_UNSAFE_MOE=1 overrides." >&2
+  exit 1
+fi
+if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
+  echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY hides the native GLM-5.3-Flash vision tower. The NVIDIA pack ships vision_config and processor_config.json. Leave LANGUAGE_MODEL_ONLY=0. FORCE_UNSAFE_VISION=1 overrides." >&2
   exit 1
 fi
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
@@ -187,8 +199,8 @@ ensure_weights() {
     log "Using pinned snapshot $SNAPSHOT"
   elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
-    log "Downloading $MODEL (resumes under $HF_CACHE)"
-    "$HF" download "$MODEL"
+    log "Downloading $MODEL @ $SNAPSHOT_REV (resumes under $HF_CACHE)"
+    "$HF" download "$MODEL" --revision "$SNAPSHOT_REV"
   else
     log "No hf CLI on PATH — vLLM will pull weights on first load"
   fi
@@ -288,6 +300,12 @@ start_local() {
   if [[ -n "$MAX_NUM_BATCHED_TOKENS" ]]; then
     batched_args+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
   fi
+  local mm_args=()
+  if [[ "$LANGUAGE_MODEL_ONLY" == "1" ]]; then
+    mm_args+=(--language-model-only)
+  elif [[ -n "${LIMIT_MM_PER_PROMPT:-}" ]]; then
+    mm_args+=(--limit-mm-per-prompt "$LIMIT_MM_PER_PROMPT")
+  fi
 
   log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
   docker run -d \
@@ -326,6 +344,7 @@ start_local() {
     --reasoning-parser "$REASONING_PARSER" \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     "${template_args[@]}" \
+    "${mm_args[@]}" \
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
@@ -364,11 +383,12 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
-    log "Cannot SSH to $WORKER_HOST — starting local rank only. Run ROLE=worker ./run.sh on the other Spark first."
+    echo "Cannot SSH to $WORKER_HOST. ORCHESTRATE=auto refuses a lone TP=2 head rank. Set ROLE=worker on the other Spark first, or fix SSH." >&2
+    exit 1
   fi
   start_local 0
   wait_ready

@@ -45,7 +45,7 @@ def post(url: str, body: dict) -> tuple[int, dict]:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
-    p.add_argument("--model", default="LibertAIDAI/GLM-5.3-Flash-NVFP4")
+    p.add_argument("--model", default="nvidia/GLM-5.3-Flash-NVFP4")
     p.add_argument("--dump-dir", default="")
     args = p.parse_args()
 

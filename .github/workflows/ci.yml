@@ -37,6 +37,12 @@ jobs:
             echo "run.sh accepted MOE_BACKEND=flashinfer_cutlass without FORCE_UNSAFE_MOE" >&2
             exit 1
           fi
+      - name: run.sh refuses hiding the vision tower
+        run: |
+          if VALIDATE_ONLY=1 LANGUAGE_MODEL_ONLY=1 ./run.sh; then
+            echo "run.sh accepted LANGUAGE_MODEL_ONLY=1 without FORCE_UNSAFE_VISION" >&2
+            exit 1
+          fi
 
   shellcheck:
     runs-on: ubuntu-latest

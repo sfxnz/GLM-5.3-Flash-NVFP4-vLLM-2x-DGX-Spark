@@ -4,12 +4,12 @@
 # `&name` anchors a value; `*name` reuses it, so a pinned value is written once.
 
 model:
-  id: &model LibertAIDAI/GLM-5.3-Flash-NVFP4
-  revision: &revision caca4e6a4ebbd66f159d3d2fc256683fd6e27177
-  served_name: &served_name LibertAIDAI/GLM-5.3-Flash-NVFP4
+  id: &model nvidia/GLM-5.3-Flash-NVFP4
+  revision: &revision 09b04e5e74bca08ca8549fc736d4cdd8624bfde3
+  served_name: &served_name nvidia/GLM-5.3-Flash-NVFP4
   family: GLM-5.3-Flash
   params: 320B total / 18B active
-  quant: NVFP4 (weight-only, routed experts)
+  quant: NVFP4 W4A4 on routed experts and dense MLP (ModelOpt 0.47.0, nvfp4_experts_dense_mlp-kv_fp8_cast). Attn, shared experts, and vision stay BF16. KV scheme is kv_fp8_cast.
   draft: incoai/GLM-5.3-Flash-DFlash2 @ 7d74cdd881ed7e32c31175984a67823127b66cfe
 
 image:
@@ -50,6 +50,8 @@ serve:
     MAX_NUM_BATCHED_TOKENS: ""
     FORCE_UNSAFE_CTX: 0
     FORCE_UNSAFE_MOE: 0
+    FORCE_UNSAFE_VISION: 0
+    LANGUAGE_MODEL_ONLY: 0
     VLLM_USE_BREAKABLE_CUDAGRAPH: ""
     CHAT_TEMPLATE: $SCRIPT_DIR/chat_template.jinja
     KV_CACHE_MEMORY: 4445787956
@@ -72,7 +74,8 @@ readme:
     - "`--kv-cache-dtype`": "`{KV_CACHE_DTYPE}`"
     - "`--kv-cache-memory`": "`{KV_CACHE_MEMORY}` (4.14 GiB)"
     - "`--moe-backend`": "`{MOE_BACKEND}` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
-    - Checkpoint: "`{SNAPSHOT_REV}` (calibrated MoE `input_scale`; `SNAPSHOT_REV=aa28e1f54130286c95fee10d0705c74ce8743734` rolls back)"
+    - Checkpoint: "`{SNAPSHOT_REV}` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back)"
+    - Vision: "on (`LANGUAGE_MODEL_ONLY={LANGUAGE_MODEL_ONLY}`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`)"
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4)"
@@ -81,16 +84,15 @@ readme:
     - API: "`http://<head>:{PORT}/v1`"
 
 measured:
-  # The README decode table. One row per (phase, concurrency); a row's three numbers come from one
-  # bench_decode.py run. evidence: the file under evidence/ that contains them, or null while there is none.
+  # Published decode score is prose only. Do not add structured or code rows.
   decode:
-    conditions: streamed greedy, thinking off, 200 completion tokens, 3-run median; max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
+    conditions: prose only; streamed greedy, thinking off, 200 completion tokens, 3-run median; LibertAIDAI pin on this image (nvidia pack unmeasured on Sparks); max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
     units: {decode: tok/s per stream (median), aggregate: tok/s, ttft_p50: s}
     rows:
       - {phase: prose, concurrency: 1, decode: 21.2, aggregate: 21.2, ttft_p50: 0.33, evidence: evidence/rebench-20260902T204243Z/bench.txt}
       - {phase: prose, concurrency: 2, decode: 16.6, aggregate: 33.2, ttft_p50: 0.37, evidence: evidence/rebench-20260902T204243Z/bench.txt}
 
 links:
-  model: https://huggingface.co/LibertAIDAI/GLM-5.3-Flash-NVFP4
+  model: https://huggingface.co/nvidia/GLM-5.3-Flash-NVFP4
   draft: https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2
   repo: https://github.com/sfxnz/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark

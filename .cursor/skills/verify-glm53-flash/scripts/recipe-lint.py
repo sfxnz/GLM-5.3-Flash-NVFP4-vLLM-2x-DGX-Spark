@@ -63,6 +63,7 @@ def main() -> int:
     need(REPO / "run.sh")
     need(REPO / "stop.sh")
     need(REPO / "bench_decode.py")
+    need(REPO / "smoke_vision.py")
     need(REPO / "chat_template.jinja")
     for name in (
         "Dockerfile.sm121-v8",
@@ -104,10 +105,14 @@ def main() -> int:
         "python3 bench_decode.py",
         "http://127.0.0.1:8000/v1/chat/completions",
         "SPEC=mtp",
+        "nvidia/GLM-5.3-Flash-NVFP4",
         "LibertAIDAI/GLM-5.3-Flash-NVFP4",
         "glm53-sm121-v11",
         "Say hello in one sentence.",
         "enable_thinking",
+        "python3 smoke_vision.py",
+        "nvfp4_ds_mla",
+        "LANGUAGE_MODEL_ONLY",
     ):
         if snippet not in readme:
             failures.append(f"README missing {snippet!r}")
@@ -120,7 +125,9 @@ def main() -> int:
         "KV_CACHE_MEMORY": "4445787956",
         "BLOCK_SIZE": "2304",
         "SPEC": "dflash2",
-        "SERVED_NAME": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+        "SERVED_NAME": "nvidia/GLM-5.3-Flash-NVFP4",
+        "LANGUAGE_MODEL_ONLY": "0",
+        "FORCE_UNSAFE_VISION": "0",
         "CONTAINER_NAME": "glm53-flash-nvfp4",
         "NUM_SPECULATIVE_TOKENS": "7",
         "KV_CACHE_DTYPE": "fp8_e4m3",
@@ -132,9 +139,17 @@ def main() -> int:
         if want not in readme:
             failures.append(f"README does not mention run.sh default {var}={want}")
 
-    pin = "caca4e6a4ebbd66f159d3d2fc256683fd6e27177"
+    pin = "09b04e5e74bca08ca8549fc736d4cdd8624bfde3"
     if f'SNAPSHOT_REV="${{SNAPSHOT_REV:-{pin}}}"' not in run_sh and f"snapshots/{pin}" not in run_sh:
         failures.append(f"run.sh SNAPSHOT_REV default is no longer {pin}")
+    if 'hub_slug="models--${MODEL//\\//--}"' not in run_sh:
+        failures.append("run.sh no longer derives SNAPSHOT from MODEL")
+    if "models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/" in run_sh:
+        failures.append("run.sh still hardcodes the LibertAI SNAPSHOT path")
+    if "limit-mm-per-prompt" not in run_sh:
+        failures.append("run.sh no longer passes --limit-mm-per-prompt")
+    if '"${mm_args[@]}"' not in run_sh:
+        failures.append("run.sh docker run no longer expands mm_args")
     if 'MOE_BACKEND="${MOE_BACKEND:-marlin}"' not in run_sh:
         failures.append("run.sh MOE_BACKEND default is no longer marlin")
     if '--moe-backend "$MOE_BACKEND"' not in run_sh and "--moe-backend marlin" not in run_sh:
@@ -183,6 +198,28 @@ def main() -> int:
         failures.append("bench_decode.py missing prose/structured PHASES")
     if "--phase" not in bench or "chat/completions" not in bench:
         failures.append("bench_decode.py missing --phase or completions URL")
+    if 'default="prose"' not in bench:
+        failures.append("bench_decode.py --phase default is no longer prose")
+    if "nvidia/GLM-5.3-Flash-NVFP4" not in bench:
+        failures.append("bench_decode.py default model is no longer nvidia/GLM-5.3-Flash-NVFP4")
+
+    recipe = (REPO / "recipe.yaml").read_text() if (REPO / "recipe.yaml").exists() else ""
+    if "id: &model nvidia/GLM-5.3-Flash-NVFP4" not in recipe:
+        failures.append("recipe.yaml model.id is no longer nvidia/GLM-5.3-Flash-NVFP4")
+    measured = recipe.split("measured:", 1)[-1] if "measured:" in recipe else ""
+    for m in re.finditer(r"phase:\s*([A-Za-z0-9_-]+)", measured):
+        if m.group(1) != "prose":
+            failures.append(f"recipe.yaml measured decode row is {m.group(1)!r}, published score must be prose only")
+
+    vision = REPO / "smoke_vision.py"
+    if vision.exists():
+        src = vision.read_text()
+        if "from PIL" in src or "import PIL" in src:
+            failures.append("smoke_vision.py must not import PIL")
+        if "image_url" not in src or "is not a multimodal model" not in src:
+            failures.append("smoke_vision.py missing image_url or not-multimodal gate")
+        if "nvidia/GLM-5.3-Flash-NVFP4" not in src:
+            failures.append("smoke_vision.py default model is no longer nvidia/GLM-5.3-Flash-NVFP4")
 
     scripts = SKILL_DIR / "scripts"
     thinking = scripts / "thinking_off_probe.py"
@@ -307,6 +344,17 @@ def main() -> int:
     if cutlass.returncode == 0 or "Stay on marlin" not in cutlass.stderr:
         failures.append(
             "VALIDATE_ONLY=1 MOE_BACKEND=flashinfer_cutlass did not refuse the cutlass UMA OOM path"
+        )
+    hide_vision = subprocess.run(
+        ["bash", str(run_sh_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VALIDATE_ONLY": "1", "LANGUAGE_MODEL_ONLY": "1"},
+    )
+    if hide_vision.returncode == 0 or "FORCE_UNSAFE_VISION=1" not in hide_vision.stderr:
+        failures.append(
+            "VALIDATE_ONLY=1 LANGUAGE_MODEL_ONLY=1 did not refuse hiding the vision tower"
         )
 
     print(f"repo={REPO}")

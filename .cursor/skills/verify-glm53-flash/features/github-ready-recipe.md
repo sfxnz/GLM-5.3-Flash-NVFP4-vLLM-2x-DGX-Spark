@@ -4,7 +4,7 @@ A stranger cloning this repo can follow `README.md` to build the local image cha
 
 ## Sub-features
 
-- `recipe-files` ships `README.md`, `LICENSE`, `run.sh`, `stop.sh`, `bench_decode.py`, and the v8–v11 Dockerfiles plus the patches they `COPY`.
+- `recipe-files` ships `README.md`, `LICENSE`, `run.sh`, `stop.sh`, `bench_decode.py`, `smoke_vision.py`, and the v8–v11 Dockerfiles plus the patches they `COPY`.
 - `recipe-exec` keeps `run.sh` and `stop.sh` executable.
 - `recipe-defaults` documents the same `IMAGE`, port, context, KV pin, spec, and served name that `run.sh` defaults to.
 - `recipe-images` documents the four-step `docker build` chain starting from `vllm/vllm-openai:glm53-flash-arm64-cu130` and ending at `glm53-sm121-v11`.
