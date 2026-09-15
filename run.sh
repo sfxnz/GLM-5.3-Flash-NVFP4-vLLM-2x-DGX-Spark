@@ -27,6 +27,13 @@ FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
 FORCE_UNSAFE_MOE="${FORCE_UNSAFE_MOE:-0}"
 FORCE_UNSAFE_VISION="${FORCE_UNSAFE_VISION:-0}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
+# 20 GiB start reserve / 16 GiB wait abort on each Spark. L.A.I.L is
+# 15+4 on 121.7 GiB. A healthy LibertAI boot later sits at ~8 GiB after
+# /v1/models; this tripwire is only while the API is not up.
+# FORCE_UNSAFE_UMA=1 overrides both MemAvailable checks.
+FORCE_UNSAFE_UMA="${FORCE_UNSAFE_UMA:-0}"
+UMA_RESERVE_GIB="${UMA_RESERVE_GIB:-20}"
+UMA_ABORT_GIB="${UMA_ABORT_GIB:-16}"
 # Empty: engine auto-enables breakable CUDA graphs. 0 slowed structured
 # c=1 69.4→67.0 and c=2 59.7→52.1. Leave unset.
 VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-}"
@@ -181,6 +188,114 @@ maybe_drop_caches() {
   fi
 }
 
+ssh_worker() {
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" "$@"
+}
+
+should_watch_worker() {
+  [[ "$ORCHESTRATE" == "auto" && "${NNODES:-1}" -gt 1 && "${ROLE:-}" == "head" ]]
+}
+
+mem_available_kib() {
+  local host="${1:-}"
+  if [[ -n "$host" ]]; then
+    ssh_worker "awk '/^MemAvailable:/ {print \$2; exit}' /proc/meminfo"
+  else
+    awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo
+  fi
+}
+
+refuse_low_uma() {
+  local host="${1:-}"
+  local label="${2:-this node}"
+  local kib need
+  if [[ "$FORCE_UNSAFE_UMA" == 1 ]]; then
+    return 0
+  fi
+  kib="$(mem_available_kib "$host")" || {
+    echo "Could not read MemAvailable on $label. Refusing to start." >&2
+    exit 1
+  }
+  kib="$(printf '%s' "$kib" | tr -d '[:space:]')"
+  if [[ ! "$kib" =~ ^[0-9]+$ ]]; then
+    echo "Could not parse MemAvailable on $label. Refusing to start." >&2
+    exit 1
+  fi
+  need=$((UMA_RESERVE_GIB * 1024 * 1024))
+  if (( kib < need )); then
+    echo "MemAvailable ${kib} kB on $label is below the ${UMA_RESERVE_GIB} GiB UMA reserve. A first NVIDIA load cannot take down a 128 GiB GB10. Do not start. FORCE_UNSAFE_UMA=1 overrides." >&2
+    exit 1
+  fi
+  log "MemAvailable ${kib} kB on $label (>= ${UMA_RESERVE_GIB} GiB reserve)"
+}
+
+refuse_foreign_serve() {
+  local host="${1:-}"
+  local label names name devices
+  if [[ -n "$host" ]]; then
+    label="$host"
+    names="$(ssh_worker "docker ps --format '{{.Names}}'")" || {
+      echo "Cannot list containers on $host. Refusing to start." >&2
+      exit 1
+    }
+  else
+    label="$(host_short)"
+    names="$(docker ps --format '{{.Names}}')"
+  fi
+  while IFS= read -r name; do
+    # conduit is the Matrix homeserver. It has no GPU. House exception.
+    [[ -z "$name" || "$name" == "$CONTAINER_NAME" || "$name" == conduit ]] && continue
+    if [[ -n "$host" ]]; then
+      devices="$(ssh_worker "docker inspect -f '{{json .HostConfig.DeviceRequests}} {{json .HostConfig.Devices}} {{json .Config.Env}}' '$name'" 2>/dev/null || true)"
+    else
+      devices="$(docker inspect -f '{{json .HostConfig.DeviceRequests}} {{json .HostConfig.Devices}} {{json .Config.Env}}' "$name" 2>/dev/null || true)"
+    fi
+    if printf '%s' "$devices" | grep -Eqi 'gpu|nvidia|infiniband'; then
+      echo "$name on $label is using GPUs or InfiniBand. This recipe needs exclusive GPUs on both Sparks. Do not start. Do not docker rm that container from this script." >&2
+      exit 1
+    fi
+  done <<< "$names"
+}
+
+abort_load() {
+  echo "$1" >&2
+  if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+    echo "Recent logs:" >&2
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -120 >&2 || true
+  fi
+  if should_watch_worker; then
+    echo "Worker logs on $WORKER_HOST:" >&2
+    ssh_worker "docker logs '$CONTAINER_NAME' 2>&1 | tail -80" >&2 || true
+  fi
+  log "Stopping both ranks so a hung load cannot keep allocating"
+  if [[ -x "$SCRIPT_DIR/stop.sh" ]]; then
+    "$SCRIPT_DIR/stop.sh" || true
+  else
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
+  exit 1
+}
+
+wait_uma_or_abort() {
+  local host="${1:-}"
+  local label="${2:-this node}"
+  local kib abort_kib
+  if [[ "$FORCE_UNSAFE_UMA" == 1 ]]; then
+    return 0
+  fi
+  kib="$(mem_available_kib "$host")" || {
+    abort_load "Could not read MemAvailable on $label while waiting. Stopping both ranks."
+  }
+  kib="$(printf '%s' "$kib" | tr -d '[:space:]')"
+  if [[ ! "$kib" =~ ^[0-9]+$ ]]; then
+    abort_load "Could not parse MemAvailable on $label while waiting. Stopping both ranks."
+  fi
+  abort_kib=$((UMA_ABORT_GIB * 1024 * 1024))
+  if (( kib < abort_kib )); then
+    abort_load "MemAvailable ${kib} kB on $label fell below ${UMA_ABORT_GIB} GiB while waiting. Stopping both ranks."
+  fi
+}
+
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -235,6 +350,8 @@ start_local() {
     echo "docker not found" >&2
     exit 1
   fi
+  refuse_foreign_serve
+  refuse_low_uma
   maybe_drop_caches
   stop_local
   ensure_image
@@ -361,29 +478,40 @@ wait_ready() {
       return 0
     fi
     if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
-      echo "Container exited early. Logs:" >&2
-      docker logs "$CONTAINER_NAME" 2>&1 | tail -120 >&2
-      exit 1
+      abort_load "Container exited early."
+    fi
+    wait_uma_or_abort "" "this node"
+    if should_watch_worker; then
+      if ! ssh_worker "docker ps --format '{{.Names}}' | grep -qx '$CONTAINER_NAME'"; then
+        abort_load "Worker container on $WORKER_HOST exited early."
+      fi
+      wait_uma_or_abort "$WORKER_HOST" "$WORKER_HOST"
     fi
     sleep 5
     if (( i % 12 == 0 )); then
       log "still loading… (${i}×5s) — docker logs -f $CONTAINER_NAME"
     fi
   done
-  echo "Timed out waiting for API. Recent logs:" >&2
-  docker logs "$CONTAINER_NAME" 2>&1 | tail -120 >&2
-  exit 1
+  abort_load "Timed out waiting for API."
 }
 
 ROLE="$(detect_role)"
 log "role=$ROLE host=$(host_short)"
 
 if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker not found" >&2
+    exit 1
+  fi
+  refuse_foreign_serve
+  refuse_low_uma
   if command -v ssh >/dev/null 2>&1 && ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" true >/dev/null 2>&1; then
+    refuse_foreign_serve "$WORKER_HOST"
+    refuse_low_uma "$WORKER_HOST" "$WORKER_HOST"
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' FORCE_UNSAFE_UMA='$FORCE_UNSAFE_UMA' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' UMA_RESERVE_GIB='$UMA_RESERVE_GIB' UMA_ABORT_GIB='$UMA_ABORT_GIB' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else

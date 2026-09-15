@@ -113,6 +113,9 @@ def main() -> int:
         "python3 smoke_vision.py",
         "nvfp4_ds_mla",
         "LANGUAGE_MODEL_ONLY",
+        "MemAvailable",
+        "20 GiB",
+        "16 GiB",
     ):
         if snippet not in readme:
             failures.append(f"README missing {snippet!r}")
@@ -128,6 +131,9 @@ def main() -> int:
         "SERVED_NAME": "nvidia/GLM-5.3-Flash-NVFP4",
         "LANGUAGE_MODEL_ONLY": "0",
         "FORCE_UNSAFE_VISION": "0",
+        "FORCE_UNSAFE_UMA": "0",
+        "UMA_RESERVE_GIB": "20",
+        "UMA_ABORT_GIB": "16",
         "CONTAINER_NAME": "glm53-flash-nvfp4",
         "NUM_SPECULATIVE_TOKENS": "7",
         "KV_CACHE_DTYPE": "fp8_e4m3",
@@ -356,6 +362,43 @@ def main() -> int:
         failures.append(
             "VALIDATE_ONLY=1 LANGUAGE_MODEL_ONLY=1 did not refuse hiding the vision tower"
         )
+
+    if "refuse_foreign_serve" not in run_sh:
+        failures.append("run.sh missing refuse_foreign_serve")
+    if '"$name" == conduit' not in run_sh:
+        failures.append("run.sh exclusive-GPU check no longer skips conduit")
+    if "abort_load" not in run_sh:
+        failures.append("run.sh missing abort_load")
+    if "wait_uma_or_abort" not in run_sh:
+        failures.append("run.sh missing wait_uma_or_abort")
+    wait_start = run_sh.find("wait_ready() {")
+    wait_end = run_sh.find("\nROLE=", wait_start) if wait_start >= 0 else -1
+    wait_body = run_sh[wait_start:wait_end] if wait_start >= 0 and wait_end > wait_start else ""
+    if "abort_load" not in wait_body or "stop.sh" not in run_sh[run_sh.find("abort_load()") : wait_start]:
+        failures.append("wait_ready no longer aborts through abort_load / stop.sh")
+    if "Container exited early" not in wait_body:
+        failures.append("wait_ready no longer treats a dead container as an abort")
+    head_idx = run_sh.find('ORCHESTRATE" == "auto" && "$ROLE" == "head"')
+    if head_idx < 0:
+        failures.append("run.sh missing head ORCHESTRATE=auto block")
+    else:
+        head_block = run_sh[head_idx:]
+        scp = head_block.find("scp ")
+        if scp < 0:
+            failures.append("run.sh head block no longer scp's to the worker")
+        else:
+            if head_block.find("refuse_foreign_serve") < 0 or head_block.find("refuse_foreign_serve") > scp:
+                failures.append("head preflight must refuse_foreign_serve before worker scp")
+            if head_block.find("refuse_low_uma") < 0 or head_block.find("refuse_low_uma") > scp:
+                failures.append("head preflight must refuse_low_uma before worker scp")
+            if "refuse_foreign_serve \"$WORKER_HOST\"" not in head_block:
+                failures.append("head preflight no longer checks exclusive GPUs on spark2")
+            if 'refuse_low_uma "$WORKER_HOST"' not in head_block:
+                failures.append("head preflight no longer checks MemAvailable on spark2")
+    if "FORCE_UNSAFE_UMA='$FORCE_UNSAFE_UMA'" not in run_sh:
+        failures.append("worker SSH no longer forwards FORCE_UNSAFE_UMA")
+    if "UMA_RESERVE_GIB='$UMA_RESERVE_GIB'" not in run_sh:
+        failures.append("worker SSH no longer forwards UMA_RESERVE_GIB")
 
     print(f"repo={REPO}")
     for w in warnings:

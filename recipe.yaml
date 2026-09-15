@@ -52,6 +52,11 @@ serve:
     FORCE_UNSAFE_MOE: 0
     FORCE_UNSAFE_VISION: 0
     LANGUAGE_MODEL_ONLY: 0
+    # 20 GiB start reserve / 16 GiB wait abort. L.A.I.L is 15+4 on 121.7 GiB.
+    # FORCE_UNSAFE_UMA=1 overrides both MemAvailable checks.
+    FORCE_UNSAFE_UMA: 0
+    UMA_RESERVE_GIB: 20
+    UMA_ABORT_GIB: 16
     VLLM_USE_BREAKABLE_CUDAGRAPH: ""
     CHAT_TEMPLATE: $SCRIPT_DIR/chat_template.jinja
     KV_CACHE_MEMORY: 4445787956
@@ -76,6 +81,7 @@ readme:
     - "`--moe-backend`": "`{MOE_BACKEND}` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
     - Checkpoint: "`{SNAPSHOT_REV}` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back)"
     - Vision: "on (`LANGUAGE_MODEL_ONLY={LANGUAGE_MODEL_ONLY}`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`)"
+    - UMA abort: "refuse start below `{UMA_RESERVE_GIB}` GiB `MemAvailable` on each node; stop both ranks below `{UMA_ABORT_GIB}` GiB while waiting (`FORCE_UNSAFE_UMA=1` overrides). Exclusive GPU; `conduit` is ignored."
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4)"

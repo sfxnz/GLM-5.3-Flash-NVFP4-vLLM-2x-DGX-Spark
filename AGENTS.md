@@ -9,7 +9,7 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 - `recipe.yaml` is the source of truth for pins and generated blocks. Edit it, then `python3 kit/render.py`. Do not hand-edit `# BEGIN generated` or `<!-- BEGIN generated` blocks.
 - Change one knob at a time against `python3 bench_decode.py`. Revert if it does not beat noise or it regresses another cell. Record the revert in `evidence/` (`trail.tsv`, `decision.tsv`).
 - Read unified memory with `free -h`. Never `nvidia-smi` VRAM.
-- Exclusive GPUs. Do not start this while another `--gpus all` serve is up.
+- Exclusive GPUs. `run.sh` refuses a foreign GPU/InfiniBand container (`refuse_foreign_serve`). `conduit` is ignored. Do not `docker rm` that foreign container from this script.
 - Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `enp1s0f1np1` / `rocep1s0f1`.
 - Keep `chat_template.jinja`. The stock HF template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`.
 - Leave vision on. `LANGUAGE_MODEL_ONLY=1` is refused unless `FORCE_UNSAFE_VISION=1`. Cap is `--limit-mm-per-prompt '{"image":4,"video":1}'`. Do not skip MM profiling into a max-size dummy.
@@ -25,13 +25,18 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 - `--max-model-len` above 327680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Native context is 1,048,576. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. 1M on 2× Spark needs a packed `nvfp4_ds_mla` lane (different image/backend), not this pin.
 - Any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. `flashinfer_cutlass` OOM'd spark2 during JIT after 90.67 GiB weights. Stay on Marlin until an SM121 W4A4 MoE path exists that does not JIT-OOM.
 - `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`.
+- `MemAvailable` below `UMA_RESERVE_GIB` (20 GiB) on this node, or on `spark2` when `ORCHESTRATE=auto`, unless `FORCE_UNSAFE_UMA=1`.
+- Foreign GPU/InfiniBand container other than `conduit` and this recipe's name.
 - KV pin at or below `3886945403` (3.62 GiB) cannot hold 327680. Tony's 3.0 GiB pin is a 262144-ctx budget.
+
+`wait_ready` no longer sits 40 minutes on a dead or starving load. If the container dies, the worker dies, or `MemAvailable` falls below `UMA_ABORT_GIB` (16 GiB) while `/v1/models` is not up, it dumps logs and runs `./stop.sh` so both ranks stop. After the API is ready a healthy serve can sit near 8 GiB; that tripwire is only while waiting.
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
 
 ## Verify
 
 ```bash
+python3 -m unittest discover -s tests -q
 python3 kit/render.py --check
 python3 bench_decode.py                    # published score: prose, c=1 and 2, after serve is up
 python3 smoke_vision.py                    # must not return HTTP 400 "is not a multimodal model"

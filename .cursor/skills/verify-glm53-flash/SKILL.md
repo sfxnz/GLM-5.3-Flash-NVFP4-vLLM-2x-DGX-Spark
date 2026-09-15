@@ -16,7 +16,7 @@ Two instances cannot coexist: host network, port 8000, container name `glm53-fla
 1. `cd` to the repo root. `chmod +x run.sh stop.sh`.
 2. Run doctor (below). Branch on `status=`:
    - `ready` — attach. Do **not** write `.run-state/started`.
-   - `loading` — wait and re-doctor. Do **not** start another container. Ready line from `run.sh` is `Ready → http://127.0.0.1:8000/v1`. First boot is 15–20 minutes; `wait_ready` polls `/v1/models` for up to 40 minutes.
+   - `loading` — wait and re-doctor. Do **not** start another container. Ready line from `run.sh` is `Ready → http://127.0.0.1:8000/v1`. First boot is 15–20 minutes; `wait_ready` polls `/v1/models` for up to 40 minutes and now runs `./stop.sh` if the container dies or `MemAvailable` falls below 16 GiB. On OOM suspicion, stop first, then inspect.
    - `mismatch` — stop. Do not drive, do not `./run.sh`, do not `./stop.sh`.
    - `missing` — only then launch:
 

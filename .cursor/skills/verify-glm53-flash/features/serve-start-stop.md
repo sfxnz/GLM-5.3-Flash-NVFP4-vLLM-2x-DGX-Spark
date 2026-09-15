@@ -7,6 +7,9 @@
 - `start-head` starts rank 0 on the head Spark and waits until `/v1/models` answers.
 - `start-worker` starts rank 1 on `spark2` before the head (auto SSH, or `ROLE=worker ./run.sh`).
 - `start-image-guard` refuses to run when `glm53-sm121-v11` is missing instead of pulling stock vLLM.
+- `start-uma-guard` refuses to start when `MemAvailable` is below 20 GiB on this node (and `spark2` when orchestrating).
+- `start-exclusive-gpu` refuses a foreign GPU/InfiniBand container. `conduit` is ignored. The script does not `docker rm` that foreign container.
+- `wait-abort` stops both ranks if the container dies or `MemAvailable` falls below 16 GiB before `/v1/models` answers.
 - `stop-both` removes the named container locally and on `spark2`.
 
 ## How to get to it (user POV)
@@ -31,8 +34,9 @@ Preconditions:
 
 ## Gotchas
 
-- `./run.sh` always `docker rm -f`s `glm53-flash-nvfp4` on the local node before starting. That is why attach-or-refuse is mandatory.
+- `./run.sh` always `docker rm -f`s `glm53-flash-nvfp4` on the local node before starting. That is why attach-or-refuse is mandatory. A foreign GPU container is refused, not removed.
 - Unpinned `NCCL_IB_HCA` on GB10 can pick a DOWN HCA. Do not “fix” a start failure by unsetting `HCA`.
-- First boot downloads/warm-loads weights: 15–20 minutes when the HF cache is warm, longer when not. `wait_ready` is the signal, not a fixed sleep.
+- First boot downloads/warm-loads weights: 15–20 minutes when the HF cache is warm, longer when not. `wait_ready` is the signal, not a fixed sleep. If the container dies or `MemAvailable` falls below 16 GiB while waiting, `wait_ready` runs `./stop.sh` instead of sitting 40 minutes.
+- Start is refused when `MemAvailable` is below 20 GiB. Read `free -h`, never `nvidia-smi` VRAM.
 - `SPEC=dflash2` needs the pinned draft snapshot; without `hf` and without that snapshot, `run.sh` exits before `docker run`.
 - Cleanup of a verify-owned serve uses `./stop.sh`, not `kill` by process name.
