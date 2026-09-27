@@ -767,9 +767,11 @@ SIM_SCRIPT = textwrap.dedent(
 
 
     def foreign(lay):
-        """Bytes changed in blocks no request owns."""
+        """Bytes changed in blocks no request owns: in all of them, and past
+        block 0 (the null block, which holds V2's shared ring)."""
         pages = lay.raw.view(NB, PAGE_BYTES)
-        return sum(int((pages[p] != FILL).sum()) for p in range(NB) if p not in OWNED)
+        changed = [0 if p in OWNED else int((pages[p] != FILL).sum()) for p in range(NB)]
+        return sum(changed), sum(changed[1:])
 
 
     RUNS = {  # name: (kernels, indexer, ring, V2 runner, FULL graphs, padded tail view, speculative)
@@ -819,7 +821,9 @@ SIM_SCRIPT = textwrap.dedent(
                     got = lay.tail[TAIL_BLOCK[b], :, c % ring]
                     seen[name + "|ring differs"] += not torch.equal(got, ref.tail[TAIL_BLOCK[b], :, c % KPOOL])
             if padded:
-                seen[name + "|foreign bytes"] += foreign(lay)
+                total, past_null = foreign(lay)
+                seen[name + "|foreign bytes"] += total
+                seen[name + "|foreign bytes past block 0"] += past_null
             if name == "off":
                 off_raw = lay.raw
             if name == "v11" and "off" in cfg["runs"]:
@@ -893,9 +897,10 @@ def table(title: str, seen: dict) -> str:
     for run in ALL_RUNS:
         if f"{run}|pools" in seen:
             rows.append(
-                "    %-12s pools differ %3d/%-3d  readable ring slots differ %2d/%-2d  foreign bytes %d"
+                "    %-12s pools differ %3d/%-3d  readable ring slots differ %2d/%-2d  foreign bytes %d (%d past block 0)"
                 % (run, seen[f"{run}|pools differ"], seen[f"{run}|pools"], seen[f"{run}|ring differs"],
-                   seen[f"{run}|ring slots"], seen.get(f"{run}|foreign bytes", 0))
+                   seen[f"{run}|ring slots"], seen.get(f"{run}|foreign bytes", 0),
+                   seen.get(f"{run}|foreign bytes past block 0", 0))
             )
     return "\n".join(rows)
 
@@ -927,6 +932,9 @@ class KpoolTailSimulationTest(unittest.TestCase):
                 # v11 as served (V2): pools built from rejected drafts and, from
                 # c=2 on, from other requests (one ring in block 0 for all).
                 self.assertGreater(seen["v11|pools differ"], 0)
+                # Past block 0 only the seed writes: v11's seed addressing
+                # bites on V2 as served too.
+                self.assertGreater(seen["v11|foreign bytes past block 0"], 0)
                 # v11's bug, documented: rejected rows overwrite committed slots.
                 self.assertGreater(seen["v11-contig|pools differ"], 0)
                 self.assertGreater(seen["v11-contig|ring differs"], 0)
