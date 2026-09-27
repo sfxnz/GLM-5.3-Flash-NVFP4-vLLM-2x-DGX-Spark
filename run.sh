@@ -270,8 +270,8 @@ start_local() {
     echo "docker not found" >&2
     exit 1
   fi
-  maybe_drop_caches
   stop_local
+  maybe_drop_caches
   ensure_image
   ensure_weights
 
