@@ -1,0 +1,55 @@
+E2c (bisect boot 1 of 2): FP8 W8A16 on draft,shared,mla,kda_o; lm_head and kda_in back to BF16
+  serve   IMAGE=glm53-sm121-v13 WARM_SHARDS=0 EXTRA_ENV='MAX_JOBS=2 GLM53_FP8_W8A16=draft,shared,mla,kda_o'
+          (../e2-tools/cfg.sh; run.sh @ 6bd3730), nvidia 09b04e5, drafter 7d74cdd, DFlash2-7, seqs 2, kv pin 4.14 GiB,
+          JIT cache warm. Args/image parity OK. Booted under kit/uma_watch.py (default floors).
+
+Why this config (bisection order). E2a (FP8 all) and E2b (NVFP4 all) both failed Tier 0. Every NVFP4 group carries more
+error than FP8, so the NVFP4 bisection could not pass while FP8-all fails; the two bisect boots went to FP8 (task step 4,
+"if E2a failed too"). E2a's failure was KL +5.2e-3 over the cross-boot A/A, five times the fp8 margin, spread evenly over
+domains. Removing only lm_head (step 1 of lm_head, kda_in, kda_o) looked unlikely to recover 4.2e-3, and passing is
+monotone in the quantized set, so this boot took steps 1 and 2 together (lm_head + kda_in to BF16): it finds a passing
+config whenever step 1 alone would, and leaves the second boot for step 3 or a push.
+
+swap lines (both ranks identical)
+  target  kda_o[fp8]=34 layers 1088.0->544.3 MiB, mla[fp8]=22 968.0->484.3, shared[fp8]=84 1008.0->504.5;
+          torch reserved 88.96 -> 88.75 GiB (only 0.21 of 1.53 GiB returned)
+  draft   draft[fp8]=32 layers 1162.0->581.3 MiB; torch reserved 91.23 -> 90.74 GiB
+  Model loading took 88.3 GiB per rank (E1a 90.36).
+
+boot  run.sh 20:24:15Z -> /v1/models 20:38:50Z (14.6 min); head Loading 651.3 s / Model 701.6 s; worker 221.1 s / 269.2 s;
+      init engine 38.8 s; KV pool 372,877.
+MemAvailable GiB (spark1 / spark2): LOAD min 14.07 / 15.41, PROFILE 11.42 / 12.35, KV_READY 6.33 / 11.34,
+  after ready 9.95 / 11.45 (E1a 8.04 / 9.90: +1.9 / +1.55), SERVING min 7.99 / 11.38.
+
+checks: count-200 200/200, thinking-off "PING". Tier 0 compare --stage fp8: FAIL 7/11 (below).
+
+ruler v2 fast gate (all cells valid) and T
+  cell   tok/s            step_ms          acc_len          per_pos p1..p7 (bench-1)
+  A      21.10 / 21.56    103.4 / 103.8    2.186 / 2.242    .621 .303 .147 .063 .027 .009 .004
+  B      39.77 / 38.37    108.6 / 108.0    4.351 / 4.177    .848 .686 .533 .414 .326 .258 .208
+  J@c1   73.88 / 76.69    106.4 / 103.8    7.923 / 8.000
+  J@c2   61.17 / 55.68    128.6 / 140.3    7.855 / 7.897
+  H      15.28 / 15.42    147.6 / 147.1    2.254 / 2.263
+  T      25.98            102.0            2.654            .678 .406 .232 .139 .094 .057 .035
+  kit/compare.py vs E0: A +8.1% [+5.7,+10.5] step -10.2%, acc -2.8% (paired -2.8% [-6.2,+0.8]); B +12.8%; J@c1 +9.3%;
+    H +10.7% (compare-vs-e0.txt; vs E1a in compare-vs-e1a.txt). Step A 115.3 -> 103.6 ms (-11.7 ms; byte model -9.9 ms).
+
+Tier 0 (tier0.json), compare --stage fp8 vs nvidia-v11-k7, 20:59:25Z..21:06:40Z
+                     E1a cross-boot A/A   E2a FP8-all   E2c          tool limit       cross-boot limit
+  dNLL               -0.000120            +0.001961     +0.001581    0.005 PASS       0.005 PASS
+  top-1              0.983264             0.976458      0.978334     0.979469 FAIL    0.978264 PASS (by 0.007 pt)
+  KL top-20          5.864e-3             1.103e-2      9.659e-3     6.137e-3 FAIL    6.864e-3 FAIL (+3.8e-3 over A/A)
+  greedy hazard      0.016716 (17/20)     0.016882      0.021609 (18/20)  0.019178 FAIL
+  utf8               pass                 pass          FAIL: 39 of 40 rows (a row skipped; 0 U+FFFD, 0 square errors)
+  count 200, kwargs 12/12, tools json 1.00, vision 13/13, needle 3/3 + 3/3: PASS
+  tool verdict: FAIL tier0 compare vs nvidia-v11-k7: 7/11 criteria; failed nll.top1_stage, nll.kl_stage, greedy.hazard, utf8
+
+Reading
+  - Removing lm_head and kda_in cut the added KL only from 5.2e-3 to 3.8e-3. So lm_head + kda_in together carry ~1.4e-3,
+    and the output-side groups kept here (kda_o, MLA q_b/o, shared experts; the drafter cannot change output) carry the
+    rest. Output projections write straight into the residual stream; input projections go through attention first.
+  - greedy.hazard (0.0216) and utf8 fail on the config with LESS quantization than E2a (0.0169, utf8 pass). Both are
+    boot-noisy: utf8 was a skipped table row (E0 notes degenerate rows as the model's own top-1 choices), and the hazard
+    range across same-code boots is 0.0096 (same boot) .. 0.0167 (cross boot). The KL and top-1 numbers are the signal.
+  - Next boot (E2d, last of the 2): FP8 on draft + kda_in only. kda_in is the largest group (7.6 ms of the 20.3 ms FP8
+    saving) and sits in the low-KL half; kda_o (step 3 of the given order) is in the high-KL half with shared and mla.

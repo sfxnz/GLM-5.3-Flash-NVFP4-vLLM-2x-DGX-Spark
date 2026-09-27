@@ -1,0 +1,19 @@
+2026-09-27T20:24:16.162Z ssh ControlMaster up for spark2
+2026-09-27T20:24:16.164Z watching glm53-flash-nvfp4 head=spark1 worker=spark2 phase=LOAD floors={'LOAD': 10.0, 'PROFILE': 8.0, 'KV_READY': 3.0, 'SERVING': 2.0} kill_log_regex='' kill_compiler_regex=''
+2026-09-27T20:25:39.087Z worker: (Worker_TP1 pid=189) INFO 09-27 20:25:39 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-27T20:25:39.122Z head: (Worker_TP0 pid=250) INFO 09-27 20:25:39 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-27T20:25:39.194Z worker: (Worker_TP1 pid=189) INFO 09-27 20:25:39 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-27T20:25:39.225Z head: (Worker_TP0 pid=250) INFO 09-27 20:25:39 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-27T20:30:07.978Z worker: (Worker_TP1 pid=189) INFO 09-27 20:30:07 [model_runner.py:375] Model loading took 88.3 GiB and 269.211453 seconds
+2026-09-27T20:37:20.370Z head: (Worker_TP0 pid=250) INFO 09-27 20:37:20 [model_runner.py:375] Model loading took 88.3 GiB and 701.587722 seconds
+2026-09-27T20:37:20.376Z PHASE LOAD -> PROFILE (min GiB in LOAD: spark1=14.07 spark2=15.41)
+2026-09-27T20:37:23.145Z head: (Worker_TP0 pid=250) INFO 09-27 20:37:23 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-27T20:37:23.210Z worker: (Worker_TP1 pid=189) INFO 09-27 20:37:23 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-27T20:37:48.910Z worker: (Worker_TP1 pid=189) INFO 09-27 20:37:48 [gpu_worker.py:492] Initial free memory 111.39 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config
+2026-09-27T20:37:48.911Z PHASE PROFILE -> KV_READY (min GiB in PROFILE: spark1=11.42 spark2=12.35)
+2026-09-27T20:37:49.040Z head: (Worker_TP0 pid=250) INFO 09-27 20:37:49 [gpu_worker.py:492] Initial free memory 109.42 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config
+2026-09-27T20:37:49.130Z head: (EngineCore pid=178) INFO 09-27 20:37:49 [kv_cache_utils.py:2204] GPU KV cache size: 372,877 tokens, Maximum concurrency for 327,680 tokens per request: 1.14x
+2026-09-27T20:37:59.757Z head: (EngineCore pid=178) INFO 09-27 20:37:59 [core.py:363] init engine (profile, create kv cache, warmup model) took 38.76 s
+2026-09-27T20:38:49.350Z head: (APIServer pid=1) INFO:     Application startup complete.
+2026-09-27T20:38:50.422Z PHASE KV_READY -> SERVING (min GiB in KV_READY: spark1=6.33 spark2=11.34)
+2026-09-27T21:07:30.584Z exit; min MemAvailable GiB per phase/node: LOAD/spark1=14.07 LOAD/spark2=15.41 PROFILE/spark1=11.42 PROFILE/spark2=12.35 KV_READY/spark1=6.33 KV_READY/spark2=11.34 SERVING/spark1=7.99 SERVING/spark2=11.38

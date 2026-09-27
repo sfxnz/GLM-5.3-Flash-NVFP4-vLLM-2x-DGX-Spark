@@ -1,0 +1,51 @@
+E2b: glm53-sm121-v13, NVFP4 W4A16 Marlin on every BF16 non-MoE group (docker/patch_v13_fp8.py)
+  serve   IMAGE=glm53-sm121-v13 WARM_SHARDS=0 EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft,shared,mla,kda_o,kda_in,lm_head'
+          (../e2-tools/cfg.sh; run.sh @ 6bd3730 at boot: the shard warmer was removed by the merge, WARM_SHARDS is a
+          no-op now), nvidia 09b04e5, drafter 7d74cdd, DFlash2-7, seqs 2, kv pin 4.14 GiB, JIT cache warm.
+          Args/image parity OK (docker-args-check.txt). Booted under kit/uma_watch.py (default floors).
+  E2a stop before boot: ../e2a-fp8-all/stop-e2a*.
+
+swap lines (both ranks identical)
+  target  kda_in[nvfp4]=34 layers 3340.5->941.9 MiB, kda_o=34 1088.0->306.0, mla=22 968.0->272.3, shared=84 1008.0->283.5,
+          lm_head=1 605.0->170.2 MiB; torch reserved 88.96 -> 86.40 GiB
+  draft   draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 88.86 -> 88.09 GiB
+  Model loading took 84.63 GiB per rank (E1a 90.36, E2a 86.38): -5.73 GiB allocated.
+
+boot (UTC)                    E2a                            E2b
+  run.sh -> /v1/models        18:59:16 -> 19:15:12 15.9 min  19:43:07 -> 19:58:12 15.1 min
+  head Loading / Model        675.0 s / 767.3 s              673.1 s / 736.0 s
+  worker Loading / Model      221.4 s / 343.5 s              218.3 s / 277.2 s (weights-done -> model-loaded 55 s)
+  init engine                 38.1 s                         35.0 s; KV pool 372,877
+
+MemAvailable GiB (spark1 / spark2)
+                        E1a            E2a            E2b
+  LOAD min              14.27 / 15.44  13.97 / 15.44  14.00 / 15.49
+  PROFILE min           10.36 /  8.57  12.75 / 13.36  13.65 / 15.20
+  KV_READY min           6.53 /  5.65   7.42 / 11.94   7.53 / 13.87
+  after ready            8.04 /  9.90  10.36 / 12.09  10.40 / 13.99   => +2.4 / +4.1 vs E1a
+  SERVING min            8.00 /  8.92   9.54 / 11.98   9.34 / 13.92
+  spark2 (clean node, swap flat 4.1 GiB) gains +4.1 GiB for -5.73 GiB of weights; spark1's reading is swap-bound
+  (swap 6.70 GiB at ready vs 7.39 on E2a). Torch reserved again falls by less than the freed bytes
+  (target 2.56 of 4.66 GiB, drafter 0.77 of 0.81 GiB).
+
+checks
+  count-200 200/200, thinking-off "PING" (probe-count.console.txt).
+  Tier 0 compare --stage nvfp4 vs nvidia-v11-k7: FAIL 6/11 (tier0.json, tier0-notes.txt).
+
+ruler v2 fast gate (all cells valid) and T
+  cell   E2a tok/s        E2b tok/s        E2b step_ms     E2b acc_len     per_pos p1..p7 (bench-1)
+  A      23.84 / 24.54    26.33 / 26.82    84.4 / 84.6     2.226 / 2.276   .626 .327 .155 .062 .028 .011 .005
+  B      43.16 / 42.77    47.92 / 46.11    89.4 / 89.1     4.308 / 4.143   .837 .677 .523 .420 .331 .266 .211
+  J@c1   84.00 / 82.66    89.78 / 91.39    87.5 / 87.1     7.923 / 7.987
+  J@c2   70.54 / 63.27    68.56 / 71.35   112.0 / 106.8    7.758 / 7.733
+  H      15.83 / 16.21    17.20 / 17.00   129.2 / 128.6    2.219 / 2.187
+  T      30.04            33.58            82.8            2.785           .697 .438 .273 .166 .101 .057 .034
+  kit/compare.py vs E0 (compare-vs-e0.txt): A +34.7% [+32.1,+37.3] step -26.7% acc -1.2%; B +35.7%; J@c1 +31.5%;
+    H +23.3% (all KEEP, single boot per arm). vs E2a (compare-vs-e2a.txt): A +9.8%, step -9.3%, acc -0.4%.
+  Step A 115.3 -> 84.5 ms (-30.8 ms); the microbench byte model predicted -28.7 ms at M=8.
+  NVFP4 drafter: acceptance unchanged (A 2.226/2.276 vs E2a 2.224/2.299; B 4.308/4.143 vs 4.243/4.210).
+  The structured count text differs from every BF16/FP8 run (J sha 397fc01f38 in 5/6 waves, 6f31f80513 once, vs
+  c003be4978); the count probes stayed 200/200.
+
+Verdict: fastest config measured (+34.7% A vs E0) but FAILS Tier 0 by a wide margin (KL 3.7e-2, 4x the nvfp4 limit;
+dNLL +0.019; greedy hazard 0.026). Not a candidate.

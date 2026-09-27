@@ -1,0 +1,57 @@
+E2a: glm53-sm121-v13, FP8 W8A16 Marlin on every BF16 non-MoE group (docker/patch_v13_fp8.py)
+  serve   IMAGE=glm53-sm121-v13 WARM_SHARDS=0 EXTRA_ENV='MAX_JOBS=2 GLM53_FP8_W8A16=draft,shared,mla,kda_o,kda_in,lm_head'
+          (e2a-env.sh; run.sh @ 6e3fcd3 at boot), nvidia 09b04e5, drafter 7d74cdd (default), DFlash2-7, seqs 2,
+          kv pin 4.14 GiB, JIT cache warm (image 033847011721). Args/image parity OK (docker-args-check.txt; the env
+          DIFF is HF_TOKEN on the head only, same as E1b). Booted under kit/uma_watch.py (default floors).
+  E1b stop before boot: stop-e1b*.txt/log (watcher 1606065 killed, ./stop.sh, both nodes clean).
+
+swap lines (both ranks identical; head.stream.log, worker.stream.log)
+  target  kda_in[fp8]=34 layers 3340.5->1675.3 MiB, kda_o=34 1088.0->544.3, mla=22 968.0->484.3, shared=84 1008.0->504.5,
+          lm_head=1 605.0->302.6 MiB; torch reserved 88.96 -> 87.44 GiB
+  draft   draft[fp8]=32 layers 1162.0->581.3 MiB; torch reserved 89.88 -> 89.41 GiB
+  Counts match the model: 34 KDA + 11 MLA layers (x2 linears), 42 MoE layers (x2 shared linears), one lm_head,
+  32 drafter linears. No "left ... as they were" warning.
+  Model loading took 86.38 GiB per rank (E1a/E1b 90.36): -3.98 GiB of allocated weights.
+
+boot (UTC)                    E1b (v13 off, warm)            E2a
+  run.sh -> /v1/models        18:13:11 -> 18:29:30 16.3 min  18:59:16 -> 19:15:12 15.9 min
+  head Loading / Model        721.0 s / 783.2 s              675.0 s / 767.3 s (no shard warmer)
+  worker Loading / Model      209.5 s / 260.4 s              221.4 s / 343.5 s (weights-done -> model-loaded 118 s incl. the swap; E1b 51 s)
+  init engine                 46.4 s                         38.1 s; KV pool 372,877 tokens (unchanged, pinned)
+
+MemAvailable GiB (spark1 / spark2), uma.tsv / memory-by-phase.txt
+                        E1a            E1b            E2a
+  LOAD min              14.27 / 15.44  14.37 / 15.37  13.97 / 15.44
+  PROFILE min           10.36 /  8.57  10.74 / 11.44  12.75 / 13.36
+  KV_READY min           6.53 /  5.65   5.65 / 10.05   7.42 / 11.94
+  after ready (1st SERVING sample)
+                         8.04 /  9.90   8.73 / 10.13  10.36 / 12.09   => +2.3 / +2.2 vs E1a (+1.6 / +2.0 vs E1b)
+  SERVING min (workload) 8.00 /  8.92   7.37 / 10.07   9.54 / 11.98
+  spark1 swap at ready 7.39 GiB (E1a 8.11). spark2 is the clean node (swap flat 4.1-4.2 GiB in all three boots).
+  Expected ~+4 GiB/rank; measured ~+2.2 GiB. The swap frees 3.42 GiB of target weights (allocated) but torch reserved
+  falls only 1.52 GiB, and the drafter 0.58 -> 0.47 GiB: about half of the freed BF16 bytes stay in partly used
+  caching-allocator segments after empty_cache(), so the OS never sees them (see anomalies).
+
+checks
+  count-200 200/200 and thinking-off "PING" (probe-count.console.txt); Tier-0 count 200/200 too.
+  Tier 0 compare --stage fp8 vs nvidia-v11-k7: FAIL 9/11 (tier0.json; tier0-notes.txt).
+
+ruler v2 fast gate (all cells valid; bench-1, bench-2) and T (bench-T)
+  cell   E0 b1/b2 tok/s   E2a tok/s        E2a step_ms     E2a acc_len     per_pos p1..p7 (bench-1)
+  A      19.79 / 19.66    23.84 / 24.54    93.1 / 93.2     2.224 / 2.299   .637 .326 .157 .064 .022 .010 .004
+  B      34.90 / 34.39    43.16 / 42.77    97.9 / 97.7     4.243 / 4.210   .833 .669 .534 .401 .322 .229 .172
+  J@c1   68.89 / 68.84    84.00 / 82.66    94.8 / 94.0     8.000 / 7.790
+  J@c2   55.50 / 56.90    70.54 / 63.27   112.8 / 123.5    8.000 / 7.816
+  H      13.69 / 14.04    15.83 / 16.21   137.9 / 137.4    2.182 / 2.227
+  T      -                30.04           91.4             2.746           .687 .420 .263 .158 .101 .058 .037
+  kit/compare.py (boot as unit; single boot per arm, so verdicts need to clear the +-4% boot band):
+    vs E0  (compare-vs-e0.txt):  A +22.6% [+19.1,+26.2] step -19.2% acc -0.8% KEEP; B +24.0% KEEP; J@c1 +21.0% KEEP;
+                                 H +15.5% KEEP; J@c2 +19.1% KEEP
+    vs E1a (compare-vs-e1a.txt): A +27.3% step -20.5%; B +28.5%; J@c1 +24.9%; H +17.4%
+  Byte model held: A step 115.3 -> 93.1 ms (-22.2 ms) against the E1 microbench's -20.3 ms at M=8.
+  Acceptance unchanged (A paired per-prompt bootstrap vs E0 -0.8% [-4.2,+2.8]); FP8 drafter costs nothing.
+  One J@c1 wave (bench-2) emitted a different 200-token count text (sha 39e462b847 vs c003be4978 in every E0/E1/E2a
+  run) at acc 7.37; the count probes (probe + Tier 0) stayed 200/200.
+
+Verdict: fastest-per-quality candidate on speed (+22.6% A), but FAILS Tier 0 on nll.top1_stage and nll.kl_stage, and
+also fails when the fp8 margins are applied to the cross-boot A/A instead of the same-boot one (tier0-notes.txt).
