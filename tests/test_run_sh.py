@@ -9,7 +9,6 @@ import re
 import stat
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -224,22 +223,6 @@ class JitCache(RunShCase):
         self.assertIn("JIT_CACHE_DIR=/d/jit cache", words)
 
 
-class WarmShards(RunShCase):
-    def test_default_is_head_only(self):
-        proc = self.run_sh()
-        self.assertAccepted(proc)
-        self.assertIn(f"==> warm_shards=1 log_dir={self.home}/projects/data/glm53-jit-cache/logs\n", proc.stdout)
-
-    def test_values(self):
-        for ok in ("0", "1", "all"):
-            with self.subTest(ok=ok):
-                self.assertAccepted(self.run_sh(WARM_SHARDS=ok))
-        self.assertRefused(self.run_sh(WARM_SHARDS="2"), "WARM_SHARDS=2: want 0, 1 (head only) or all")
-
-    def test_worker_gets_warm_shards(self):
-        self.assertIn("WARM_SHARDS=all", shell_words(worker_command(self.run_sh(WARM_SHARDS="all").stdout)))
-
-
 class LogitsFp32(RunShCase):
     V13 = {"IMAGE": "glm53-sm121-v13"}
 
@@ -292,36 +275,22 @@ class StubbedLaunch(RunShCase):
                             'case "$1" in\n'
                             f'  image) [[ "$3" == -f ]] && echo {self.ID}; exit 0 ;;\n'
                             '  ps|run) exit 0 ;;\n'
-                            '  logs) cat "$STUB_DOCKER_LOGS" ;;\n'
                             '  *) exit 1 ;;\n'
                             'esac\n')
         self.stub("sudo", "exit 1\n")
         self.stub("curl", "exit 0\n")
         self.snap = self.home / "snap"
         self.snap.mkdir()
-        for i in range(1, 34):
-            (self.snap / f"model-{i:05d}-of-00033.safetensors").write_bytes(b"\0" * 4096)
 
     def launch(self, **extra):
         env = self.base_env(**{
             "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
-            "STUB_DOCKER_LOGS": str(REPO / "evidence/iter-nvidia-linear-marlin/head.docker.log"),
             "IMAGE": "glm53-test-stub-image", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
             "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
         del env["VALIDATE_ONLY"]
         return subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
 
-    def warm_log(self):
-        """Wait for the background warmer to finish; return its only log."""
-        for _ in range(200):
-            logs = list((self.home / "projects/data/glm53-jit-cache/logs").glob("shard_warm-*.log"))
-            if len(logs) == 1 and "exit: advised" in logs[0].read_text():
-                break
-            time.sleep(0.05)
-        self.assertEqual(len(logs), 1, logs)
-        return logs[0].read_text()
-
-    def test_head_mounts_jit_cache_and_warms(self):
+    def test_head_mounts_jit_cache(self):
         proc = self.launch()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         jit = self.home / "projects/data/glm53-jit-cache/0123456789ab"
@@ -329,23 +298,17 @@ class StubbedLaunch(RunShCase):
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"-v {jit}:/jit-cache -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", run)
         self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-test-stub-image ", run)
-        self.assertIn("Shard warmer pid", proc.stdout)
-        text = self.warm_log()
-        self.assertIn("following glm53-test-stub: 33 shards", text)
-        self.assertEqual(text.count("WILLNEED "), 32, text)
-        self.assertIn("exit: advised 32 shard(s)", text)
 
-    def test_jit_cache_0_and_warm_shards_0(self):
-        proc = self.launch(JIT_CACHE="0", WARM_SHARDS="0")
+    def test_jit_cache_0(self):
+        proc = self.launch(JIT_CACHE="0")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("/jit-cache", self.log.read_text())
-        self.assertNotIn("Shard warmer", proc.stdout)
         self.assertFalse((self.home / "projects/data/glm53-jit-cache").exists())
 
     def test_draft_download_pins_draft_rev(self):
         self.stub("hf", 'echo "hf $*" >>"$STUB_LOG"\n')
         rev = DraftRev.NEWER
-        proc = self.launch(SKIP_DOWNLOAD="0", JIT_CACHE="0", WARM_SHARDS="0", DRAFT_REV=rev)
+        proc = self.launch(SKIP_DOWNLOAD="0", JIT_CACHE="0", DRAFT_REV=rev)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(f"Downloading incoai/GLM-5.3-Flash-DFlash2 @ {rev}", proc.stdout)
         calls = [line for line in self.log.read_text().splitlines() if line.startswith("hf ")]
@@ -358,20 +321,11 @@ class StubbedLaunch(RunShCase):
         for value, present in (("0", False), ("1", True)):
             with self.subTest(LOGITS_FP32=value):
                 self.log.unlink(missing_ok=True)
-                proc = self.launch(LOGITS_FP32=value, JIT_CACHE="0", WARM_SHARDS="0")
+                proc = self.launch(LOGITS_FP32=value, JIT_CACHE="0")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
                 self.assertEqual(want in run, present, run)
                 self.assertEqual("--hf-overrides" in run, present, run)
-
-    def test_worker_warms_only_with_all(self):
-        proc = self.launch(ROLE="worker")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("Shard warmer", proc.stdout)
-        proc = self.launch(ROLE="worker", WARM_SHARDS="all")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("Shard warmer pid", proc.stdout)
-        self.warm_log()
 
 
 class ImageParity(RunShCase):
