@@ -58,11 +58,13 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 
 [incoai/GLM-5.3-Flash-DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) is a 1B block-diffusion draft model that predicts a whole block per pass. Upstream reports it beating GLM's native MTP on acceptance length across every task they measured. Decoding is lossless; our greedy outputs matched MTP's byte for byte.
 
-DFlash2 is the default drafter (`SPEC=dflash2`). Switch back with:
+DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well:
 
 ```bash
-SPEC=mtp ./run.sh
+MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ./run.sh
 ```
+
+`run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16 that are not in the quant ignore list, so they cannot load (NVFP4 params expected) or fit (~6.9 GiB per rank). LibertAI's MTP experts are NVFP4.
 
 `run.sh` downloads the draft weights (~2.2 GiB, snapshot pinned) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":$NUM_SPECULATIVE_TOKENS}` to both ranks. Default is 7. CUDA graph sizes are derived as 1/2/4 plus `(num_spec+1)×{1..MAX_NUM_SEQS}`.
 
@@ -141,7 +143,7 @@ Stop both ranks from the head:
 | Vision | on (`LANGUAGE_MODEL_ONLY=0`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4) |
+| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking`) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |

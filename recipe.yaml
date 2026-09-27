@@ -51,6 +51,7 @@ serve:
     FORCE_UNSAFE_CTX: 0
     FORCE_UNSAFE_MOE: 0
     FORCE_UNSAFE_LINEAR: 0
+    FORCE_UNSAFE_SPEC: 0
     FORCE_UNSAFE_VISION: 0
     LANGUAGE_MODEL_ONLY: 0
     VLLM_USE_BREAKABLE_CUDAGRAPH: ""
@@ -81,7 +82,7 @@ readme:
     - Vision: "on (`LANGUAGE_MODEL_ONLY={LANGUAGE_MODEL_ONLY}`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`)"
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
-    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; `SPEC=mtp` for MTP-4)"
+    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`)"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking`)"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
     - API: "`http://<head>:{PORT}/v1`"
