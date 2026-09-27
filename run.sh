@@ -150,6 +150,21 @@ SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
 EXTRA_ARGS="${EXTRA_ARGS:-}"
+# Extra container env on both ranks: space-separated NAME=VALUE pairs, e.g.
+# EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'. Engine/runtime names only.
+EXTRA_ENV="${EXTRA_ENV:-}"
+extra_env_args=()
+read -r -a extra_env_pairs <<<"$EXTRA_ENV"
+for pair in "${extra_env_pairs[@]}"; do
+  name="${pair%%=*}"
+  [[ "$pair" == *=* ]] || name="(an entry without =)"
+  if [[ "$pair" != *=* || "$name" =~ TOKEN|KEY|SECRET ]] ||
+    ! [[ "$name" =~ ^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$ || "$name" == MAX_JOBS ]]; then
+    echo "EXTRA_ENV refuses '$name': want NAME=VALUE with NAME matching ^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+\$ or MAX_JOBS, and no TOKEN, KEY or SECRET in the name." >&2
+    exit 1
+  fi
+  extra_env_args+=(-e "$pair")
+done
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -286,6 +301,7 @@ start_local() {
   if [[ -n "${VLLM_USE_BREAKABLE_CUDAGRAPH}" ]]; then
     env_args+=(-e "VLLM_USE_BREAKABLE_CUDAGRAPH=$VLLM_USE_BREAKABLE_CUDAGRAPH")
   fi
+  env_args+=("${extra_env_args[@]}")
   local host_ip="$HEAD_IP"
   if [[ "$rank" != "0" ]]; then
     host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
@@ -414,7 +430,7 @@ FORWARD_ENVS=(
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
   DRAFT_MODEL SPEC
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
-  COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS
+  COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
 
 # The ssh command that starts rank 1. printf %q keeps quotes and JSON intact
