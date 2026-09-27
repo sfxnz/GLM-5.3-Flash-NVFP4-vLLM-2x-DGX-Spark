@@ -340,5 +340,58 @@ class ReportMathTests(unittest.TestCase):
         self.assertAlmostEqual(rep["sd1"]["oracle"]["saved_frac_moe"], 8 / 24, places=4)
 
 
+@unittest.skipUnless(importlib.util.find_spec("ijson"), "tools/step_buckets.py needs ijson")
+class StepBucketsTests(unittest.TestCase):
+    def test_synthetic_trace(self):
+        import gzip
+        import json
+
+        sb = load("step_buckets", HERE.parent / "tools" / "step_buckets.py")
+        ev, corr = [], iter(range(1, 10**6))
+
+        def launch(ts, kernels):  # one CUDA call (e.g. cudaGraphLaunch) -> kernels
+            c = next(corr)
+            ev.append({"ph": "X", "cat": "cuda_runtime", "name": "cudaGraphLaunch", "ts": ts, "dur": 1,
+                       "args": {"correlation": c}})
+            for kts, dur, name in kernels:
+                ev.append({"ph": "X", "cat": "kernel", "name": name, "ts": kts, "dur": dur,
+                           "args": {"correlation": c, "grid": [4, 1, 1]}})
+
+        for step in range(3):  # the third step is dropped as possibly cut
+            t = step * 1000.0
+            ev.append({"ph": "X", "cat": "user_annotation", "ts": t, "dur": 100,
+                       "name": "execute_context_0(0)_generation_1(8)"})
+            launch(t + 10, [(t + 20, 300, "marlin_moe_wna16::Marlin<x>"),
+                            (t + 320, 100, "ncclDevKernel_AllReduce_Sum_bf16"),
+                            (t + 420, 50, "fused_recurrent_kda_fwd_kernel"),
+                            (t + 470, 30, "nvjet_tst_64x8_64x16_4x1_v_bz_TNT")])
+            launch(t + 150, [(t + 520, 40, "cutlass_lm_head_gemm")])
+            launch(t + 160, [(t + 560, 20, "rejection_greedy_sample_kernel")])
+            launch(t + 170, [(t + 600, 200, "dflash_draft_graph_kernel")])
+        path = Path(tempfile.mkdtemp(prefix="v13sb-")) / "t.pt.trace.json.gz"
+        try:
+            with gzip.open(path, "wt") as fh:
+                json.dump({"traceEvents": ev}, fh)
+            rep = sb.analyze(sb.extract(str(path)))
+        finally:
+            shutil.rmtree(path.parent)
+        ms = {r["bucket"]: r["ms"] for r in rep["buckets"]}
+        self.assertEqual(rep["steps"], 2)
+        self.assertEqual(ms["routed_moe"], 0.3)
+        self.assertEqual(ms["nccl"], 0.1)
+        self.assertEqual(ms["kda"], 0.05)
+        self.assertEqual(ms["bf16_gemm"], 0.03)
+        self.assertEqual(ms["lm_head_logits"], 0.04)
+        self.assertEqual(ms["sampler_rejection"], 0.02)
+        self.assertEqual(ms["drafter"], 0.2)
+        self.assertEqual(rep["wall_ms"], 1.0)  # first kernel to next step's first kernel
+        self.assertEqual(rep["busy_ms"], 0.74)
+        self.assertEqual(rep["idle_ms"], 0.26)
+        self.assertEqual(rep["bucket_sum_ms"], 0.74)
+        self.assertEqual(sb.module_guess(34.0), "kda")
+        self.assertEqual(sb.module_guess(84.0), "shared_expert x2")
+        self.assertEqual(sb.module_guess(33.5), "?")
+
+
 if __name__ == "__main__":
     unittest.main()
