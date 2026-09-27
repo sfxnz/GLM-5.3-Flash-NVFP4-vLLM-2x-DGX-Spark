@@ -224,7 +224,8 @@ Follow AGENTS.md and keep receipts in `evidence/iter-adaptive-verify/`, with `tr
      - `distinct/layer` at c=1 matches the off-census prefix curve at n=4, not at n=8.
      - `rank0 vs rank1 routing identical: True`.
 4. **Step time and acceptance.** One boot per setting, ABAB against off: `MAX=3` with `TAU=0`, then `TAU` ∈ {0.3, 0.2, 0.1, 0.05}.
-   - Record cells A, B and H: acceptance_len, step_ms, tok/s and per-position acceptance.
+   - Per boot, run the ruler v2 fast gate plus the c=2 cell (`python3 bench_decode.py --cells A,B,H`) and Tier 0 (`python3 quality/tier0.py compare --ref nvidia-v11-k7`).
+   - Record acceptance_len, step_ms, tok/s and per-position acceptance for A, B and H.
    - Keep a setting only if A and H beat noise and B does not regress beyond noise.
    - step_ms should fall toward the table. Acceptance should fall by at most the share of the truncated positions.
 5. **Optional microbench.** On one Spark, time the image's `fused_marlin_moe` on one nvidia-pack layer at M=8 rows. Draw `topk_ids` to touch D ∈ {8, 16, 24, 32, 48, 58} distinct experts, with 200 graph replays each. The slope in ms per distinct expert, times 42 layers, settles 0.75 against 1.25 ms and so the table's range.
