@@ -6,6 +6,7 @@ docker/README-v13.md for each switch, its expected effect and how to validate
 it on the Sparks.
 
   GLM53_ROUTER_FP32=1              MoE router logits via cuBLAS bf16xbf16->fp32
+  GLM53_INDEXER_WS_FACTOR=<int>    DSA indexer prefill workspace factor (stock 40)
 
 Usage: python3 patch_v13_misc.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
@@ -71,8 +72,46 @@ MODEL_EDITS = [
     ),
 ]
 
+# --------------------------------------------------------------------------
+# GLM53_INDEXER_WS_FACTOR: v1/attention/backends/mla/indexer.py
+# --------------------------------------------------------------------------
+INDEXER_EDITS = [
+    (
+        "indexer.py: import os",
+        "from dataclasses import dataclass\n",
+        "import os\nfrom dataclasses import dataclass\n",
+    ),
+    (
+        "indexer.py: workspace factor",
+        """    #   40 * 163840 * 132 = 865075200 bytes = 825 MB
+    return max_model_len * 40
+""",
+        """    #   40 * 163840 * 132 = 865075200 bytes = 825 MB
+    # GLM53_INDEXER_WS_FACTOR (v13): override the 40. The metadata builder's
+    # chunk planner and the indexer op both size from this function, so they
+    # stay consistent; 1 still fits one max_model_len request per chunk.
+    ws_factor = os.environ.get("GLM53_INDEXER_WS_FACTOR", "").strip()
+    if ws_factor:
+        if not ws_factor.isdigit() or int(ws_factor) < 1:
+            raise ValueError(
+                f"GLM53_INDEXER_WS_FACTOR must be an integer >= 1, got {ws_factor!r}"
+            )
+        logger.info_once(
+            "GLM53_INDEXER_WS_FACTOR=%s: indexer prefill buffer %d entries "
+            "(stock factor 40: %d)",
+            ws_factor,
+            max_model_len * int(ws_factor),
+            max_model_len * 40,
+        )
+        return max_model_len * int(ws_factor)
+    return max_model_len * 40
+""",
+    ),
+]
+
 FILE_EDITS = {
     "models/glm5next/nvidia/model.py": MODEL_EDITS,
+    "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
 }
 
 NEW_FILES: dict[str, str] = {}
