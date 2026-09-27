@@ -10,7 +10,11 @@ model:
   family: GLM-5.3-Flash
   params: 320B total / 18B active
   quant: NVFP4 W4A4 on routed experts and dense MLP (ModelOpt 0.47.0, nvfp4_experts_dense_mlp-kv_fp8_cast). Attn, shared experts, and vision stay BF16. KV scheme is kv_fp8_cast.
-  draft: incoai/GLM-5.3-Flash-DFlash2 @ 7d74cdd881ed7e32c31175984a67823127b66cfe
+  draft: incoai/GLM-5.3-Flash-DFlash2
+  # Newer DFlash2 revisions have the same config.json (weights-only updates):
+  # bf582e4eacc1810f76656d1811693ff6c6737d2a (2026-08-31), dc77ff1c99eeb2df044ee3d4f0094eb033fee410 (2026-08-28).
+  # The default stays on 7d74cdd until the A/B lands; DRAFT_REV=<full sha> picks one.
+  draft_revision: &draft_revision 7d74cdd881ed7e32c31175984a67823127b66cfe
 
 image:
   base: vllm/vllm-openai:glm53-flash-arm64-cu130
@@ -66,6 +70,7 @@ serve:
     LINEAR_BACKEND: marlin
     REASONING_PARSER: glm45
     DRAFT_MODEL: incoai/GLM-5.3-Flash-DFlash2
+    DRAFT_REV: *draft_revision
     SPEC: dflash2
     JIT_CACHE: 1
     JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
@@ -90,6 +95,7 @@ readme:
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + ({NUM_SPECULATIVE_TOKENS}+1) x 1..{MAX_NUM_SEQS} (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`)"
+    - Draft: "`{DRAFT_MODEL}` @ `{DRAFT_REV}` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter)"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
     - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
     - Shard warmer: "`WARM_SHARDS={WARM_SHARDS}`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off)"

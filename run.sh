@@ -59,8 +59,11 @@ MOE_BACKEND="${MOE_BACKEND:-marlin}"
 LINEAR_BACKEND="${LINEAR_BACKEND:-marlin}"
 REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
-DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
-DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+# DFlash2 snapshot (full commit sha). bf582e4 (2026-08-31) and dc77ff1 (2026-08-28)
+# are weights-only updates with the same config.json; the default waits on an A/B.
+DRAFT_REV="${DRAFT_REV:-7d74cdd881ed7e32c31175984a67823127b66cfe}"
+DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
+DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
 # the glm53-sm121-v11 image) or mtp (GLM's native MTP head; LibertAI pack only).
 SPEC="${SPEC:-dflash2}"
@@ -149,6 +152,11 @@ if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY: want exactly 0 or 1." >&2
+  exit 1
+fi
+# The draft path is snapshots/<rev>, and the hub names snapshot dirs by full commit sha only.
+if [[ ! "$DRAFT_REV" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DRAFT_REV=$DRAFT_REV: want a full 40-hex commit sha (the draft path is snapshots/\$DRAFT_REV)." >&2
   exit 1
 fi
 if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
@@ -304,8 +312,8 @@ ensure_weights() {
     log "Using pinned draft snapshot $DRAFT_SNAPSHOT"
   elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
-    log "Downloading $DRAFT_MODEL (resumes under $HF_CACHE)"
-    "$HF" download "$DRAFT_MODEL"
+    log "Downloading $DRAFT_MODEL @ $DRAFT_REV (resumes under $HF_CACHE)"
+    "$HF" download "$DRAFT_MODEL" --revision "$DRAFT_REV"
   else
     # The dflash config points at the pinned snapshot path inside the
     # container, so vLLM cannot pull it on demand.
@@ -512,7 +520,7 @@ FORWARD_ENVS=(
   FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
+  DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -549,9 +557,9 @@ check_image_parity() {
 }
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s draft_rev=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+    "$SNAPSHOT_REV" "$DRAFT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
   # The real key is each node's own image ID; validate-only does not call docker.
   set_jit_args "$JIT_CACHE_DIR/<image-id>"
   printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"

@@ -18,6 +18,8 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 - Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block.
 - `run.sh` already calls `maybe_drop_caches`. It no-ops without passwordless sudo.
 
+`DRAFT_REV` pins the DFlash2 snapshot (default `7d74cdd`, from `recipe.yaml`; a full 40-hex sha). `bf582e4` and `dc77ff1` are weights-only updates with the same `config.json`. Do not move the default until the A/B against the pin lands.
+
 Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. Async scheduling is already auto-on for DFlash; do not pass `--no-async-scheduling`. Leave `VLLM_USE_BREAKABLE_CUDAGRAPH` on auto.
 
 ## Refuse-guards (`run.sh`)
