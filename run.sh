@@ -29,6 +29,11 @@ FORCE_UNSAFE_LINEAR="${FORCE_UNSAFE_LINEAR:-0}"
 FORCE_UNSAFE_SPEC="${FORCE_UNSAFE_SPEC:-0}"
 FORCE_UNSAFE_VISION="${FORCE_UNSAFE_VISION:-0}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
+# vLLM default is 4 GiB of processed MM tensors in the head EngineCore (UMA).
+MM_PROCESSOR_CACHE_GB="${MM_PROCESSOR_CACHE_GB:-1}"
+# Server-wide output ceiling (--override-generation-config max_new_tokens).
+# Without it one thinking-on request could decode for hours. Empty drops it.
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-65536}"
 # Empty: engine auto-enables breakable CUDA graphs. 0 slowed structured
 # c=1 69.4→67.0 and c=2 59.7→52.1. Leave unset.
 VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-}"
@@ -125,6 +130,10 @@ if [[ "$LINEAR_BACKEND" != marlin && "$FORCE_UNSAFE_LINEAR" != 1 ]]; then
   echo "LINEAR_BACKEND=$LINEAR_BACKEND: the nvidia pack's layers 0-2 dense MLP is NVFP4, and non-Marlin NVFP4 GEMMs JIT-compile on sm_121 during the first profile forward. Six 2026-09-16 boots collapsed there. Stay on marlin. FORCE_UNSAFE_LINEAR=1 overrides." >&2
   exit 1
 fi
+if [[ -n "$MAX_NEW_TOKENS" && ! "$MAX_NEW_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS: want a positive integer, or empty to drop the ceiling." >&2
+  exit 1
+fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
   echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
@@ -134,9 +143,9 @@ if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
   exit 1
 fi
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s\n' \
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME"
+    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
   exit 0
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
@@ -316,8 +325,15 @@ start_local() {
   local mm_args=()
   if [[ "$LANGUAGE_MODEL_ONLY" == "1" ]]; then
     mm_args+=(--language-model-only)
-  elif [[ -n "${LIMIT_MM_PER_PROMPT:-}" ]]; then
-    mm_args+=(--limit-mm-per-prompt "$LIMIT_MM_PER_PROMPT")
+  else
+    mm_args+=(--mm-processor-cache-gb "$MM_PROCESSOR_CACHE_GB")
+    if [[ -n "${LIMIT_MM_PER_PROMPT:-}" ]]; then
+      mm_args+=(--limit-mm-per-prompt "$LIMIT_MM_PER_PROMPT")
+    fi
+  fi
+  local gen_args=()
+  if [[ -n "$MAX_NEW_TOKENS" ]]; then
+    gen_args+=(--override-generation-config "{\"max_new_tokens\": $MAX_NEW_TOKENS}")
   fi
 
   log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
@@ -359,6 +375,7 @@ start_local() {
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     "${template_args[@]}" \
     "${mm_args[@]}" \
+    "${gen_args[@]}" \
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
@@ -397,7 +414,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' LINEAR_BACKEND='$LINEAR_BACKEND' FORCE_UNSAFE_LINEAR='$FORCE_UNSAFE_LINEAR' FORCE_UNSAFE_SPEC='$FORCE_UNSAFE_SPEC' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' MM_PROCESSOR_CACHE_GB='$MM_PROCESSOR_CACHE_GB' MAX_NEW_TOKENS='$MAX_NEW_TOKENS' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' LINEAR_BACKEND='$LINEAR_BACKEND' FORCE_UNSAFE_LINEAR='$FORCE_UNSAFE_LINEAR' FORCE_UNSAFE_SPEC='$FORCE_UNSAFE_SPEC' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else

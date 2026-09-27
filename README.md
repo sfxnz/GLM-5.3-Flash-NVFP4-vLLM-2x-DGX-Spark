@@ -141,6 +141,8 @@ Stop both ranks from the head:
 | `--linear-backend` | `marlin`, dense quantized linears (the nvidia pack's layer 0-2 MLP is NVFP4; `run.sh` refuses other values, whose NVFP4 GEMMs JIT on sm_121) |
 | Checkpoint | `09b04e5e74bca08ca8549fc736d4cdd8624bfde3` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back) |
 | Vision | on (`LANGUAGE_MODEL_ONLY=0`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`) |
+| `--mm-processor-cache-gb` | 1 (vLLM default is 4; caps processed image/video tensors cached in the head's EngineCore on UMA) |
+| Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; empty `MAX_NEW_TOKENS` drops the flag) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
