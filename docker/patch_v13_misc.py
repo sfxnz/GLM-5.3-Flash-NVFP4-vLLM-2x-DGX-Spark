@@ -8,6 +8,7 @@ it on the Sparks.
   GLM53_ROUTER_FP32=1              MoE router logits via cuBLAS bf16xbf16->fp32
   GLM53_INDEXER_WS_FACTOR=<int>    DSA indexer prefill workspace factor (stock 40)
   GLM53_MHC_WARMUP=1               pre-compile Glm5Next mHC TileLang variants
+  GLM53_KDA_TRIM=1                 skip 4 .contiguous() copies per KDA layer
 
 Usage: python3 patch_v13_misc.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
@@ -278,10 +279,199 @@ def glm5next_mhc_warmup(model: torch.nn.Module, *, max_tokens: int) -> None:
     )
 '''
 
+# --------------------------------------------------------------------------
+# GLM53_KDA_TRIM: third_party/flash_linear_attention/ops/{fused_recurrent,kda}.py
+# --------------------------------------------------------------------------
+FUSED_RECURRENT_EDITS = [
+    (
+        "fused_recurrent.py: stride params",
+        """    SAFE_GATE: tl.constexpr,  # bounded gate variant (only branch implemented)
+    LOWER_BOUND: tl.constexpr,
+):
+""",
+        """    SAFE_GATE: tl.constexpr,  # bounded gate variant (only branch implemented)
+    LOWER_BOUND: tl.constexpr,
+    # GLM53_KDA_TRIM (v13): per-token element strides of q/k/v/beta, read
+    # only when STRIDED_QKVB. Each token's [H, K] block must be dense.
+    stride_q_tok,
+    stride_k_tok,
+    stride_v_tok,
+    stride_beta_tok,
+    STRIDED_QKVB: tl.constexpr,
+):
+""",
+    ),
+    (
+        "fused_recurrent.py: strided base pointers",
+        """    p_q = q + (bos * H + i_h) * K + o_k
+    p_k = k + (bos * H + i_h) * K + o_k
+    p_v = v + (bos * HV + i_hv) * V + o_v
+    if IS_BETA_HEADWISE:
+        p_beta = beta + (bos * HV + i_hv) * V + o_v
+    else:
+        p_beta = beta + bos * HV + i_hv
+""",
+        """    if STRIDED_QKVB:
+        p_q = q + bos * stride_q_tok + i_h * K + o_k
+        p_k = k + bos * stride_k_tok + i_h * K + o_k
+        p_v = v + bos * stride_v_tok + i_hv * V + o_v
+    else:
+        p_q = q + (bos * H + i_h) * K + o_k
+        p_k = k + (bos * H + i_h) * K + o_k
+        p_v = v + (bos * HV + i_hv) * V + o_v
+    if IS_BETA_HEADWISE:
+        p_beta = beta + (bos * HV + i_hv) * V + o_v
+    elif STRIDED_QKVB:
+        p_beta = beta + bos * stride_beta_tok + i_hv
+    else:
+        p_beta = beta + bos * HV + i_hv
+""",
+    ),
+    (
+        "fused_recurrent.py: strided pointer advance",
+        """        p_q += H * K
+        p_k += H * K
+        p_o += HV * V
+        p_v += HV * V
+        if not IS_KDA:
+            p_g += HV
+        else:
+            p_gk += HV * K
+        p_beta += HV * (V if IS_BETA_HEADWISE else 1)
+""",
+        """        if STRIDED_QKVB:
+            p_q += stride_q_tok
+            p_k += stride_k_tok
+            p_v += stride_v_tok
+        else:
+            p_q += H * K
+            p_k += H * K
+            p_v += HV * V
+        p_o += HV * V
+        if not IS_KDA:
+            p_g += HV
+        else:
+            p_gk += HV * K
+        if STRIDED_QKVB and not IS_BETA_HEADWISE:
+            p_beta += stride_beta_tok
+        else:
+            p_beta += HV * (V if IS_BETA_HEADWISE else 1)
+""",
+    ),
+    (
+        "fused_recurrent.py: GDN call site (dense)",
+        """        SAFE_GATE=True,
+        LOWER_BOUND=-5.0,
+        num_warps=num_warps,
+""",
+        """        SAFE_GATE=True,
+        LOWER_BOUND=-5.0,
+        stride_q_tok=0,
+        stride_k_tok=0,
+        stride_v_tok=0,
+        stride_beta_tok=0,
+        STRIDED_QKVB=False,
+        num_warps=num_warps,
+""",
+    ),
+]
+
+KDA_OPS_EDITS = [
+    (
+        "ops/kda.py: import os",
+        "\nimport torch\nimport torch.nn as nn\n",
+        "\nimport os\n\nimport torch\nimport torch.nn as nn\n",
+    ),
+    (
+        "ops/kda.py: trim predicate",
+        """BT_LIST_AUTOTUNE = [32, 64, 128]
+""",
+        """# GLM53_KDA_TRIM (v13): let fused_recurrent_kda read token-strided q/k/v/beta
+# views (split() of the merged projection / conv output) instead of copying
+# them with .contiguous(). The kernel loads the same elements either way.
+_GLM53_KDA_TRIM = os.environ.get("GLM53_KDA_TRIM") == "1"
+
+
+def _glm53_kda_trim_ok(q, k, v, beta) -> bool:
+    return (
+        _GLM53_KDA_TRIM
+        and q.shape[0] == 1
+        and beta is not None
+        and beta.ndim == 3
+        and beta.stride(-1) == 1
+        and all(t.stride(-1) == 1 and t.stride(-2) == t.shape[-1] for t in (q, k, v))
+    )
+
+
+BT_LIST_AUTOTUNE = [32, 64, 128]
+""",
+    ),
+    (
+        "ops/kda.py: fwd signature",
+        """    compute_gate: bool = False,
+    lower_bound: float | None = -5.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    B, T, H, K, V = *k.shape, v.shape[-1]
+""",
+        """    compute_gate: bool = False,
+    lower_bound: float | None = -5.0,
+    strided_qkvb: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    B, T, H, K, V = *k.shape, v.shape[-1]
+""",
+    ),
+    (
+        "ops/kda.py: dense output buffer",
+        """    if out is None:
+        o = torch.empty_like(k)
+""",
+        """    if out is None:
+        o = torch.empty_like(k, memory_format=torch.contiguous_format)
+""",
+    ),
+    (
+        "ops/kda.py: kernel stride args",
+        """        SAFE_GATE=True,
+        LOWER_BOUND=lower_bound if lower_bound is not None else -5.0,
+        num_warps=num_warps,
+""",
+        """        SAFE_GATE=True,
+        LOWER_BOUND=lower_bound if lower_bound is not None else -5.0,
+        stride_q_tok=q.stride(1),
+        stride_k_tok=k.stride(1),
+        stride_v_tok=v.stride(1),
+        stride_beta_tok=beta.stride(1),
+        STRIDED_QKVB=strided_qkvb,
+        num_warps=num_warps,
+""",
+    ),
+    (
+        "ops/kda.py: wrapper skips .contiguous()",
+        """    o, final_state = fused_recurrent_kda_fwd(
+        q=q.contiguous(),
+        k=k.contiguous(),
+        v=v.contiguous(),
+        g=g.contiguous(),
+        beta=beta.contiguous(),
+""",
+        """    trim = _glm53_kda_trim_ok(q, k, v, beta)
+    o, final_state = fused_recurrent_kda_fwd(
+        q=q if trim else q.contiguous(),
+        k=k if trim else k.contiguous(),
+        v=v if trim else v.contiguous(),
+        g=g.contiguous(),
+        beta=beta if trim else beta.contiguous(),
+        strided_qkvb=trim,
+""",
+    ),
+]
+
 FILE_EDITS = {
     "models/glm5next/nvidia/model.py": MODEL_EDITS,
     "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
     "model_executor/warmup/kernel_warmup.py": KERNEL_WARMUP_EDITS,
+    "third_party/flash_linear_attention/ops/fused_recurrent.py": FUSED_RECURRENT_EDITS,
+    "third_party/flash_linear_attention/ops/kda.py": KDA_OPS_EDITS,
 }
 
 NEW_FILES = {
