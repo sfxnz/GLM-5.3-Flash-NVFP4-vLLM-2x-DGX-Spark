@@ -180,6 +180,110 @@ still sets the `nll.delta` limit. For pack or kernel A/Bs, also run the step-2
 A/A compare after a reboot: a cross-boot `nll.delta` above 0.005 means the floor
 is too tight for that comparison.
 
+## Determinism
+
+Source read of the v11 tree (paths under `vllm/`). Nothing here is measured yet.
+
+**Confirmed source: the sparse-MLA index compaction races.**
+
+- `forward_mqa` converts each row's top-k token ids to KV slots with
+  `triton_convert_req_index_to_global_index(..., return_valid_counts=True)`
+  (`v1/attention/backends/mla/flashinfer_mla_sparse_sm90.py:464-471`).
+- The row is 2048 + 3 (kpool tail) = 2051 wide, rounded up to 2176
+  (`models/glm5next/nvidia/model.py:611-624`). `_remap_tiling` gives one
+  program per row only for a power-of-two width
+  (`v1/attention/backends/mla/sparse_utils.py:146-151`), so each row gets 17
+  tiles.
+- The tiles reserve output slots with `tl.atomic_add` (`sparse_utils.py:113`).
+  The comment says the order within the prefix is unspecified (`:32-33`). The
+  FA2 MLA kernel is deterministic for a given index order, but the order
+  changes its online-softmax rescaling and the bf16 rounding of P.
+- The grid is `(num_tokens, 17)`. The race is real for decode and verify steps
+  (8-16 rows) and for small tail prefill chunks. In a 2048-row prefill chunk
+  the tiles of one row are dispatched about 2048 blocks apart, so they land
+  in order in practice.
+
+**Probable source (C++ not in the tree).** The indexer's top-k kernels,
+`_C.top_k_per_row_prefill` and `_C.persistent_topk`
+(`model_executor/layers/sparse_attn_indexer_kpool.py:559-568, 815-822`), may
+emit the selected pools in a varying order, and the pools are expanded in
+that order (`:570-590`, `:848-874`). A prefill whose longest context is at
+most 2048 tokens skips top-k and selects every token in position order
+(`:449-480`). Decode always runs top-k.
+
+**Not sources.**
+
+- Marlin MoE: `use_atomic_add=False` and fp32 reduce
+  (`fused_moe/experts/marlin_moe.py:159-160, 226-227`), fixed-order sum (`:395`).
+- Dense Marlin: atomics need `VLLM_MARLIN_USE_ATOMIC_ADD` and n < 2048
+  (`marlin_utils.py:633-653`). Here n is at least 4096.
+- NCCL at TP=2: each element sums exactly two operands, and a+b == b+a.
+- mHC: TileLang reduces serially (`kernels/mhc/tilelang_kernels.py:105-110`).
+- KDA: no atomics on the paths used here.
+- Prefix cache: requests with `prompt_logprobs` skip it (`sampling_params.py:529-533`).
+
+**Boot to boot only.** Triton autotune picks for the KDA chunk kernels
+(prefill), and FlashInfer JIT debug or release flags.
+
+**`VLLM_BATCH_INVARIANT=1`** refuses this model: the sparse MLA backends, the
+KDA backend and the Marlin MoE have no batch-invariant path.
+
+**Logit precision.** `head_dtype` defaults to the model dtype, bf16
+(`config/model.py:1908-1936, 2311-2332`). Near logits of 16-32 the bf16
+spacing is 0.125, so near-ties are common and ULP-level noise flips top-1.
+
+### Switches
+
+| Switch | Effect | Cost |
+|---|---|---|
+| `EXTRA_ENV='GLM53_DETERMINISTIC_MLA_INDEX=1'` (v13 image) | One Triton program per compacted row, padded to 4096 lanes with masked loads, so the slot prefix is the input column order. The kpool pools are sorted per row before expansion, so the index list is ascending. No host sync, no new shapes, and the MLA kernel is unchanged. | Per MLA layer and step, one 4096-lane program per row instead of 17 128-lane tiles, plus one `torch.sort` of `[rows, 512]` int32. Estimated at most ~0.2 ms per ~116 ms verify step (11 MLA layers). Not measured. |
+| `LOGITS_FP32=1` (run.sh, v13 image) | `--hf-overrides '{"text_config":{"head_dtype":"float32"}}'`: the lm_head GEMM writes fp32 logits from bf16 inputs (`logits_processor.py:149-164`) for the target and the DFlash2 drafter, which shares the target's lm_head | Same GEMM. The logits buffers double: ~10 MB per verify step, and 634 MB instead of 317 MB per 1024-row `prompt_logprobs` chunk, so watch `free -h` during Tier 0. |
+
+[docker/README-v13.md](../docker/README-v13.md) has the GPU checks for both.
+
+The nested key is required. The language model's `ModelConfig` is a copy
+built from `text_config` (`models/glm5next/nvidia/model.py:1099-1105`), so a
+flat `{"head_dtype": ...}` would reach only the drafter.
+`Glm5NextConfig` mirrors `text_config` keys to the top level
+(`transformers_utils/configs/glm5_next.py:375-389`), and the drafter builds its
+`LogitsProcessor` under the target's top-level `ModelConfig`
+(`v1/worker/gpu/spec_decode/dflash/utils.py:23-42`), so both get fp32. v11
+rejects the override on this checkpoint: `_apply_head` requires an
+`UnquantizedEmbeddingMethod` lm_head (`logits_processor.py:144`), and ModelOpt
+gives the excluded lm_head `UnquantizedLinearMethod`
+(`model_executor/layers/quantization/modelopt.py:185-187`). The v13 patch lifts
+that check, and `run.sh` refuses `LOGITS_FP32=1` on `glm53-sm121-v11`.
+
+### Staged A/A experiment
+
+One knob per boot, all on the v13 image (with no switch set it serves like
+v11). Record each stage under `evidence/<run>/`.
+
+Tier 0's nll corpus is 1999-2000 tokens, or 2001-2002 with `[gMASK]<sop>`.
+Each document is therefore one prefill chunk of at most 2048 rows on the
+top-k-free path above, where the tiles should already land in order. e0 still
+measured a 1.55% top-1 disagreement there. Stage 0 separates the regimes:
+
+- **S**: prompts of at most 1900 tokens. The prefill is one chunk on the
+  top-k-free path, and greedy output up to 148 tokens stays within 2048
+  tokens of context.
+- **L**: prompts of 2100-2300 tokens. The prefill is a 2048-row chunk plus a
+  52-252-row tail chunk (the racy regime), and uses the real top-k.
+
+Neither set exists in `quality/data` yet. Cut both from the corpus sources
+(`quality/data/build_corpus.py`). Score each set like Tier 0: `prompt_logprobs`
+top-1 agreement, |dNLL| and KL, with L split at position 2048, plus greedy
+divergence at 200 tokens (S at 148).
+
+| Stage | Boot | Run | Question |
+|---|---|---|---|
+| 0 | v13, no switch | S and L twice, then the same on a second boot | Does within-boot noise sit in decode and the L tail (race), or also in S prefill (another source)? How much does the second boot add (autotune, JIT)? |
+| 1 | `LOGITS_FP32=1` | S and L twice | Does the A/A top-1 disagreement change once logits skip bf16 rounding (0.125 steps near 16-32)? |
+| 2 | `GLM53_DETERMINISTIC_MLA_INDEX=1` | S and L twice, then Tier 0 A/A (`record` + `compare`) | Within-boot greedy divergence (e0: 14/20) and top-1 disagreement (e0: 1.55%) should drop sharply. What remains comes from top-k selection ties at the threshold, which sorting does not fix, or from a source outside attention. |
+
+If Stage 0 shows S prefill as noisy as L, the in-order-tiles assumption is
+wrong or another source dominates. Stage 2 then tells the two apart.
+
 ## Tests
 
 ```bash
