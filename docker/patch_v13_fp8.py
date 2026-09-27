@@ -227,6 +227,7 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
             skipped.append(name)
             continue
         bf16_bytes = w.numel() * w.element_size()
+        del w  # the swap below must drop the last reference to the BF16 weight
         quantize_layer_to_marlin_fp8(layer)
         st = stats.setdefault(group, [0, 0, 0])
         st[0] += 1
