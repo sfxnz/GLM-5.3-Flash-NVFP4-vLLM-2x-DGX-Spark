@@ -170,6 +170,21 @@ class CriteriaTests(unittest.TestCase):
         self.assertIn("tools.json_valid", line)
         self.assertNotIn("greedy.hazard", line)
 
+    def test_kwargs_split(self):
+        # today's template: only the two thinking:true cells fail (QUAL-2)
+        cells = [{"cell": f"{n}.{s}", "pass": not n.startswith("thinking_true")}
+                 for n, _, _ in tier0.KWARG_SHAPES for s in ("block", "stream")]
+        rows = tier0.criteria({"kwargs": {"pass": False, "cells": cells}}, None, None, {"kwargs.thinking_alias"})
+        by = {r["name"]: r for r in rows}
+        self.assertEqual((by["kwargs.core"]["pass"], by["kwargs.core"]["value"], by["kwargs.core"]["limit"]),
+                         (True, 10, 10))
+        self.assertFalse(by["kwargs.thinking_alias"]["pass"])
+        self.assertTrue(tier0.verdict("compare", "r", rows).startswith("PASS"))
+        # chain-of-thought leaking with thinking off still fails the core gate
+        cells[2]["pass"] = False  # enable_thinking_false.block
+        rows = tier0.criteria({"kwargs": {"cells": cells}}, None, None, {"kwargs.thinking_alias"})
+        self.assertIn("kwargs.core", tier0.verdict("compare", "r", rows))
+
 
 def probe_chat(body):
     """Answers every Tier-0 probe correctly, the way a healthy serve would."""

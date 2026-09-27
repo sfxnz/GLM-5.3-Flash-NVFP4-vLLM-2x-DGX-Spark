@@ -43,7 +43,8 @@ lengths. `--no-video` drops the video probe.
 | `nll.kl_stage` | `--stage fp8`: mean top-20 KL <= 1e-3; `nvfp4`: <= 3e-3 |
 | `greedy.hazard` | per-token divergence hazard vs the reference's first run <= 2 x max(ref A/A hazard, 0.005) |
 | `count` | thinking off, the integers are exactly 1..200 |
-| `kwargs` | all 12 cells pass (below) |
+| `kwargs.core` | the 10 cells other than `thinking: true` pass (below) |
+| `kwargs.thinking_alias` | both `thinking: true` cells pass (known FAIL today, see below) |
 | `utf8` | zero U+FFFD, rows 1..40 present, every n^2 right, finish `stop` |
 | `tools.json_valid` | >= 98% of 50 tool calls parse as a JSON object (a missing call counts as a failure) |
 | `vision` | every image check passes; the video check may SKIP |
@@ -51,7 +52,7 @@ lengths. `--no-video` drops the video probe.
 
 `tier0.json` lists every criterion with PASS/FAIL, value and limit, plus a
 one-line verdict, for example
-`PASS tier0 compare vs libertai-caca4e6: 9/9 criteria`. Exit code 1 on any FAIL.
+`PASS tier0 compare vs libertai-caca4e6: 10/10 criteria`. Exit code 1 on any FAIL.
 
 What each component sends:
 
@@ -76,7 +77,8 @@ What each component sends:
   **Known failure:** with today's `chat_template.jinja` the two `thinking: true`
   cells fail (QUAL-2: the parser treats `thinking` as on, the template ignores
   it, so the answer lands in `reasoning`). They pass once the template alias fix
-  lands.
+  lands. Until then add `--skip-gate kwargs.thinking_alias`; `kwargs.core`
+  still gates chain-of-thought leaking into content with thinking off.
 - **utf8**: a streamed 40-row markdown table (n, n², n³, Chinese numeral).
   n³ and numeral errors are reported, not gated.
 - **tools**: `data/tools50.json`, `tool_choice: auto`, odd items streamed.

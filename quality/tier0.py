@@ -66,7 +66,8 @@ GATES = {
     "nll.kl_stage": "mean top-20 KL(ref||cand) <= stage ceiling (fp8 1e-3, nvfp4 3e-3)",
     "greedy.hazard": "golden divergence hazard <= 2 * max(ref A/A hazard, 0.005)",
     "count": "thinking-off count is exactly 1..200",
-    "kwargs": "all 12 kwarg-matrix cells pass",
+    "kwargs.core": "the 10 kwarg-matrix cells other than thinking:true pass",
+    "kwargs.thinking_alias": "both thinking:true cells pass (known FAIL until the QUAL-2 template alias)",
     "utf8": "zero U+FFFD, rows 1..40 present, every n^2 right, finish_reason stop",
     "tools.json_valid": "tool-call JSON-valid rate >= 0.98 over 50 calls (a missing call counts as invalid)",
     "vision": "every vision check passes (video may SKIP)",
@@ -506,7 +507,13 @@ def criteria(comps: dict, ref: dict | None, stage: str | None, skip: set) -> lis
     if g and ref:
         lim = 2 * max(ref["greedy"]["aa"]["hazard"], 0.005)
         rows.append(_crit("greedy.hazard", g["hazard"] <= lim, g["hazard"], round(lim, 6)))
-    simple = {"count": ("count", "n_numbers", 200), "kwargs": ("kwargs", "passed", 12),
+    cells = comps.get("kwargs", {}).get("cells", [])
+    if cells:
+        alias = [x for x in cells if x["cell"].startswith("thinking_true.")]
+        core = [x for x in cells if x not in alias]
+        for gate, part in (("kwargs.core", core), ("kwargs.thinking_alias", alias)):
+            rows.append(_crit(gate, all(x["pass"] for x in part), sum(x["pass"] for x in part), len(part)))
+    simple = {"count": ("count", "n_numbers", 200),
               "utf8": ("utf8", "fffd", 0), "vision": ("vision", "passed", None),
               "needle": ("needle", "per_length", ">=2 each")}
     for comp, (gate, key, limit) in simple.items():
