@@ -43,7 +43,7 @@ Preconditions:
 
 - Omit `--salt` to auto-generate one. Reusing a salt can let prefix cache fake prefill speed.
 - Thinking-on can leave `message.content` empty. These probes send `enable_thinking: false`.
-- `count_probe.py` is the lossless gate. `bench_decode.py --phase structured` is tok/s, not exact 1–200.
+- `count_probe.py` is the lossless gate. `bench_decode.py --cells J` is tok/s, not exact 1–200.
 - A tools request that dumps glm47 XML into `content` without `message.tool_calls` is a fail. The recipe serves `--tool-call-parser glm47`.
 - A tool follow-up that prefixes `</think>` onto `content` is a fail. Thinking-off seeds an empty `<think></think>` in `chat_template.jinja`. The live process only picks that up after a restart.
 - `--concurrency 2` is the advertised occupancy OOM gate. Tony's anti-oom kill was three 20k prefills. This recipe stays at two sequences. The probe fails if `/v1/models` dies after the pair.

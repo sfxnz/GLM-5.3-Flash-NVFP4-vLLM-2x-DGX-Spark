@@ -209,14 +209,10 @@ def main() -> int:
         if got != want:
             failures.append(f"{path.name} FROM {got!r} want {want!r}")
 
-    if '"prose"' not in bench or '"structured"' not in bench:
-        failures.append("bench_decode.py missing prose/structured PHASES")
-    if "--phase" not in bench or "chat/completions" not in bench:
-        failures.append("bench_decode.py missing --phase or completions URL")
-    if 'default="prose"' not in bench:
-        failures.append("bench_decode.py --phase default is no longer prose")
-    if "nvidia/GLM-5.3-Flash-NVFP4" not in bench:
-        failures.append("bench_decode.py default model is no longer nvidia/GLM-5.3-Flash-NVFP4")
+    if 'RULER_VERSION = "v2"' not in bench or "chat/completions" not in bench:
+        failures.append("bench_decode.py missing ruler v2 or completions URL")
+    if 'DEFAULT_CELLS = "A,' not in bench:
+        failures.append("bench_decode.py default cells no longer start with published prose cell A")
 
     recipe = (REPO / "recipe.yaml").read_text() if (REPO / "recipe.yaml").exists() else ""
     if "id: &model nvidia/GLM-5.3-Flash-NVFP4" not in recipe:
