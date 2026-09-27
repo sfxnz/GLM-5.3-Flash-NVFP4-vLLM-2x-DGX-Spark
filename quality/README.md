@@ -159,7 +159,15 @@ finished items and retries errored ones. `--limit 3` is a quick smoke.
 
 If `nll` errors on the first live run, check `prompt_logprobs` with DFlash2
 (PLAN open question 10) before anything else: the request and response shape
-are in `capture_doc` in `tier0.py`.
+are in `capture_doc` in `tier0.py`. `prompt_logprobs=20` on a ~2k-token
+document materialises full-vocab logprobs per rank (a transient of roughly
+1-3 GB on UMA next to a 4.14 GiB KV pin), so watch `free -h` on both nodes
+during the first `record`.
+
+The recorded sigma is a same-boot rerun and is usually ~0, so the 0.005 floor
+sets the `nll.delta` limit. For pack or kernel A/Bs, also run the step-2 A/A
+compare after a reboot: a cross-boot `nll.delta` above 0.005 means the floor is
+too tight for that comparison.
 
 ## Tests
 
