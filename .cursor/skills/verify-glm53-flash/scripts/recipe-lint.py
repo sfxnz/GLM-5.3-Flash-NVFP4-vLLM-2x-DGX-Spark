@@ -213,13 +213,15 @@ def main() -> int:
 
     vision = REPO / "smoke_vision.py"
     if vision.exists():
-        src = vision.read_text()
+        # smoke_vision.py wraps quality/vision.py (client in quality/common.py).
+        src = "".join(p.read_text() for p in (vision, REPO / "quality/vision.py", REPO / "quality/common.py")
+                      if p.exists())
         if "from PIL" in src or "import PIL" in src:
             failures.append("smoke_vision.py must not import PIL")
         if "image_url" not in src or "is not a multimodal model" not in src:
             failures.append("smoke_vision.py missing image_url or not-multimodal gate")
-        if "nvidia/GLM-5.3-Flash-NVFP4" not in src:
-            failures.append("smoke_vision.py default model is no longer nvidia/GLM-5.3-Flash-NVFP4")
+        if "nvidia/GLM-5.3-Flash-NVFP4" not in src and "/v1/models" not in src:
+            failures.append("smoke_vision.py neither defaults to nvidia/GLM-5.3-Flash-NVFP4 nor reads /v1/models")
 
     scripts = SKILL_DIR / "scripts"
     thinking = scripts / "thinking_off_probe.py"
