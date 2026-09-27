@@ -134,12 +134,13 @@ GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_verify.py   # CPU; torch +
 
 One predicate on logit rows drives everything: `local_pos > verify_len[req_state]`. Local position 0 is the anchor (the last sampled token) and local position i is draft d_i. The state lives in `v1/worker/gpu/spec_decode/glm53_adaptive_verify.py`.
 
-1. `prepare()` runs in the runner after `prepare_attn`, outside every graph. It zeroes `masked[:num_tokens_after_padding]`, scatters the predicate onto the input rows `logits_indices`, and stores each row's anchor row as `logits_indices - local_pos`.
-2. `remap()` runs in `BaseRouter._select_experts`, after `_compute_routing` and before the census capture and EPLB. That code is inside the opaque `moe_forward` op, so the remap is captured in the FULL and PIECEWISE graphs. A masked row takes its anchor's top-8 ids with weight 0. This costs 3 fixed-shape kernels per MoE layer.
-3. `mask_drafts()` runs in `RejectionSampler._verify`, after `apply_sampling_params`. A masked row's draft id becomes -1 in the tensor handed to `rejection_sample`. The sampling-parameter kernels still see the real ids.
-4. `record()` runs in the runner after the draft. It sets `verify_len[idx_mapping] = m` for the drafts just proposed. The next step's 1-3 read it, in stream order.
+1. `prepare()` runs in the runner after `prepare_attn`, outside every graph and before `model_state.prepare_attn` builds the attention metadata. It zeroes `masked[:num_tokens_after_padding]`, scatters the predicate onto the input rows `logits_indices`, and stores each row's anchor row as `logits_indices - local_pos`.
+2. `compute_kpool_tail_slot_mapping` (`indexer.py`) runs in the kpool tail metadata build, which is eager. After v11 fills the tail slots, it sets the slot of every masked row to -1. The indexer's K-pool update kernel then skips that row's stash into the `pos % index_kpool` tail ring (`kpool_compress.py:596`). This costs one eager kernel per step. The lossless section says why the ring needs it.
+3. `remap()` runs in `BaseRouter._select_experts`, after `_compute_routing` and before the census capture and EPLB. That code is inside the opaque `moe_forward` op, so the remap is captured in the FULL and PIECEWISE graphs. A masked row takes its anchor's top-8 ids with weight 0. This costs 4 fixed-shape kernels per MoE layer: the out-of-place `masked_fill` is a clone plus `masked_fill_`, then a gather and a `where`.
+4. `mask_drafts()` runs in `RejectionSampler._verify`, after `apply_sampling_params`. A masked row's draft id becomes -1 in the tensor handed to `rejection_sample`. The sampling-parameter kernels still see the real ids.
+5. `record()` runs in the runner after the draft. It sets `verify_len[idx_mapping] = m` for the drafts just proposed. The next step's 1-4 read it, in stream order.
 
-The buffers are persistent: `masked` and `anchor` have `max_num_batched_tokens` rows, and `verify_len` has `max_num_seqs` entries. Nothing calls `.item()` or `.cpu()`, and no shape depends on data. `anchor[t] <= t` always holds, so the gather stays inside the batch at every graph size. Both TP ranks compute m from the draft scores that already give them identical draft tokens, so both ranks mask the same rows.
+The buffers are persistent: `masked` and `anchor` have `max_num_batched_tokens` rows, and `verify_len` has `max_num_seqs` entries. The indexer hook holds a reference to `masked`. Nothing calls `.item()` or `.cpu()`, and no shape depends on data. `anchor[t] <= t` always holds, so the gather stays inside the batch at every graph size. Both TP ranks compute m from the draft scores that already give them identical draft tokens, so both ranks mask the same rows.
 
 ### Why it is lossless (index arithmetic of this tree)
 
@@ -157,17 +158,34 @@ Take one verify request with n drafts (n = k = 7 unless the scheduler truncated)
   - Causal: MLA and the DSA indexer read positions ≤ their own, and KDA and its conv1d advance token by token.
 
   The remap only rewrites the masked rows' own ids and weights. In exact arithmetic, rows 0..m equal the rows of a k' = m forward. The sampling parameters of row j (penalties, bad words, thinking budget, logit bias, grammar) read x_1..x_j only, and they get the real ids.
-- **State after the step.** `num_sampled = a+1 ≤ m+1`, where a is the number of accepted drafts.
-  - The MLA and indexer KV of masked rows sits at positions after x_a. The next query starts at pos(x_a)+1 and spans k+1 positions, so it rewrites those slots before any read. Every ordinary rejected draft already takes this path.
-  - KDA and conv states: the next step starts from spec-state slot `num_accepted - 1 = a` (`fused_recurrent.py:114-121`, with `num_accepted = max(num_sampled, 1)` from `mamba_hybrid.py:342`). It never starts from a masked row's slot.
-  - DFlash2: the context K/V precompute also covers masked rows (`dflash/speculator.py:416`), at positions after `last_valid_pos = pos(x_a)` (:522, :531). The next draft query block covers pos(x_a)+1 .. pos(x_a)+k+1 (:554) and writes those slots before its attention reads them. The context it reads ends at `last_valid_pos` (:593).
-- **Conclusion.** The step's output distribution and the next step's state equal k' = m speculation from the same drafts. That is lossless: Leviathan et al. for sampling, and by construction for greedy.
+- **State after the step.** `num_sampled = a+1 ≤ m+1`, where a is the number of accepted drafts. Masked rows sit at positions after x_a. The state they write falls into three classes.
+  - **Position-addressed, rewritten before it is read.** The next step for the request starts at pos(x_a)+1, at or before the first masked position (a ≤ m). With k drafts its rows cover every masked position. With fewer, its queries stop before the positions it does not cover.
+    - MLA KV. The step writes all its rows' KV before attention reads it, and a query reads only positions at or before its own.
+    - Indexer pool cache. A masked row at a pool boundary (pos % 4 = 3) compresses that pool from garbage. A query scores only complete pools: the builder floor-divides its token seq_len by `compress_ratio` = index_kpool (`indexer.py:1277-1284`). The indexer runs the K-pool update over all of a step's rows, in position order, before it scores (`sparse_attn_indexer_kpool.py:725` before `:788`). So the next step recompresses that pool before any query reads it.
+    - KDA and conv states. The next step starts from spec-state column `num_accepted - 1 = a` (`fused_recurrent.py:114-121`, with `num_accepted = max(num_sampled, 1)` from `mamba_hybrid.py:342`). The conv window offset is also `num_accepted - 1`. Neither starts from a masked row's column.
+    - DFlash2 draft KV. The context K/V precompute also covers masked rows (`dflash/speculator.py:416`), at positions after `last_valid_pos = pos(x_a)` (:522, :531). The next draft query block covers pos(x_a)+1 .. pos(x_a)+k+1 (:554) and writes those slots before its attention reads them. The context it reads ends at `last_valid_pos` (:593).
+  - **Position-aliased: the kpool tail ring. Lossless only with stash suppression.** The indexer keeps each request's open pool in a ring of `index_kpool` = 4 slots addressed by `pos % 4` (`indexer.py:565`; 09b04e5 config). Every verify row stashes its indexer K and gate there, gated only on its tail slot being ≥ 0 (`kpool_compress.py:596, 687-697`). A pool completion reads the other three slots (:609-653).
+    - A row at position c+4 lands on the slot of position c. If c is committed and its pool is still open when the step ends, nothing rewrites that slot before the pool completes in a later step.
+    - The first version of this patch let masked rows stash. On v11's kernel, with history 0..8, an anchor at 9, m = 2 and a = 0, masked rows 12..16 overwrote the slots of committed positions 8 and 9, so pool [8..11] came out different from k' = 2's.
+    - The patch now gives every masked row tail slot -1 (step 2 of the mechanism), and the kernel skips its stash. A masked row at a pool boundary still compresses its pool, reading ring block 0 instead of its own (`kpool_compress.py:587`). That pool entry is in the first class.
+    - So the ring holds exactly the stashes of rows 0..m, as under k' = m.
+  - **Shared with baseline k=7: rejected rows in the ring.** Rows a+1..m are rejected, but they stash the same way under masked k=7 and under k' = m. Baseline k=7 stashes all of rows a+1..7.
+    - When the verify window crosses into the next pool while a committed pool is still open, a rejected row overwrites a committed slot.
+    - This is a pre-existing v11 defect of every draft length k ≥ 2, DFlash2 and MTP alike. `KpoolTailSpec` and the kernel docstring assume completed pools never roll back, and speculative decoding breaks that assumption.
+    - It matters above index_topk = 2048 tokens, where the indexer really ranks pools.
+    - This lane does not fix it. Adaptive verify equals k' = m exactly and overwrites fewer committed slots than baseline k=7.
+    - The root fix belongs in its own lane: a ring of at least kpool - 1 + k + 1 slots addressed `pos % R`, or a re-stash after acceptance.
+- **Conclusion.** The step's output distribution equals k' = m speculation from the same drafts, and so does every piece of state a later step reads. For sampling that is lossless by Leviathan et al., and for greedy by construction, up to the ring defect that k' = m and baseline k=7 share.
 
-`test_v13_verify.py` checks this on v11's own kernels under the Triton interpreter:
+`test_v13_verify.py` checks this on v11's own kernels under the Triton interpreter.
 
-- It runs the real layout kernels, then `prepare()` and `mask_drafts()`, then `rejection_sample`. The k=7 batch has garbage logits on its masked rows, and the reference is the scheduler-truncated k' = m batch.
-- The emitted tokens are equal in greedy, sampled, block-verification and probabilistic-draft modes. The trials cover both "all m accepted" and "rejected early".
-- The check is sensitive. Each of these module mutations makes it fail: masking row m, dropping the -1, masking one row late, masking row m on the input side only, and an off-by-one anchor.
+- **Within a step.** The test runs the real layout kernels, then `prepare()` and `mask_drafts()`, then `rejection_sample`. The k=7 batch has garbage logits on its masked rows, and the reference is the scheduler-truncated k' = m batch.
+  - The emitted tokens are equal in greedy, sampled, block-verification and probabilistic-draft modes. The trials cover both "all m accepted" and "rejected early".
+  - The check is sensitive. Each of these module mutations makes it fail: masking row m, dropping the -1, masking one row late, masking row m on the input side only, and an off-by-one anchor.
+- **Across steps.** The test runs `_kpool_decode_update_batched_kernel` over a history plus four verify steps at c=2, with index_kpool = 4, k = 7 and random m and a.
+  - The tail slots come from `prepare()` and `compute_kpool_tail_slot_mapping` exactly as the patch writes it.
+  - The whole tail ring equals truncated k' = m's, and so does every committed pool entry the steps touch: 0 of 83 differ. Letting masked rows stash, as the first version did, changes 35 of those 83.
+  - The tail-slot tests fail if the mask is a no-op, shifted by one row, applied before v11 fills the slots, or never bound.
 
 **Floating point.** Rows 0..m are not bit-equal to an unmasked k=7 step. Marlin splits its work over SMs by total block count, so fewer distinct experts changes the fp32 reduction grouping. The serve is already not run-to-run deterministic: in the E0 A/A, top-1 disagreed on 1.55% of positions and greedy diverged on 14 of 20 prompts. The GPU check therefore compares against that band.
 
@@ -190,13 +208,15 @@ The step model:
 | B code c=1 | 3 (fixed cap) | 2.989 (−28%) | 99.4 / 85.6 | 30.4 (−13%) / 35.4 (+1%) |
 
 - **Fixed cap vs confidence rule.** A fixed cap trades code for prose. The confidence rule is meant to give both. If the drafter's running product tracked the E0 curves, tau = 0.1 would verify 3 prose drafts (4 live rows instead of 8) and all 7 code drafts. The unit test checks exactly this arithmetic. The SD-1 oracle line of `tools/census_report.py` bounds any cut rule.
-- **Overhead.** 126 small in-graph kernels and about 17 eager ones per step, roughly 0.5 ms (estimate). A fused Triton remap would cut the 126 to 42, if nsys shows it matters.
+- **Upper slope.** The 1.25 ms slope multiplies the independent-routing D(n). If real routing is correlated, the real D(8) - D(4) drop is smaller than 27.4. The E1 microbench's dense linears (41.1 ms per step at M=8, BF16, drafter included) plus D(8) expert bytes (58.1 × 42 × 7.08 MB at 237 GB/s ≈ 73 ms) already reach ~114 ms of the 115.3 ms step, before attention, indexer and KDA. Expect the lower end of the range until the census prefix curve and the microbench (step 6 below) settle it.
+- **Overhead.** Per target forward, prefill included: 168 small in-graph kernels, 4 per MoE layer. Per step: about 18 eager kernels (prepare 6, tail-slot mask 1, mask_drafts 3, record 8). Roughly 0.5 ms (estimate), and code steps with m = k pay it for nothing. A precomputed source index and keep mask per step would cut the 168 to 84, and a fused Triton remap to 42, if nsys shows it matters.
 - **Lower bound 0.** Masked rows still run attention, KDA, the shared expert and lm_head at full shape. If the k-dependence of step time is per-token work rather than expert reads (the review's alternative fit, step ≈ 79.5 + 4.75·n ms), the gain is 0.
 
 ### Risks
 
 - **Calibration.** The selector softmax covers the top-K candidates only, so it overstates confidence. A tau that is too high also cuts positions that would have been accepted, and code and structured output lose acceptance. Sweep tau, and fall back to `MAX` alone. The walk is greedy, so its probabilities ignore the request temperature. On sampled traffic the rule over-verifies, which costs speed and never correctness.
-- **Rank agreement.** Both ranks must mask the same rows, or they would accept different tokens. m comes from rank-identical draft scores, and `EXTRA_ENV` sets the switch on both ranks. The census check `rank0 vs rank1 routing identical` covers it.
+- **Rank agreement.** Both ranks must mask the same rows. m comes from rank-identical draft scores, and `EXTRA_ENV` sets the switch on both ranks. A width mismatch is worse than a draft-token mismatch: the ranks would emit different `num_sampled` and diverge for good. Only the census check `rank0 vs rank1 routing identical` would show it. `TAU=0` with `MAX` alone cannot mismatch.
+- **EPLB.** It is not refused. With redundant experts, `_apply_eplb_mapping` picks a replica by token index, so a masked row can land on a different replica than its anchor and add reads. This costs speed only, and the recipe does not use EP.
 - **c=2 Marlin block spill.** At 8-16 rows Marlin uses 8-row blocks (`marlin_moe.py:333`). An anchor expert shared by both requests can pass 8 rows and be read twice. The expected count is about 8·8/288 ≈ 0.22 experts per layer, at most ~65 MB per step per rank.
 - **Metrics.** Masked drafts count as drafted and rejected, so the acceptance rate drops by construction, and per-position acceptance past m is 0. Judge by acceptance_len and step_ms.
 - **Census.** It records the ids after the remap: masked rows copy the anchor. That is the intended measurement.
@@ -213,7 +233,11 @@ Follow AGENTS.md and keep receipts in `evidence/iter-adaptive-verify/`, with `tr
    ```
    - Both ranks log `GLM53_ADAPTIVE_VERIFY: tau=0 max=3 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers`.
    - The boot must reach ready. Graph capture includes the remap.
-3. **Lossless.** Three checks:
+3. **Overhead only (A/A).** `TAU=0` with `MAX=k` is refused, so boot with `EXTRA_ENV="GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=1e-9"`.
+   - The pinned drafter has `selector_top_k` = 16, so every selector probability is ≥ 1/16 and the running product is ≥ 16^-7 ≈ 3.7e-9. m = k on every step: every hook runs and nothing is masked.
+   - Run ABAB against off on cells A and B. This separates the mechanism cost (~0.5 ms estimated) from the truncation gain.
+   - Optionally take one nsys trace to confirm the remap kernels sit inside the graph segments.
+4. **Lossless.** Three checks and one limit:
    - **Greedy identity, allowing for known nondeterminism.** `python3 quality/tier0.py compare --ref nvidia-v11-k7` must PASS. That covers count-200 exact, the thinking-off kwargs cells, and greedy.hazard within 2× the reference's A/A.
    - **Acceptance-weighted distribution.** Run `python3 bench_decode.py --cells A,B,G`.
      - Acceptance at the first three draft positions must stay near E0 (A .640 .345 .169, B .817 .657 .515). Step boundaries move with the cap, so a few percent of drift is expected; a collapse is not.
@@ -223,9 +247,10 @@ Follow AGENTS.md and keep receipts in `evidence/iter-adaptive-verify/`, with `tr
      - Census positions 4-7 (the draft rows past m = 3) show overlap 1.000, new 0.00 and accept 0.000.
      - `distinct/layer` at c=1 matches the off-census prefix curve at n=4, not at n=8.
      - `rank0 vs rank1 routing identical: True`.
-4. **Step time and acceptance.** One boot per setting, ABAB against off: `MAX=3` with `TAU=0`, then `TAU` ∈ {0.3, 0.2, 0.1, 0.05}.
+   - **What these cannot see.** No GPU check here tests cross-step state against a clean reference. Count-200 and greedy.hazard stay under index_topk = 2048 tokens, where every pool is selected anyway. Ruler v2 against E0 shares the ring defect of the lossless section. The CPU kernel test is the gate for "identical to k' = m" across steps.
+5. **Step time and acceptance.** One boot per setting, ABAB against off: `MAX=3` with `TAU=0`, then `TAU` ∈ {0.3, 0.2, 0.1, 0.05}.
    - Per boot, run the ruler v2 fast gate plus the c=2 cell (`python3 bench_decode.py --cells A,B,H`) and Tier 0 (`python3 quality/tier0.py compare --ref nvidia-v11-k7`).
    - Record acceptance_len, step_ms, tok/s and per-position acceptance for A, B and H.
    - Keep a setting only if A and H beat noise and B does not regress beyond noise.
    - step_ms should fall toward the table. Acceptance should fall by at most the share of the truncated positions.
-5. **Optional microbench.** On one Spark, time the image's `fused_marlin_moe` on one nvidia-pack layer at M=8 rows. Draw `topk_ids` to touch D ∈ {8, 16, 24, 32, 48, 58} distinct experts, with 200 graph replays each. The slope in ms per distinct expert, times 42 layers, settles 0.75 against 1.25 ms and so the table's range.
+6. **Optional microbench.** On one Spark, time the image's `fused_marlin_moe` on one nvidia-pack layer at M=8 rows. Draw `topk_ids` to touch D ∈ {8, 16, 24, 32, 48, 58} distinct experts, with 200 graph replays each. The slope in ms per distinct expert, times 42 layers, settles 0.75 against 1.25 ms and so the table's range.
