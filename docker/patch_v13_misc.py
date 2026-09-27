@@ -9,6 +9,7 @@ it on the Sparks.
   GLM53_INDEXER_WS_FACTOR=<int>    DSA indexer prefill workspace factor (stock 40)
   GLM53_MHC_WARMUP=1               pre-compile Glm5Next mHC TileLang variants
   GLM53_KDA_TRIM=1                 skip 4 .contiguous() copies per KDA layer
+  GLM53_SKIP_MTP_WEIGHTS=1         do not read MTP layer tensors when spec != mtp
 
 Usage: python3 patch_v13_misc.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
@@ -466,12 +467,81 @@ BT_LIST_AUTOTUNE = [32, 64, 128]
     ),
 ]
 
+# --------------------------------------------------------------------------
+# GLM53_SKIP_MTP_WEIGHTS: model.py + model_loader/ep_weight_filter.py
+# --------------------------------------------------------------------------
+MODEL_SKIP_MTP_EDITS = [
+    (
+        "model.py: skip MTP weights before read",
+        """        world_size = get_tensor_model_parallel_world_size()
+        assert config.num_attention_heads % world_size == 0, (
+            "num_attention_heads must be divisible by world_size"
+        )
+""",
+        """        world_size = get_tensor_model_parallel_world_size()
+        assert config.num_attention_heads % world_size == 0, (
+            "num_attention_heads must be divisible by world_size"
+        )
+
+        # GLM53_SKIP_MTP_WEIGHTS (v13): load_weights drops the MTP layer(s)
+        # only after the safetensors iterator has read them (13.84 GiB BF16 in
+        # the nvidia pack). When the drafter is not MTP, hand their raw
+        # checkpoint prefixes to the loader's pre-read filter instead.
+        spec_cfg = vllm_config.speculative_config
+        if os.environ.get("GLM53_SKIP_MTP_WEIGHTS") == "1" and (
+            spec_cfg is None or spec_cfg.method != "mtp"
+        ):
+            from vllm.model_executor.model_loader import ep_weight_filter
+
+            n_mtp = getattr(config, "num_nextn_predict_layers", 0) or 0
+            skip = tuple(
+                f"{root}layers.{config.num_hidden_layers + i}."
+                for i in range(n_mtp)
+                for root in ("model.language_model.", "model.", "")
+            )
+            if skip:
+                ep_weight_filter.SKIP_NAME_PREFIXES = skip
+                logger.info(
+                    "GLM53_SKIP_MTP_WEIGHTS: not reading %s (speculative method=%s)",
+                    skip,
+                    getattr(spec_cfg, "method", None),
+                )
+""",
+    ),
+]
+
+EP_FILTER_EDITS = [
+    (
+        "ep_weight_filter.py: skip-prefix table",
+        '_EXPERT_ID_RE = re.compile(r"\\.experts\\.(\\d+)\\.")\n',
+        (
+            '_EXPERT_ID_RE = re.compile(r"\\.experts\\.(\\d+)\\.")\n'
+            "\n"
+            "# GLM53_SKIP_MTP_WEIGHTS (v13): raw checkpoint-name prefixes skipped\n"
+            "# before the tensor is read. Empty unless Glm5NextModel fills it.\n"
+            "SKIP_NAME_PREFIXES: tuple[str, ...] = ()\n"
+        ),
+    ),
+    (
+        "ep_weight_filter.py: skip-prefix check",
+        '''    belong to the local rank and should be skipped during loading."""
+    if local_expert_ids is None:
+''',
+        '''    belong to the local rank and should be skipped during loading."""
+    if SKIP_NAME_PREFIXES and weight_name.startswith(SKIP_NAME_PREFIXES):
+        return True
+    if local_expert_ids is None:
+''',
+    ),
+]
+
 FILE_EDITS = {
-    "models/glm5next/nvidia/model.py": MODEL_EDITS,
+    "models/glm5next/nvidia/model.py": MODEL_EDITS + MODEL_SKIP_MTP_EDITS,
     "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
     "model_executor/warmup/kernel_warmup.py": KERNEL_WARMUP_EDITS,
     "third_party/flash_linear_attention/ops/fused_recurrent.py": FUSED_RECURRENT_EDITS,
     "third_party/flash_linear_attention/ops/kda.py": KDA_OPS_EDITS,
+    "model_executor/model_loader/ep_weight_filter.py": EP_FILTER_EDITS,
 }
 
 NEW_FILES = {
