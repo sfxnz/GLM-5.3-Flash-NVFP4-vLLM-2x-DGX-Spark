@@ -18,6 +18,13 @@ per row before expansion, so the input order no longer depends on how the
 top-k kernel emits its selection. CUDA-graph safe: no host sync, and every
 shape is unchanged. The MLA kernel is not touched.
 
+The same file lets LOGITS_FP32=1 (run.sh: --hf-overrides
+'{"text_config":{"head_dtype":"float32"}}') boot. v11's LogitsProcessor
+accepts a different head_dtype only for an UnquantizedEmbeddingMethod lm_head,
+and ModelOpt gives the excluded lm_head UnquantizedLinearMethod, which is the
+same plain BF16 weight. That branch runs only when head_dtype differs from the
+model dtype, which never happens without the override.
+
 Usage: python3 patch_v13_determinism.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
 
@@ -194,9 +201,31 @@ RADIX_TOPK_WORKSPACE_SIZE = 1024 * 1024
     ),
 ]
 
+# --------------------------------------------------------------------------
+# model_executor/layers/logits_processor.py: LOGITS_FP32 on the ModelOpt lm_head
+# --------------------------------------------------------------------------
+LOGITS_EDITS = [
+    (
+        "logits_processor.py: accept the ModelOpt lm_head",
+        """        if not isinstance(lm_head.quant_method, UnquantizedEmbeddingMethod):
+            raise ValueError(
+""",
+        """        # GLM53 (v13, LOGITS_FP32): ModelOpt gives an excluded lm_head
+        # UnquantizedLinearMethod, whose weight is the same plain BF16 tensor.
+        from vllm.model_executor.layers.linear import UnquantizedLinearMethod
+
+        if not isinstance(
+            lm_head.quant_method, (UnquantizedEmbeddingMethod, UnquantizedLinearMethod)
+        ):
+            raise ValueError(
+""",
+    ),
+]
+
 FILE_EDITS = {
     "v1/attention/backends/mla/sparse_utils.py": SPARSE_UTILS_EDITS,
     "model_executor/layers/sparse_attn_indexer_kpool.py": INDEXER_EDITS,
+    "model_executor/layers/logits_processor.py": LOGITS_EDITS,
 }
 
 

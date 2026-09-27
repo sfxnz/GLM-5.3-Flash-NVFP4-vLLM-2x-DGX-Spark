@@ -4,8 +4,8 @@
 
 GLM53_V11_SRC is the directory holding the vllm/ package tree shipped in
 glm53-sm121-v11 (read-only; the tests patch a temporary copy). Without it the
-source tests skip. The kernel test also needs torch and triton and runs the
-Triton CPU interpreter (TRITON_INTERPRET=1).
+source tests skip. The lm_head test needs torch; the kernel test needs torch
+and triton and runs the Triton CPU interpreter (TRITON_INTERPRET=1).
 """
 
 import ast
@@ -21,16 +21,19 @@ import textwrap
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 SRC = Path(os.environ.get("GLM53_V11_SRC", "/nonexistent")) / "vllm"
 HAVE_SRC = (SRC / "__init__.py").is_file()
-HAVE_TORCH_TRITON = all(importlib.util.find_spec(m) for m in ("torch", "triton"))
+HAVE_TORCH = importlib.util.find_spec("torch") is not None
+HAVE_TORCH_TRITON = HAVE_TORCH and importlib.util.find_spec("triton") is not None
 ENV = "GLM53_DETERMINISTIC_MLA_INDEX"
 SPARSE_UTILS = "v1/attention/backends/mla/sparse_utils.py"
 INDEXER = "model_executor/layers/sparse_attn_indexer_kpool.py"
+LOGITS = "model_executor/layers/logits_processor.py"
 
 spec = importlib.util.spec_from_file_location("patch_v13_determinism", HERE / "patch_v13_determinism.py")
 patch = importlib.util.module_from_spec(spec)
@@ -102,7 +105,7 @@ class ApplyTests(unittest.TestCase):
 
     def test_switch_is_read_from_env_only(self):
         self.assertEqual(self.run_patch().returncode, 0)
-        for rel in patch.FILE_EDITS:
+        for rel in (SPARSE_UTILS, INDEXER):
             text = (self.root / rel).read_text()
             self.assertEqual(text.count(f'os.environ.get("{ENV}") == "1"'), 1, rel)
 
@@ -134,6 +137,74 @@ class PoolSortTests(unittest.TestCase):
         # Any permutation of a row's pools gives the same result.
         rng = np.random.default_rng(0)
         np.testing.assert_array_equal(self.helper(True)(rng.permuted(pools, axis=1)), out)
+
+
+@unittest.skipUnless(HAVE_SRC and HAVE_TORCH, "needs GLM53_V11_SRC and torch")
+class HeadDtypeTests(unittest.TestCase):
+    """LogitsProcessor._apply_head, exec'd from v11 and from the patched file,
+    with head_dtype float32 on a ModelOpt-style lm_head (LOGITS_FP32=1)."""
+
+    class Embedding:  # UnquantizedEmbeddingMethod
+        pass
+
+    class Linear:  # UnquantizedLinearMethod
+        pass
+
+    class Marlin:  # a quantized method (e.g. GLM53_FP8 lm_head)
+        pass
+
+    def apply_head(self, text):
+        import torch
+        import torch.nn.functional as F
+
+        cls = next(n for n in ast.parse(text).body if isinstance(n, ast.ClassDef) and n.name == "LogitsProcessor")
+        fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_apply_head")
+        env = {"torch": torch, "F": F, "UnquantizedEmbeddingMethod": self.Embedding, "VocabParallelEmbedding": object,
+               "current_platform": types.SimpleNamespace(is_cuda=lambda: False, is_rocm=lambda: False)}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "logits_processor", "exec"), env)  # noqa: S102
+        return env["_apply_head"]
+
+    def call(self, text, method, head_dtype):
+        """_apply_head(self, lm_head, hidden, None) and the fp32 reference."""
+        import torch
+        import torch.nn.functional as F
+
+        linear = types.ModuleType("vllm.model_executor.layers.linear")
+        linear.UnquantizedLinearMethod = self.Linear
+        stubs = {n: types.ModuleType(n) for n in ("vllm", "vllm.model_executor", "vllm.model_executor.layers")}
+        stubs[linear.__name__] = linear
+        gen = torch.Generator().manual_seed(0)
+        hidden = torch.randn(3, 8, generator=gen).to(torch.bfloat16)
+        weight = torch.randn(5, 8, generator=gen).to(torch.bfloat16)
+        method.apply = lambda layer, x, bias=None: F.linear(x, layer.weight)
+        lm_head = types.SimpleNamespace(quant_method=method, weight=weight)
+        with mock.patch.dict(sys.modules, stubs):
+            out = self.apply_head(text)(types.SimpleNamespace(head_dtype=head_dtype), lm_head, hidden, None)
+        return out, F.linear(hidden.float(), weight.float())
+
+    def test_v11_rejects_the_modelopt_lm_head(self):
+        import torch
+
+        with self.assertRaisesRegex(ValueError, "unquantized lm_head"):
+            self.call((SRC / LOGITS).read_text(), self.Linear(), torch.float32)
+
+    def test_patched_accepts_it_and_returns_fp32(self):
+        import torch
+
+        text = patched_text(LOGITS)
+        for method in (self.Linear(), self.Embedding()):
+            out, want = self.call(text, method, torch.float32)
+            self.assertEqual(out.dtype, torch.float32)
+            torch.testing.assert_close(out, want)
+        with self.assertRaisesRegex(ValueError, "unquantized lm_head"):
+            self.call(text, self.Marlin(), torch.float32)
+
+    def test_default_head_dtype_takes_the_v11_path(self):
+        import torch
+
+        for text in ((SRC / LOGITS).read_text(), patched_text(LOGITS)):
+            out, _ = self.call(text, self.Marlin(), torch.bfloat16)
+            self.assertEqual(out.dtype, torch.bfloat16)
 
 
 class PatchStaticTests(unittest.TestCase):
