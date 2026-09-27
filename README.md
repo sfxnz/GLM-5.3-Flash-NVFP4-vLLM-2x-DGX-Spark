@@ -37,7 +37,7 @@ hf auth login
 
 ## Build the image
 
-On both nodes, from this repo:
+On the head node, from this repo (then copy the image to the worker, below):
 
 ```bash
 docker build -f docker/Dockerfile.sm121-v8 -t glm53-sm121-v8 docker
@@ -45,6 +45,8 @@ docker build -f docker/Dockerfile.sm121-v9 -t glm53-sm121-v9 docker
 docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
 docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
 ```
+
+Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits. Prefer building on the head and copying it with `docker save glm53-sm121-v11 | ssh spark2 docker load`. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
 
 The v8 Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
 

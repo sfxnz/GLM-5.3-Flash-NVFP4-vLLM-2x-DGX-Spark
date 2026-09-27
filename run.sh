@@ -448,12 +448,31 @@ worker_ssh_ok() {
   command -v ssh >/dev/null 2>&1 && ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" true >/dev/null 2>&1
 }
 
+# TP ranks must run identical bits. Separate builds give different image IDs,
+# so warn (do not refuse) and print the sync command.
+check_image_parity() {
+  local local_id="" remote_id=""
+  if command -v docker >/dev/null 2>&1; then
+    local_id="$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+  fi
+  remote_id="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" \
+    "docker image inspect -f '{{.Id}}' $(printf '%q' "$IMAGE")" 2>/dev/null || true)"
+  if [[ -n "$local_id" && "$local_id" == "$remote_id" ]]; then
+    log "Image parity OK: $IMAGE is $local_id on $(host_short) and $WORKER_HOST"
+  else
+    echo "WARN image $IMAGE differs: $(host_short)=${local_id:-missing} $WORKER_HOST=${remote_id:-missing}. Sync from the head with: docker save $IMAGE | ssh $WORKER_HOST docker load" >&2
+  fi
+}
+
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
   printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
     "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
   printf '==> worker command: %s' "$(worker_command)"
   echo
+  if [[ "$ORCHESTRATE" == auto && "$(detect_role)" == head ]] && worker_ssh_ok; then
+    check_image_parity
+  fi
   exit 0
 fi
 
@@ -462,6 +481,7 @@ log "role=$ROLE host=$(host_short)"
 
 if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
   if worker_ssh_ok; then
+    check_image_parity
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
     ssh "$WORKER_HOST" "$(worker_command)"
