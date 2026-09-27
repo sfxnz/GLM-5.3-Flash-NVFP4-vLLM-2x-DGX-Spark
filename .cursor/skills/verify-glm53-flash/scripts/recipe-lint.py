@@ -26,6 +26,11 @@ def from_line(path: Path) -> str | None:
     return None
 
 
+def ladder(spec_tokens: int, max_seqs: int) -> str:
+    """run.sh's capture sizes: 1,2,4 plus (spec_tokens+1) x {1..max_seqs}."""
+    return ",".join(["1", "2", "4"] + [str((spec_tokens + 1) * i) for i in range(1, max_seqs + 1)])
+
+
 def shipped_dflash2_sizes(run_sh: str, spec_tokens: int, max_seqs: int) -> str:
     start = run_sh.find("step=$((NUM_SPECULATIVE_TOKENS + 1))")
     if start < 0:
@@ -125,12 +130,14 @@ def main() -> int:
         "KV_CACHE_MEMORY": "4445787956",
         "BLOCK_SIZE": "2304",
         "SPEC": "dflash2",
-        "SERVED_NAME": "nvidia/GLM-5.3-Flash-NVFP4",
+        "SERVED_NAME": "$MODEL",
         "LANGUAGE_MODEL_ONLY": "0",
         "FORCE_UNSAFE_VISION": "0",
         "CONTAINER_NAME": "glm53-flash-nvfp4",
-        "NUM_SPECULATIVE_TOKENS": "7",
         "KV_CACHE_DTYPE": "fp8_e4m3",
+        "LINEAR_BACKEND": "marlin",
+        "MM_PROCESSOR_CACHE_GB": "1",
+        "MAX_NEW_TOKENS": "65536",
     }
     for var, want in expected.items():
         got = default_of(run_sh, var)
@@ -154,6 +161,14 @@ def main() -> int:
         failures.append("run.sh MOE_BACKEND default is no longer marlin")
     if '--moe-backend "$MOE_BACKEND"' not in run_sh and "--moe-backend marlin" not in run_sh:
         failures.append("run.sh no longer passes --moe-backend from MOE_BACKEND")
+    if '--linear-backend "$LINEAR_BACKEND"' not in run_sh:
+        failures.append("run.sh no longer passes --linear-backend from LINEAR_BACKEND")
+    if '--mm-processor-cache-gb "$MM_PROCESSOR_CACHE_GB"' not in run_sh:
+        failures.append("run.sh no longer passes --mm-processor-cache-gb")
+    if "--override-generation-config" not in run_sh or "max_new_tokens" not in run_sh:
+        failures.append("run.sh no longer caps max_new_tokens via --override-generation-config")
+    if "FORWARD_ENVS=(" not in run_sh or 'ssh "$WORKER_HOST" "$(worker_command)"' not in run_sh:
+        failures.append("run.sh worker launch is no longer driven by FORWARD_ENVS")
     if 'REASONING_PARSER="${REASONING_PARSER:-glm45}"' not in run_sh:
         failures.append("run.sh REASONING_PARSER default is no longer glm45")
     if '--reasoning-parser "$REASONING_PARSER"' not in run_sh and "--reasoning-parser glm45" not in run_sh:
@@ -172,8 +187,8 @@ def main() -> int:
     if "FORCE_UNSAFE_CTX" not in run_sh or "cannot hold --max-model-len" not in run_sh:
         failures.append("run.sh no longer refuses a 1M window on the fp8 pin")
     tpl = (REPO / "chat_template.jinja").read_text() if (REPO / "chat_template.jinja").exists() else ""
-    if "enable_thinking | default(true)" not in tpl:
-        failures.append("chat_template.jinja no longer gates <think> on enable_thinking")
+    if "(_thinking is none and _enable_thinking is none) or _thinking or _enable_thinking" not in tpl:
+        failures.append("chat_template.jinja no longer gates <think> on enable_thinking / thinking (glm45 parser rule)")
     if "{{- '<think></think>' -}}" not in tpl:
         failures.append("chat_template.jinja thinking-off path no longer closes an empty think block")
     if "$NUM_SPECULATIVE_TOKENS" not in run_sh:
@@ -286,13 +301,15 @@ def main() -> int:
                 f"needle_probe.py --concurrency 2 --dry-run failed: {dry2.stderr.strip() or dry2.stdout.strip()}"
             )
 
+    # Derive the ladder from run.sh's own defaults so a NUM_SPECULATIVE_TOKENS edit does not fail lint.
+    spec_tokens = int(default_of(run_sh, "NUM_SPECULATIVE_TOKENS") or 7)
+    max_seqs = int(default_of(run_sh, "MAX_NUM_SEQS") or 2)
+    default_ladder = ladder(spec_tokens, max_seqs)
     try:
-        got_72 = shipped_dflash2_sizes(run_sh, 7, 2)
-        if got_72 != "1,2,4,8,16":
-            failures.append(f"dflash2 graph sizes spec=7 seqs=2 got {got_72!r} want '1,2,4,8,16'")
-        got_54 = shipped_dflash2_sizes(run_sh, 5, 4)
-        if got_54 != "1,2,4,6,12,18,24":
-            failures.append(f"dflash2 graph sizes spec=5 seqs=4 got {got_54!r} want '1,2,4,6,12,18,24'")
+        for k, seqs in ((spec_tokens, max_seqs), (5, 4)):
+            got = shipped_dflash2_sizes(run_sh, k, seqs)
+            if got != ladder(k, seqs):
+                failures.append(f"dflash2 graph sizes spec={k} seqs={seqs} got {got!r} want {ladder(k, seqs)!r}")
     except (ValueError, RuntimeError) as exc:
         failures.append(f"dflash2 graph-size snippet: {exc}")
 
@@ -301,18 +318,20 @@ def main() -> int:
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0"},
     )
     if val.returncode != 0 or "validate-only" not in val.stdout:
         failures.append(
             f"VALIDATE_ONLY=1 ./run.sh failed: rc={val.returncode} {val.stderr.strip() or val.stdout.strip()}"
         )
+    elif f'"cudagraph_capture_sizes":[{default_ladder}]' not in val.stdout:
+        failures.append(f"VALIDATE_ONLY=1 ./run.sh did not print cudagraph_capture_sizes [{default_ladder}]")
     refuse = subprocess.run(
         ["bash", str(run_sh_path)],
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1", "MAX_MODEL_LEN": "1048576"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", "MAX_MODEL_LEN": "1048576"},
     )
     if refuse.returncode == 0 or "cannot hold --max-model-len" not in refuse.stderr:
         failures.append("VALIDATE_ONLY=1 MAX_MODEL_LEN=1048576 did not refuse the fp8 1M window")
@@ -321,7 +340,7 @@ def main() -> int:
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1", "KV_CACHE_MEMORY": "3221225472"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", "KV_CACHE_MEMORY": "3221225472"},
     )
     if tiny_kv.returncode == 0 or "3.62 GiB" not in tiny_kv.stderr:
         failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3221225472 did not refuse the 3.0 GiB pin")
@@ -330,7 +349,7 @@ def main() -> int:
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1", "KV_CACHE_MEMORY": "3886945403"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", "KV_CACHE_MEMORY": "3886945403"},
     )
     if min_kv.returncode == 0 or "327168" not in min_kv.stderr:
         failures.append("VALIDATE_ONLY=1 KV_CACHE_MEMORY=3886945403 did not refuse the 3.62 GiB display pin")
@@ -339,7 +358,7 @@ def main() -> int:
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1", "MOE_BACKEND": "flashinfer_cutlass"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", "MOE_BACKEND": "flashinfer_cutlass"},
     )
     if cutlass.returncode == 0 or "Stay on marlin" not in cutlass.stderr:
         failures.append(
@@ -350,12 +369,26 @@ def main() -> int:
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "VALIDATE_ONLY": "1", "LANGUAGE_MODEL_ONLY": "1"},
+        env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", "LANGUAGE_MODEL_ONLY": "1"},
     )
     if hide_vision.returncode == 0 or "FORCE_UNSAFE_VISION=1" not in hide_vision.stderr:
         failures.append(
             "VALIDATE_ONLY=1 LANGUAGE_MODEL_ONLY=1 did not refuse hiding the vision tower"
         )
+
+    for extra, want in (
+        ({"LINEAR_BACKEND": "flashinfer_cutlass"}, "FORCE_UNSAFE_LINEAR=1"),
+        ({"SPEC": "mtp"}, "FORCE_UNSAFE_SPEC=1"),
+    ):
+        proc = subprocess.run(
+            ["bash", str(run_sh_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "VALIDATE_ONLY": "1", "ORCHESTRATE": "0", **extra},
+        )
+        if proc.returncode == 0 or want not in proc.stderr:
+            failures.append(f"VALIDATE_ONLY=1 {extra} was not refused")
 
     print(f"repo={REPO}")
     for w in warnings:
