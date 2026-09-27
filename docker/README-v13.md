@@ -6,7 +6,12 @@
 - `patch_v13_fp8.py` (from the fp8 lane)
 - `patch_v13_determinism.py` (`GLM53_DETERMINISTIC_MLA_INDEX`, and the lm_head check behind `LOGITS_FP32`; this file documents it)
 
-Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 serves exactly like v11. Nothing in the v11 hot path changes until a switch is set.
+Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. Two Triton kernels change signature even with every switch off, so they compile to different binaries:
+
+- The `fused_recurrent_kda` kernel (every KDA layer on every verify step) takes four token-stride arguments and the `STRIDED_QKVB` constexpr, which is False while `GLM53_KDA_TRIM` is unset.
+- The sparse-MLA index conversion kernel takes `NUM_COLS`, which is 0 while `GLM53_DETERMINISTIC_MLA_INDEX` is unset, so its branch compiles out.
+
+Both load the same elements as v11, and with the switch off their output is bit-exact with v11 under the Triton CPU interpreter (`test_v13_misc.py`, `test_v13_determinism.py`). On the GPU, E1a (v13, every switch off) passed Tier 0 10/10 against the v11 reference (`evidence/e1a-v13-off/tier0-notes.txt`).
 
 ```bash
 docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker   # needs docker/patch_v13_fp8.py
@@ -52,7 +57,7 @@ Follow AGENTS.md: exclusive GPUs, one knob per boot, record everything in `evide
 - `L | grep -c GLM53_` must print 0 on both ranks.
 - Greedy count-200 must be lossless.
 - Thinking-off smoke must not start `content` with chain-of-thought.
-- Greedy prose output must be byte-identical to the v11 capture.
+- Tier 0 against the v11 reference must PASS: `python3 quality/tier0.py compare --ref nvidia-v11-k7`. Its gates are relative to the reference's A/A: top-1 agreement at least the A/A's minus 0.5 points, and greedy hazard at most 2 × max(the A/A's, 0.005). Byte-identical greedy text is not a usable gate, because the serve is not run-to-run deterministic: in E0's same-boot A/A, greedy diverged on 14 of 20 prompts. The cross-boot A/A from E1a is what a passing boot lands near: top-1 98.33%, top-20 KL 5.9e-3, greedy hazard 0.0167 (`evidence/e1a-v13-off/tier0-notes.txt`).
 - `python3 bench_decode.py` must be within noise of v11.
 
 **ROUTER_FP32**
