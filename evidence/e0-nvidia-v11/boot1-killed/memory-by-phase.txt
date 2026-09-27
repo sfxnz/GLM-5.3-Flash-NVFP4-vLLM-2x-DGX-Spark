@@ -1,0 +1,36 @@
+== MemAvailable per phase (GiB): min @ time, first, last, max swap (UTC)
+spark1 LOAD     n=  3419 min= 14.62 @ 13:37:21  first=116.00 last= 19.67  swap_first=3.32 swap_max=6.80 span=13:23:20..13:37:48
+spark1 PROFILE  n=   325 min=  7.75 @ 13:39:06  first= 19.67 last=116.37  swap_first=6.79 swap_max=6.79 span=13:37:48..13:39:11
+spark2 LOAD     n=  3423 min= 15.53 @ 13:29:19  first=117.39 last= 20.37  swap_first=1.66 swap_max=4.29 span=13:23:20..13:37:48
+spark2 PROFILE  n=   326 min=  8.47 @ 13:39:06  first= 20.37 last=117.00  swap_first=4.10 swap_max=4.10 span=13:37:48..13:39:11
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-09-27T13:23:20.492000Z
+PROFILE  from 2026-09-27T13:37:48.883000Z
+== PROFILE trajectory, 5 s buckets (min GiB per node)
+13:37:48 spark1= 15.39 spark2= 14.60
+13:37:53 spark1= 13.64 spark2= 13.97
+13:37:58 spark1= 12.48 spark2= 12.63
+13:38:03 spark1= 11.68 spark2= 12.57
+13:38:08 spark1= 11.51 spark2= 12.20
+13:38:13 spark1= 11.79 spark2= 11.84
+13:38:18 spark1= 10.85 spark2= 11.49
+13:38:23 spark1=  9.08 spark2= 10.16
+13:38:28 spark1=  9.47 spark2=  9.94
+13:38:33 spark1=  9.70 spark2= 10.40
+13:38:38 spark1=  9.72 spark2= 10.37
+13:38:43 spark1=  9.75 spark2= 10.39
+13:38:48 spark1=  9.70 spark2=  9.87
+13:38:53 spark1=  9.20 spark2=  9.78
+13:38:58 spark1=  8.66 spark2=  8.56
+13:39:03 spark1=  7.75 spark2=  8.47
+13:39:08 spark1=  7.95 spark2= 16.98
+== compilers: groups by node/kind (first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample-second)
+spark1 deep_gemm                                                      n=    4 13:38:11..13:38:11 phases=['PROFILE'] peak_proc=   282 peak_sum=   287
+spark1 flashinfer:topk                                                n=  144 13:38:24..13:39:11 phases=['PROFILE'] peak_proc=     3 peak_sum=    11
+spark1 other                                                          n=  100 13:38:16..13:39:11 phases=['PROFILE'] peak_proc=  3281 peak_sum=  3282
+spark1 tilelang                                                       n=    2 13:38:16..13:38:17 phases=['PROFILE'] peak_proc=     3 peak_sum=     3
+spark2 deep_gemm                                                      n=    4 13:38:11..13:38:11 phases=['PROFILE'] peak_proc=   259 peak_sum=   264
+spark2 flashinfer:topk                                                n=  144 13:38:24..13:39:06 phases=['PROFILE'] peak_proc=     3 peak_sum=    11
+spark2 other                                                          n=  102 13:38:21..13:39:09 phases=['PROFILE'] peak_proc=  3397 peak_sum=  3398
+spark2 tilelang                                                       n=    1 13:38:17..13:38:17 phases=['PROFILE'] peak_proc=     3 peak_sum=     3
+fp4_gemm lines: 0

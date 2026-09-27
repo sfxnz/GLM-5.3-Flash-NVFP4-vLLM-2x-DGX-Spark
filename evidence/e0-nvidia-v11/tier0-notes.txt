@@ -1,0 +1,27 @@
+Tier 0 on the e0 serve (nvidia 09b04e5, v11, new defaults), same boot
+  reference  ~/projects/data/glm53-evals/ref/nvidia-v11-k7.json (canonical BF16-path reference; sha256 in tier1-summary.txt)
+  record     14:33:19Z..14:45:25Z  tier0-record.json   (FAIL 4/7 probe gates: kwargs.core, utf8, vision)
+  compare    14:52:02Z..14:59:50Z  tier0.json          (FAIL 9/10: vision) -- within-boot A/A vs the reference
+
+noise floor (sigma)
+  ref rerun (two captures inside record): |dNLL| 0.000627 nats/token, top-1 agreement 0.984469, top-20 KL 5.137e-3
+  compare vs ref:                          dNLL -0.000146,           top-1 agreement 0.984464, top-20 KL 5.089e-3
+  nll.delta limit = max(3 x 0.000627, 0.005) = 0.005; nll.top1_rerun limit 0.979469
+  greedy A/A (record): hazard 0.009589, 14/20 pairs diverge (first_div 0..149); compare vs ref run 0: 0.009873, 14/20, limit 0.019178
+  mean NLL 0.484849 (ref) / 0.484703 (compare) over 184,990 scored tokens (96 docs)
+  per domain top-1 A/A: chat 0.976, code 0.993, math 0.981, multilingual 0.970, prose 0.991
+  => the serve is not run-to-run deterministic: identical c=1 prefills disagree on top-1 at 1.55% of positions
+     (KL 5e-3), and greedy text diverges in 14/20 prompts (one at token 0). This A/A noise is already above the
+     PLAN fp8 stage floors (top-1 >= 99%, KL <= 1e-3), so --stage fp8 / nvfp4 cannot pass against this reference
+     until the non-determinism is found or the floors are rebased on A/A.
+
+record FAILs explained
+  kwargs.core 8/10: effort_low block+stream. Template opens <think> ("Reasoning Effort: Low"), model answers
+    "</think>Paris" (high does the same; Max reasons). Routing correct; the judge required non-empty reasoning.
+    Tool bug fixed in 256dbc4 (test added); compare then passed 12/12. probe-effort-low.txt.
+  utf8: record run 8 wrong squares (finish stop); two reruns degenerate ("| 2 | 2 | 8 |", repeated rows, stray
+    words, finish length at 3000 tokens); compare run passed 40/40. Model behaviour + non-determinism, not a tool bug.
+    The wrong squares are the target's own top-1 under teacher forcing (probe-lossless.txt, probe-utf8.txt).
+  vision 12/13: video answered 3186 (expected 3816). Passed once (smoke 14:02Z), then 3186 in 8 straight calls;
+    fresh frame sizes flip between 3816 and 3186 (probe-video-cache.txt, probe-video-x6.txt). Model decision
+    boundary (scenes 2 and 3 swapped), not a tool or MM-cache bug. All 12 image checks pass every run.

@@ -1,0 +1,34 @@
+==> role=head host=spark1
+WARN image glm53-sm121-v11 differs: spark1=sha256:88173725a4485c8d4145212f328d00428c31e7b6caa78fa655940489ea14132a spark2=sha256:bde907c4c44a3609b531f8594ab01b46eb726e15a5380a23bef8945e4930211e. Sync from the head with: docker save glm53-sm121-v11 | ssh spark2 docker load
+==> Starting worker on spark2 first
+==> role=worker host=spark2
+==> Ensuring image glm53-sm121-v11
+==> Using pinned snapshot /home/sfxnz/.cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3
+==> Using pinned draft snapshot /home/sfxnz/.cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe
+==> Starting glm53-flash-nvfp4 rank=1 model=/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3 ctx=327680 kv=4445787956 eager=0 spec=dflash2
+35bc9f7770a3fe698c4684ee3c844d1b340d1491f67937569cca8d1be0e15bc4
+==> Worker rank 1 is up. Head should start next.
+==> Worker container started. Waiting 25s for NCCL listen, then starting head
+==> Ensuring image glm53-sm121-v11
+==> Using pinned snapshot /home/sfxnz/.cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3
+==> Using pinned draft snapshot /home/sfxnz/.cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe
+==> Starting glm53-flash-nvfp4 rank=0 model=/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3 ctx=327680 kv=4445787956 eager=0 spec=dflash2
+e38f0f7818bbb345acd7dba179db017ae8279682dca3795b295c216caed66006
+==> Waiting for http://127.0.0.1:8000/v1/models
+==> still loading… (12×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (24×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (36×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (48×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (60×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (72×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (84×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (96×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (108×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (120×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (132×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (144×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (156×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (168×5s) — docker logs -f glm53-flash-nvfp4
+==> still loading… (180×5s) — docker logs -f glm53-flash-nvfp4
+Container exited early. Logs:
+Error response from daemon: No such container: glm53-flash-nvfp4

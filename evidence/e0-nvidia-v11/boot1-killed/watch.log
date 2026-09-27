@@ -1,0 +1,18 @@
+2026-09-27T13:23:20.471Z ssh ControlMaster up for spark2
+2026-09-27T13:23:20.473Z watching glm53-flash-nvfp4 head=spark1 worker=spark2 phase=LOAD floors={'LOAD': 10.0, 'PROFILE': 8.0, 'KV_READY': 3.0, 'SERVING': 2.0} kill_log_regex='Using (?!Marlin)\\S+ for NVFP4 GEMM' kill_compiler_regex='fp4_gemm'
+2026-09-27T13:25:10.208Z worker: (Worker_TP1 pid=330) INFO 09-27 13:25:10 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-27T13:25:10.252Z head: (Worker_TP0 pid=388) INFO 09-27 13:25:10 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-27T13:25:10.315Z worker: (Worker_TP1 pid=330) INFO 09-27 13:25:10 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-27T13:25:10.368Z head: (Worker_TP0 pid=388) INFO 09-27 13:25:10 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-27T13:29:43.529Z worker: (Worker_TP1 pid=330) INFO 09-27 13:29:43 [model_runner.py:374] Model loading took 90.36 GiB and 273.642450 seconds
+2026-09-27T13:37:48.681Z head: (Worker_TP0 pid=388) INFO 09-27 13:37:48 [model_runner.py:374] Model loading took 90.36 GiB and 758.769570 seconds
+2026-09-27T13:37:48.689Z PHASE LOAD -> PROFILE (min GiB in LOAD: spark1=14.62 spark2=15.53)
+2026-09-27T13:37:51.491Z worker: (Worker_TP1 pid=330) INFO 09-27 13:37:51 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-27T13:37:51.556Z head: (Worker_TP0 pid=388) INFO 09-27 13:37:51 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-27T13:38:24.279Z head: (Worker_TP0 pid=388) 2026-09-27 13:38:12  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-27T13:38:24.279Z head: (Worker_TP0 pid=388) 2026-09-27 13:38:17  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+2026-09-27T13:38:24.281Z worker: (Worker_TP1 pid=330) 2026-09-27 13:38:12  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-27T13:38:24.281Z worker: (Worker_TP1 pid=330) 2026-09-27 13:38:17  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+2026-09-27T13:39:10.144Z KILL reason=spark1 MemAvailable 7.75 GiB < PROFILE floor 8 GiB | sample=2026-09-27T13:39:06.403Z node=spark1 phase=PROFILE memavail_gib=7.747 swap_used_gib=6.779 | kill_started=2026-09-27T13:39:06.404755+00:00 | kill_latency_s=3.695 (both docker kill returned, run in parallel) | stopped_confirmed_s=3.737 running_after head=false worker=false | head: rc=0 t=3.518s out='glm53-flash-nvfp4' | worker: rc=0 t=3.695s out='glm53-flash-nvfp4'
+2026-09-27T13:39:11.458Z logs saved, containers removed; watcher exiting
+2026-09-27T13:39:11.459Z exit; min MemAvailable GiB per phase/node: LOAD/spark1=14.62 LOAD/spark2=15.53 PROFILE/spark1=7.75 PROFILE/spark2=8.47

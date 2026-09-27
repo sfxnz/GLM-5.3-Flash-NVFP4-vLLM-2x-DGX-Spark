@@ -1,0 +1,18 @@
+within-boot repeat: bench-1 (full, 14:03Z) vs bench-2 (fast gate, 14:23Z), same serve; delta = bench-2/bench-1 - 1
+group    tok/s 1  tok/s 2  d tok/s  step 1  step 2  d step  acc 1  acc 2   d acc  ttft1  ttft2
+A          19.79    19.66    -0.6%   115.3   115.3   -0.1%  2.285  2.271   -0.6%  0.318  0.344
+B          34.90    34.39    -1.5%   120.0   120.1   +0.1%  4.207  4.168   -0.9%  0.319  0.347
+J@c1       68.89    68.84    -0.1%   115.5   115.6   +0.1%  8.000  8.000   +0.0%  0.324  0.324
+J@c2       55.50    56.90    +2.5%   141.9   137.5   -3.1%  7.922  7.884   -0.5%  0.352  0.369
+H          13.69    14.04    +2.6%   161.1   161.8   +0.4%  2.207  2.273   +3.0%  0.423  0.414
+K@c1       18.67    19.20    +2.8%   116.6   117.1   +0.4%  2.198  2.270   +3.3%  0.324  0.331
+K@c2       15.73    15.02    -4.5%   142.1   150.9   +6.2%  2.246  2.287   +1.8%  0.359  0.347
+
+greedy output identity (sha256 of streamed text) and per-prompt acceptance, c=1 cells A/B
+A: identical outputs 0/8; per-prompt acc (1->2): 00 2.621->2.575, 01 2.073->1.965, 02 2.312->2.323, 03 2.241->2.265, 04 2.090->2.338, 05 1.977->1.910, 06 2.344->2.174, 07 2.626->2.621
+B: identical outputs 0/8; per-prompt acc (1->2): 00 3.631->4.410, 01 3.703->3.549, 02 4.858->4.281, 03 4.688->4.526, 04 4.300->4.422, 05 4.405->4.256, 06 3.373->3.102, 07 4.697->4.796
+J@c1: distinct outputs bench-1 1/3, bench-2 1/3, shared 1
+J@c2: distinct outputs bench-1 1/6, bench-2 1/6, shared 1
+K@c1: distinct outputs bench-1 3/3, bench-2 3/3, shared 0
+K@c2: distinct outputs bench-1 5/6, bench-2 6/6, shared 1
+H: distinct outputs bench-1 8/8, bench-2 8/8, shared 0
