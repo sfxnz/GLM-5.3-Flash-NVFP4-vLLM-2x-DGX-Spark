@@ -199,9 +199,10 @@ Source read of the v11 tree (paths under `vllm/`). Nothing here is measured yet.
   FA2 MLA kernel is deterministic for a given index order, but the order
   changes its online-softmax rescaling and the bf16 rounding of P.
 - The grid is `(num_tokens, 17)`. The race is real for decode and verify steps
-  (8-16 rows) and for small tail prefill chunks. In a 2048-row prefill chunk
-  the tiles of one row are dispatched about 2048 blocks apart, so they land
-  in order in practice.
+  (8-16 rows) and for small prefill chunks. A short prompt is a small chunk:
+  in e0's greedy A/A, one prompt diverged at token 0. In a chunk of about
+  2000 rows, the tiles of one row are dispatched about 2000 blocks apart. That
+  is more blocks than the GPU runs at once, so they land in order in practice.
 
 **Probable source (C++ not in the tree).** The indexer's top-k kernels,
 `_C.top_k_per_row_prefill` and `_C.persistent_topk`
@@ -266,7 +267,9 @@ measured a 1.55% top-1 disagreement there. Stage 0 separates the regimes:
 
 - **S**: prompts of at most 1900 tokens. The prefill is one chunk on the
   top-k-free path, and greedy output up to 148 tokens stays within 2048
-  tokens of context.
+  tokens of context. For S to be the in-order control, keep the prompts long
+  (for example, the Tier-0 documents cut to 1900 tokens). Short prompts race
+  like decode.
 - **L**: prompts of 2100-2300 tokens. The prefill is a 2048-row chunk plus a
   52-252-row tail chunk (the racy regime), and uses the real top-k.
 
