@@ -9,8 +9,11 @@ Each behaviour is gated by a `GLM53_*` environment variable, and all of them are
 
 ```bash
 docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker   # needs docker/patch_v13_fp8.py
-GLM53_V11SRC=/path/to/v11/dist-packages/vllm python3 docker/test_v13_misc.py   # CPU tests
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py                 # CPU tests
+GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v   # CPU tests
 ```
+
+Both test files read `GLM53_V11_SRC`: the directory that holds the `vllm/` package tree copied out of `glm53-sm121-v11` (for example a `dist-packages` copy). Without it the source-dependent tests skip. `test_v13_misc.py` still accepts the old `GLM53_V11SRC`, which points at `vllm/` itself, when `GLM53_V11_SRC` is unset.
 
 The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substring replace. If the replacement text is already present, the edit is skipped, so reruns are no-ops. If any anchor is missing or appears more than once, the script refuses before writing anything. `test_v13_misc.py` checks the following on a copy of the v11 tree:
 

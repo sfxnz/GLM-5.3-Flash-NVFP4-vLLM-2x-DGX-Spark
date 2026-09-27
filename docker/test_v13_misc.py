@@ -1,9 +1,11 @@
 """CPU tests for docker/patch_v13_misc.py (no GPU, no docker).
 
-    GLM53_V11SRC=/path/to/v11/site-packages/vllm python3 docker/test_v13_misc.py
+    GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py
 
-GLM53_V11SRC must point at the vllm package tree shipped in glm53-sm121-v11
-(read-only; the tests patch temporary copies). Without it, the patch-apply
+GLM53_V11_SRC must point at the directory holding the vllm/ package tree
+shipped in glm53-sm121-v11, the same variable test_v13_fp8.py reads. The old
+GLM53_V11SRC (the vllm/ dir itself) still works when GLM53_V11_SRC is unset.
+The tree is read-only; the tests patch temporary copies. Without it, the patch-apply
 tests skip. Tests that need torch skip without it. The KDA kernel test also
 needs triton and runs the Triton CPU interpreter (TRITON_INTERPRET=1).
 """
@@ -24,7 +26,8 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SRC = Path(os.environ.get("GLM53_V11SRC", "/nonexistent"))
+_V11_SRC = os.environ.get("GLM53_V11_SRC")
+SRC = Path(_V11_SRC) / "vllm" if _V11_SRC else Path(os.environ.get("GLM53_V11SRC", "/nonexistent"))
 HAVE_SRC = (SRC / "__init__.py").is_file()
 HAVE_TORCH = importlib.util.find_spec("torch") is not None
 HAVE_TRITON = importlib.util.find_spec("triton") is not None
@@ -88,7 +91,7 @@ class FakeLogger:
     info = info_once
 
 
-@unittest.skipUnless(HAVE_SRC, "set GLM53_V11SRC to the v11 vllm tree")
+@unittest.skipUnless(HAVE_SRC, "set GLM53_V11_SRC to the dir holding the v11 vllm/ tree")
 class ApplyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="v13misc-"))
@@ -412,7 +415,7 @@ KERNEL_SCRIPT = textwrap.dedent(
 
 
 @unittest.skipUnless(
-    HAVE_SRC and HAVE_TORCH and HAVE_TRITON, "needs GLM53_V11SRC, torch, triton"
+    HAVE_SRC and HAVE_TORCH and HAVE_TRITON, "needs GLM53_V11_SRC, torch, triton"
 )
 class KdaKernelInterpreterTest(unittest.TestCase):
     def test_strided_kernel_is_bit_exact(self):

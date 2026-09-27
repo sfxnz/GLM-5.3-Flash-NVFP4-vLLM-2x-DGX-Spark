@@ -67,6 +67,9 @@ serve:
     REASONING_PARSER: glm45
     DRAFT_MODEL: incoai/GLM-5.3-Flash-DFlash2
     SPEC: dflash2
+    JIT_CACHE: 1
+    JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
+    WARM_SHARDS: 1
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
@@ -88,6 +91,8 @@ readme:
     - CUDA graphs: "on, capture ladder 1/2/4 + ({NUM_SPECULATIVE_TOKENS}+1) x 1..{MAX_NUM_SEQS} (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`)"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
+    - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
+    - Shard warmer: "`WARM_SHARDS={WARM_SHARDS}`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off)"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
     - API: "`http://<head>:{PORT}/v1`"
 

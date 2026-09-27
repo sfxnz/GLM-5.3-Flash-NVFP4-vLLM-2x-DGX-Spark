@@ -64,6 +64,15 @@ DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
 # the glm53-sm121-v11 image) or mtp (GLM's native MTP head; LibertAI pack only).
 SPEC="${SPEC:-dflash2}"
+# JIT_CACHE=1 keeps the FlashInfer / Triton / TileLang / DeepGEMM / vLLM compile
+# caches in JIT_CACHE_DIR/<image id>/ on each node, so later boots skip those
+# JIT builds. JIT_CACHE=0 gives every boot an empty cache, as before.
+JIT_CACHE="${JIT_CACHE:-1}"
+JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
+# kit/shard_warm.py prefetches the next weight shard (WILLNEED, one shard
+# ahead) while rank 0 loads. 1 = head only (spark1 loads ~3x slower than
+# spark2), all = both nodes, 0 = off. Logs go to JIT_CACHE_DIR/logs/.
+WARM_SHARDS="${WARM_SHARDS:-1}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -142,6 +151,14 @@ if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY: want exactly 0 or 1." >&2
   exit 1
 fi
+if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
+  echo "JIT_CACHE=$JIT_CACHE: want exactly 0 or 1." >&2
+  exit 1
+fi
+if [[ "$WARM_SHARDS" != 0 && "$WARM_SHARDS" != 1 && "$WARM_SHARDS" != all ]]; then
+  echo "WARM_SHARDS=$WARM_SHARDS: want 0, 1 (head only) or all." >&2
+  exit 1
+fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY hides the native GLM-5.3-Flash vision tower. The NVIDIA pack ships vision_config and processor_config.json. Leave LANGUAGE_MODEL_ONLY=0. FORCE_UNSAFE_VISION=1 overrides." >&2
   exit 1
@@ -167,6 +184,36 @@ for pair in "${extra_env_pairs[@]}"; do
 done
 
 log() { printf '==> %s\n' "$*"; }
+
+# One mount at /jit-cache. Each engine's own cache variable points into it
+# (checked against the v11 source; the image runs as root with HOME=/root):
+#   FLASHINFER_WORKSPACE_BASE  flashinfer/jit/env.py: <base>/.cache/flashinfer, base defaults to ~
+#   VLLM_CACHE_ROOT            vllm/envs.py: torch_compile_cache, flashinfer_autotune_cache
+#   DG_JIT_CACHE_DIR           vllm/utils/deep_gemm.py defaults it to $VLLM_CACHE_ROOT/deep_gemm
+#   TRITON_CACHE_DIR           Triton default ~/.triton/cache (Triton kernels, autotune results)
+#   TILELANG_CACHE_DIR         TileLang default ~/.tilelang/cache (mHC kernels)
+jit_args=()
+set_jit_args() {
+  jit_args=()
+  [[ "$JIT_CACHE" == 1 ]] || return 0
+  jit_args=(
+    -v "$1:/jit-cache"
+    -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer
+    -e VLLM_CACHE_ROOT=/jit-cache/vllm
+    -e DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm
+    -e TRITON_CACHE_DIR=/jit-cache/triton
+    -e TILELANG_CACHE_DIR=/jit-cache/tilelang
+  )
+}
+
+# Keyed by this node's image ID (first 12 hex digits), so a new image never
+# reuses kernels built by an old one.
+jit_cache_host_dir() {
+  local id
+  id="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
+  id="${id#sha256:}"
+  printf '%s/%s\n' "$JIT_CACHE_DIR" "${id:0:12}"
+}
 
 host_short() { hostname -s | tr '[:upper:]' '[:lower:]'; }
 
@@ -256,6 +303,22 @@ ensure_weights() {
   fi
 }
 
+start_shard_warmer() {
+  local rank="$1" warmer="$SCRIPT_DIR/kit/shard_warm.py"
+  [[ "$WARM_SHARDS" == all || ("$WARM_SHARDS" == 1 && "$rank" == 0) ]] || return 0
+  # The worker runs a copy of this script from /tmp; the head copies the warmer next to it.
+  [[ -f "$warmer" ]] || warmer=/tmp/glm53-shard_warm.py
+  if [[ ! -f "$warmer" || ! -d "$SNAPSHOT" ]]; then
+    log "Shard warmer skipped: need $warmer and $SNAPSHOT"
+    return 0
+  fi
+  local warm_log
+  warm_log="$JIT_CACHE_DIR/logs/shard_warm-$(host_short)-$(date -u +%Y%m%dT%H%M%SZ).log"
+  mkdir -p "${warm_log%/*}"
+  nohup python3 "$warmer" "$CONTAINER_NAME" "$SNAPSHOT" --log "$warm_log" </dev/null >/dev/null 2>&1 &
+  log "Shard warmer pid $! -> $warm_log"
+}
+
 stop_local() {
   if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     log "Removing existing container $CONTAINER_NAME"
@@ -277,6 +340,14 @@ start_local() {
 
   local serve_model
   serve_model="$(resolve_model)"
+
+  if [[ "$JIT_CACHE" == 1 ]]; then
+    local jit_dir
+    jit_dir="$(jit_cache_host_dir)"
+    mkdir -p "$jit_dir"
+    log "JIT cache $jit_dir -> /jit-cache"
+    set_jit_args "$jit_dir"
+  fi
 
   local tok
   tok="$(token_env || true)"
@@ -363,6 +434,7 @@ start_local() {
     --ulimit memlock=-1:-1 \
     "${vol_args[@]}" \
     "${env_args[@]}" \
+    "${jit_args[@]}" \
     "$IMAGE" \
     "$serve_model" \
     --tensor-parallel-size "$TP" \
@@ -393,6 +465,7 @@ start_local() {
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
+  start_shard_warmer "$rank"
 }
 
 wait_ready() {
@@ -428,7 +501,7 @@ FORWARD_ENVS=(
   FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL SPEC
+  DRAFT_MODEL SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -468,6 +541,10 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
   printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
     "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+  # The real key is each node's own image ID; validate-only does not call docker.
+  set_jit_args "$JIT_CACHE_DIR/<image-id>"
+  printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"
+  printf '==> warm_shards=%s log_dir=%s\n' "$WARM_SHARDS" "$JIT_CACHE_DIR/logs"
   printf '==> worker command: %s' "$(worker_command)"
   echo
   if [[ "$ORCHESTRATE" == auto && "$(detect_role)" == head ]] && worker_ssh_ok; then
@@ -484,6 +561,9 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     check_image_parity
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
+    if [[ "$WARM_SHARDS" == all ]]; then
+      scp -q "$SCRIPT_DIR/kit/shard_warm.py" "${WORKER_HOST}:/tmp/glm53-shard_warm.py"
+    fi
     ssh "$WORKER_HOST" "$(worker_command)"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
