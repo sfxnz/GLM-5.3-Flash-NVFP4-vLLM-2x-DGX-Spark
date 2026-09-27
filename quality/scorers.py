@@ -77,8 +77,11 @@ def _to_float(s: str) -> float | None:
 
 
 def chartqa_correct(pred: str, labels: list[str]) -> bool:
-    """Relaxed accuracy: numbers within 5% relative, otherwise exact text (case-insensitive)."""
-    pred = strip_box(pred).strip().splitlines()[0].strip().rstrip(".") if strip_box(pred).strip() else ""
+    """Relaxed accuracy: numbers within 5% relative, otherwise exact text (case-insensitive).
+    A markdown-bold span on the first line is the answer ("**13**", "**82.5** billion")."""
+    pred = strip_box(pred).strip().splitlines()[0].strip() if strip_box(pred).strip() else ""
+    bold = re.search(r"\*\*(.+?)\*\*", pred)
+    pred = (bold.group(1) if bold else pred).strip().rstrip(".")
     for gold in labels:
         g, p = _to_float(gold), _to_float(pred)
         if g is not None and p is not None:
