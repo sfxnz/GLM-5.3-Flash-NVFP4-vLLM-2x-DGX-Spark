@@ -22,6 +22,11 @@ COPY patch_v13_census.py /tmp/patch_v13_census.py
 RUN python3 /tmp/patch_v13_census.py "$VLLM_ROOT" \
     && rm /tmp/patch_v13_census.py
 
+# Run-to-run fixed sparse-MLA index order (GLM53_DETERMINISTIC_MLA_INDEX).
+COPY patch_v13_determinism.py /tmp/patch_v13_determinism.py
+RUN python3 /tmp/patch_v13_determinism.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_determinism.py
+
 # Byte-compile exactly the files the patch layers wrote or created.
 RUN find "$VLLM_ROOT" -name '*.py' -newer /tmp/v13.stamp -print0 \
         | xargs -0 -r python3 -m compileall -q \
