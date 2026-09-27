@@ -108,6 +108,9 @@ KWARG_SHAPES = [
     ("effort_low", {"reasoning_effort": "low"}, True),
     ("effort_none", {"reasoning_effort": "none"}, False),
 ]
+# Below Max effort the template opens <think> but the model may close it at once on
+# this one-word question (live 2026-09-27: low and high both gave "</think>Paris").
+REASONING_OPTIONAL = {"effort_low"}
 COT_STARTS = ("okay", "ok,", "ok so", "let me", "let's", "hmm", "the user", "we need", "i need to",
               "first,", "alright", "wait", "so the question", "thinking")
 
@@ -220,14 +223,14 @@ def looks_like_cot(content: str) -> bool:
     return t.startswith(COT_STARTS) or "</think>" in t or "<think>" in t or len(t) > 300
 
 
-def judge_kwarg_cell(out: dict, think: bool) -> dict:
+def judge_kwarg_cell(out: dict, think: bool, reasoning_optional: bool = False) -> dict:
     content, reasoning = (out.get("content") or "").strip(), (out.get("reasoning") or "").strip()
     checks = {
         "content": bool(content),
         "answer": "paris" in content.lower(),
         "no_think_tags": "<think>" not in content and "</think>" not in content,
-        "reasoning": bool(reasoning) if think else not reasoning,
-        "no_cot": True if think else not looks_like_cot(content),
+        "reasoning": (bool(reasoning) or reasoning_optional) if think else not reasoning,
+        "no_cot": True if think and reasoning else not looks_like_cot(content),
         "finished": out.get("finish_reason") == "stop",
     }
     return {"pass": all(checks.values()), "checks": checks, "content": content[:120],
@@ -421,7 +424,7 @@ def run_kwargs(c: Client, default_thinking: bool) -> dict:
         name, extra, think, stream = job
         out = c.chat(KWARG_PROMPT, stream=stream, temperature=0, max_tokens=2048 if think else 128, **extra)
         return {"cell": f"{name}.{'stream' if stream else 'block'}", "thinking": think,
-                **judge_kwarg_cell(out, think)}
+                **judge_kwarg_cell(out, think, name in REASONING_OPTIONAL)}
 
     cells = pmap(one, jobs)
     return {"pass": all(x["pass"] for x in cells), "passed": sum(x["pass"] for x in cells),

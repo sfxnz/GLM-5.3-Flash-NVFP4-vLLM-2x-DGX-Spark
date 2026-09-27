@@ -73,7 +73,9 @@ What each component sends:
   `reasoning_effort: low`, `reasoning_effort: none`. A cell passes when
   content is non-empty and says Paris, has no `<think>` tags, finishes with
   `stop`, reasoning is non-empty exactly when thinking is expected, and with
-  thinking off the content does not open with chain-of-thought.
+  thinking off the content does not open with chain-of-thought. `effort_low`
+  may leave reasoning empty (the template opens `<think>`, and the model closes
+  it at once on this question); then its content is checked for chain-of-thought.
   **Known failure:** with today's `chat_template.jinja` the two `thinking: true`
   cells fail (QUAL-2: the parser treats `thinking` as on, the template ignores
   it, so the answer lands in `reasoning`). They pass once the template alias fix

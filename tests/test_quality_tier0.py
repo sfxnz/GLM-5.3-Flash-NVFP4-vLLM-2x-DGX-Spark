@@ -102,6 +102,13 @@ class JudgeTests(unittest.TestCase):
         on = {"content": "Paris", "reasoning": "France's capital is Paris.", "finish_reason": "stop"}
         self.assertTrue(tier0.judge_kwarg_cell(on, think=True)["pass"])
         self.assertFalse(tier0.judge_kwarg_cell(on, think=False)["pass"])
+        # effort low: <think> opened, model closed it at once (live 2026-09-27); allowed only there
+        closed = {"content": "Paris", "reasoning": "", "finish_reason": "stop"}
+        self.assertFalse(tier0.judge_kwarg_cell(closed, think=True)["pass"])
+        self.assertTrue(tier0.judge_kwarg_cell(closed, think=True, reasoning_optional=True)["pass"])
+        self.assertTrue(tier0.judge_kwarg_cell(on, think=True, reasoning_optional=True)["pass"])
+        # with no reasoning, content is still checked for chain-of-thought
+        self.assertFalse(tier0.judge_kwarg_cell(leak, think=True, reasoning_optional=True)["pass"])
 
     def test_utf8(self):
         rows = "\n".join(f"| {n} | {n * n} | {n ** 3} | {tier0.chinese_numeral(n)} |" for n in range(1, 41))
@@ -221,6 +228,20 @@ class ProbeTests(unittest.TestCase):
         sent = [b for p, b in self.s.requests if p == "/v1/chat/completions"]
         self.assertEqual(sum(1 for b in sent if b.get("stream")), 6)
         self.assertTrue(any("chat_template_kwargs" not in b and "reasoning_effort" not in b for b in sent))
+
+    def test_kwargs_matrix_effort_low_closes_thinking(self):
+        def chat(body):
+            out = probe_chat(body)
+            if body.get("reasoning_effort") == "low":
+                out["reasoning"] = ""
+            return out
+
+        s = FakeServe(chat)
+        try:
+            res = tier0.run_kwargs(common.Client(s.url), default_thinking=False)
+        finally:
+            s.close()
+        self.assertEqual((res["passed"], res["total"]), (12, 12), [x for x in res["cells"] if not x["pass"]])
 
     def test_utf8_tools_needle(self):
         self.assertTrue(tier0.run_utf8(self.c)["pass"])
