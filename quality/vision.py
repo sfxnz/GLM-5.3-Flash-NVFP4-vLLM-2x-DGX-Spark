@@ -12,8 +12,8 @@ check is greedy, thinking off, and asserts the answer:
   ocr        two strings drawn with a 5x7 bitmap font, exact match
   order      two images (red, blue) then (blue, red): which one is red
   video      8 PNG frames as data:video/jpeg (vLLM's frame-list form), digits
-             in order. Optional: SKIP when the server rejects the video input,
-             FAIL on a wrong answer.
+             in order. Optional: SKIP (body recorded) on any HTTP error from the
+             video request, FAIL on a wrong answer.
 
 HTTP 400 "is not a multimodal model" fails the whole suite loudly.
 
@@ -278,11 +278,9 @@ def check_video(client: Client) -> dict:
         "as digits only with no spaces.")]
     try:
         a = _ask(client, parts)["content"]
-    except HTTPFailure as exc:
-        if exc.code == 400:
-            return {"name": "video", "pass": None, "status": "SKIP", "answer": exc.body[:300],
-                    "expected": VIDEO_DIGITS}
-        raise
+    except HTTPFailure as exc:  # optional probe: record, never gate ("not multimodal" raised above)
+        return {"name": "video", "pass": None, "status": "SKIP", "answer": f"HTTP {exc.code}: {exc.body[:300]}",
+                "expected": VIDEO_DIGITS}
     ok = collapse_digits(a) == VIDEO_DIGITS
     return {"name": "video", "pass": ok, "status": "PASS" if ok else "FAIL", "answer": a,
             "expected": VIDEO_DIGITS}

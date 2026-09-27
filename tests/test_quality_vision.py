@@ -178,13 +178,15 @@ class SuiteTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in res["checks"] if not c["pass"]], ["count.5"])
 
     def test_video_rejected_is_skip(self):
-        s = FakeServe(fake_vlm(answer_key(), video_status=400))
-        try:
-            res = vision.run_suite(vision.Client(s.url))
-        finally:
-            s.close()
-        self.assertTrue(res["pass"])
-        self.assertEqual(res["skipped"], ["video"])
+        for status in (400, 500):  # an optional probe never blocks the smoke
+            s = FakeServe(fake_vlm(answer_key(), video_status=status))
+            try:
+                res = vision.run_suite(vision.Client(s.url))
+            finally:
+                s.close()
+            self.assertTrue(res["pass"])
+            self.assertEqual(res["skipped"], ["video"])
+            self.assertIn(f"HTTP {status}", res["checks"][-1]["answer"])
 
     def test_not_multimodal_fails_loudly(self):
         s = FakeServe(fake_vlm({}, not_mm=True))

@@ -98,7 +98,7 @@ Images are drawn in code and written as PNG with zlib + struct; no PIL.
 | `count.3`, `count.5` | number of black circles |
 | `ocr.*` | `7F3A91` and `K9P2X` from a 5x7 bitmap font, exact |
 | `order.*` | (red, blue) -> first; (blue, red) -> second (multi-image ordering) |
-| `video` | 8 PNG frames as `data:video/jpeg;base64,f1,f2,...` (vLLM's frame-list form), digits 3 8 1 6 in order; SKIP if the server answers HTTP 400 |
+| `video` | 8 PNG frames as `data:video/jpeg;base64,f1,f2,...` (vLLM's frame-list form), digits 3 8 1 6 in order; SKIP (reason recorded) on any HTTP error, so this optional probe never blocks the smoke |
 
 HTTP 400 `is not a multimodal model` fails the suite with that message.
 
