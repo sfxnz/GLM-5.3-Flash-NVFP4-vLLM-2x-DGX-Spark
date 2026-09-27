@@ -17,7 +17,12 @@ COPY patch_v13_fp8.py /tmp/patch_v13_fp8.py
 RUN python3 /tmp/patch_v13_fp8.py "$VLLM_ROOT" \
     && rm /tmp/patch_v13_fp8.py
 
-# Byte-compile exactly the files the two patch layers wrote or created.
+# Routed-expert census, measurement only (GLM53_EXPERT_CENSUS; tools/README.md).
+COPY patch_v13_census.py /tmp/patch_v13_census.py
+RUN python3 /tmp/patch_v13_census.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_census.py
+
+# Byte-compile exactly the files the patch layers wrote or created.
 RUN find "$VLLM_ROOT" -name '*.py' -newer /tmp/v13.stamp -print0 \
         | xargs -0 -r python3 -m compileall -q \
     && rm /tmp/v13.stamp
