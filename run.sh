@@ -561,7 +561,9 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     check_image_parity
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
-    scp -q "$SCRIPT_DIR/kit/shard_warm.py" "${WORKER_HOST}:/tmp/glm53-shard_warm.py"
+    if [[ "$WARM_SHARDS" == all ]]; then
+      scp -q "$SCRIPT_DIR/kit/shard_warm.py" "${WORKER_HOST}:/tmp/glm53-shard_warm.py"
+    fi
     ssh "$WORKER_HOST" "$(worker_command)"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
