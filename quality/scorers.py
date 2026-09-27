@@ -38,10 +38,12 @@ def mmlu_pro_extract(text: str, n_options: int = 10) -> str | None:
     """MMLU-Pro style: 'The answer is (X)', then 'Answer: X', then a lone letter."""
     text = strip_box(text)
     letters = "ABCDEFGHIJ"[:n_options]
-    for pat in (rf"answer is \(?([{letters}])\)?", rf"answer\s*[:：]\s*\**\(?([{letters}])\)?"):
-        hits = re.findall(pat, text, re.I)
+    # a bare letter must be uppercase and whole ("answer is a bit" is not A); "(b)" may be lowercase
+    letter = rf"(?:\(([{letters}{letters.lower()}])\)|([{letters}])\b)"
+    for pat in (rf"(?i:answer is) {letter}", rf"(?i:answer)\s*[:：]\s*\**{letter}"):
+        hits = re.findall(pat, text)
         if hits:
-            return hits[-1].upper()
+            return "".join(hits[-1]).upper()
     last = text.strip().splitlines()[-1].strip() if text.strip() else ""
     m = re.fullmatch(rf"\**\(?([{letters}])\)?\.?\**", last)
     return m.group(1) if m else None

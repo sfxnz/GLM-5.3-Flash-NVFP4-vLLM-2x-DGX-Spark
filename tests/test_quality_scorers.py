@@ -36,6 +36,11 @@ class LetterTests(unittest.TestCase):
         self.assertEqual(S.mmlu_pro_extract("I pick\nD"), "D")
         self.assertIsNone(S.mmlu_pro_extract("I am not sure"))
         self.assertIsNone(S.mmlu_pro_extract("The answer is (J)", n_options=4))
+        # a hedge word is not a letter; the lone final letter still counts
+        self.assertEqual(S.mmlu_pro_extract("the answer is a bit unclear; I would pick\nC"), "C")
+        self.assertIsNone(S.mmlu_pro_extract("the answer is a bit unclear"))
+        self.assertEqual(S.mmlu_pro_extract("The answer is a bit unclear. The answer is (e)."), "E")
+        self.assertEqual(S.mmlu_pro_extract("The answer is B."), "B")
 
     def test_mmmu(self):
         opts = ["Aurelia", "Matilda", "Hermione", "Juno"]
