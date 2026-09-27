@@ -76,6 +76,10 @@ JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # ahead) while rank 0 loads. 1 = head only (spark1 loads ~3x slower than
 # spark2), all = both nodes, 0 = off. Logs go to JIT_CACHE_DIR/logs/.
 WARM_SHARDS="${WARM_SHARDS:-1}"
+# LOGITS_FP32=1 runs the lm_head GEMM with fp32 output (bf16 inputs) for the
+# target and the DFlash2 drafter, via --hf-overrides text_config.head_dtype.
+# Needs the v13 image (docker/patch_v13_determinism.py). 0 until measured.
+LOGITS_FP32="${LOGITS_FP32:-0}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -165,6 +169,17 @@ if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
 fi
 if [[ "$WARM_SHARDS" != 0 && "$WARM_SHARDS" != 1 && "$WARM_SHARDS" != all ]]; then
   echo "WARM_SHARDS=$WARM_SHARDS: want 0, 1 (head only) or all." >&2
+  exit 1
+fi
+if [[ "$LOGITS_FP32" != 0 && "$LOGITS_FP32" != 1 ]]; then
+  echo "LOGITS_FP32=$LOGITS_FP32: want exactly 0 or 1." >&2
+  exit 1
+fi
+# v11's LogitsProcessor takes a head_dtype override only on an
+# UnquantizedEmbeddingMethod lm_head; ModelOpt's excluded lm_head is
+# UnquantizedLinearMethod, so v11 raises at the first logits.
+if [[ "$LOGITS_FP32" == 1 && "$IMAGE" == glm53-sm121-v11 ]]; then
+  echo "LOGITS_FP32=1 needs IMAGE=glm53-sm121-v13 (docker/patch_v13_determinism.py). On $IMAGE the fp32 lm_head raises ValueError at the first logits: v11 accepts head_dtype only for an UnquantizedEmbeddingMethod lm_head, and ModelOpt gives this one UnquantizedLinearMethod." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
@@ -439,6 +454,14 @@ start_local() {
   if [[ "$MAX_NEW_TOKENS" != 0 ]]; then
     gen_args+=(--override-generation-config "{\"max_new_tokens\": $MAX_NEW_TOKENS}")
   fi
+  # Nested on purpose: the language model's LogitsProcessor reads its
+  # ModelConfig built from text_config, and Glm5NextConfig mirrors text_config
+  # keys to the top level, where the DFlash2 drafter's LogitsProcessor reads it.
+  # A flat {"head_dtype": ...} would reach the drafter only.
+  local head_args=()
+  if [[ "$LOGITS_FP32" == 1 ]]; then
+    head_args+=(--hf-overrides '{"text_config":{"head_dtype":"float32"}}')
+  fi
 
   log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
   docker run -d \
@@ -481,6 +504,7 @@ start_local() {
     "${template_args[@]}" \
     "${mm_args[@]}" \
     "${gen_args[@]}" \
+    "${head_args[@]}" \
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
@@ -520,7 +544,7 @@ FORWARD_ENVS=(
   FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
+  DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS LOGITS_FP32
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -557,9 +581,9 @@ check_image_parity() {
 }
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s draft_rev=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s draft_rev=%s moe=%s linear=%s logits_fp32=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$DRAFT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+    "$SNAPSHOT_REV" "$DRAFT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$LOGITS_FP32" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
   # The real key is each node's own image ID; validate-only does not call docker.
   set_jit_args "$JIT_CACHE_DIR/<image-id>"
   printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"

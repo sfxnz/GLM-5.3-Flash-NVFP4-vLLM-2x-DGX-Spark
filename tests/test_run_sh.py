@@ -240,6 +240,37 @@ class WarmShards(RunShCase):
         self.assertIn("WARM_SHARDS=all", shell_words(worker_command(self.run_sh(WARM_SHARDS="all").stdout)))
 
 
+class LogitsFp32(RunShCase):
+    V13 = {"IMAGE": "glm53-sm121-v13"}
+
+    def test_default_is_0(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        self.assertIn(" logits_fp32=0 ", proc.stdout)
+        self.assertIn("LOGITS_FP32=0", shell_words(worker_command(proc.stdout)))
+
+    def test_1_is_forwarded_and_the_worker_resolves_the_same(self):
+        head = self.run_sh(LOGITS_FP32="1", **self.V13)
+        self.assertAccepted(head)
+        self.assertIn(" logits_fp32=1 ", head.stdout)
+        words = shell_words(worker_command(head.stdout))
+        self.assertIn("LOGITS_FP32=1", words)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "VALIDATE_ONLY": "1",
+               **dict(w.split("=", 1) for w in words[1:-2])}
+        worker = subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertAccepted(worker)
+        self.assertEqual(head.stdout, worker.stdout)
+
+    def test_only_0_or_1(self):
+        for bad in ("2", "yes", "01", "true"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(LOGITS_FP32=bad, **self.V13), f"LOGITS_FP32={bad}: want exactly 0 or 1")
+
+    def test_1_refused_on_the_v11_image(self):
+        self.assertRefused(self.run_sh(LOGITS_FP32="1"), "LOGITS_FP32=1 needs IMAGE=glm53-sm121-v13")
+        self.assertAccepted(self.run_sh(LOGITS_FP32="0"))
+
+
 class StubbedLaunch(RunShCase):
     """The real launch path (no VALIDATE_ONLY) with docker, sudo and curl stubbed.
 
@@ -321,6 +352,17 @@ class StubbedLaunch(RunShCase):
         self.assertEqual(calls, [f"hf download incoai/GLM-5.3-Flash-DFlash2 --revision {rev}"])
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{rev}", run)
+
+    def test_logits_fp32_passes_the_nested_head_dtype_override(self):
+        want = '--hf-overrides {"text_config":{"head_dtype":"float32"}} '
+        for value, present in (("0", False), ("1", True)):
+            with self.subTest(LOGITS_FP32=value):
+                self.log.unlink(missing_ok=True)
+                proc = self.launch(LOGITS_FP32=value, JIT_CACHE="0", WARM_SHARDS="0")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
+                self.assertEqual(want in run, present, run)
+                self.assertEqual("--hf-overrides" in run, present, run)
 
     def test_worker_warms_only_with_all(self):
         proc = self.launch(ROLE="worker")

@@ -75,6 +75,9 @@ serve:
     JIT_CACHE: 1
     JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
     WARM_SHARDS: 1
+    # 1 = fp32-output lm_head (target and DFlash2 drafter); needs the v13 image.
+    # Stays 0 until the A/A and bench measure it.
+    LOGITS_FP32: 0
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
