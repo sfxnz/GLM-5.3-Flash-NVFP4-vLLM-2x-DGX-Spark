@@ -5,10 +5,13 @@
 GLM53_V11_SRC is the directory that holds the vllm/ package of glm53-sm121-v11
 (read-only; the tests patch temporary copies). Without it the patch-apply tests
 skip. The mask, remap and width tests run the shipped module on torch CPU
-tensors and skip without torch. The end-to-end test also needs triton: it runs
-v11's own input-layout and rejection-sampling kernels under the Triton CPU
-interpreter (TRITON_INTERPRET=1) and checks that masking at k=7 emits exactly
-the tokens that speculation with k'=m emits.
+tensors and skip without torch. The two interpreter tests also need triton and
+run v11's own kernels under the Triton CPU interpreter (TRITON_INTERPRET=1):
+the end-to-end test runs the input-layout and rejection-sampling kernels and
+checks that masking at k=7 emits exactly the tokens that speculation with k'=m
+emits; the kpool-ring test runs the indexer's K-pool update kernel over several
+verify steps and checks that the tail ring and every committed pool entry
+equal k'=m's.
 """
 
 import ast
@@ -34,6 +37,8 @@ HAVE_TRITON = importlib.util.find_spec("triton") is not None
 ROUTER = "model_executor/layers/fused_moe/router/base_router.py"
 SAMPLER = "v1/worker/gpu/spec_decode/rejection_sampler.py"
 RUNNER = "v1/worker/gpu/model_runner.py"
+INDEXER = "v1/attention/backends/mla/indexer.py"
+INDEXER_MOD = "vllm.v1.attention.backends.mla.indexer"
 MODULE = "v1/worker/gpu/spec_decode/glm53_adaptive_verify.py"
 K = 7  # recipe default: DFlash2-7
 
@@ -63,6 +68,30 @@ class FakeLogger:
         self.lines.append(msg % args)
 
 
+def top_level(src: str, names: set[str]) -> str:
+    """The top-level defs and annotated assignments of `src` named in `names`,
+    as a module that imports torch (the indexer's other imports need a GPU
+    build of vllm)."""
+    keep = [
+        node
+        for node in ast.parse(src).body
+        if (isinstance(node, ast.FunctionDef) and node.name in names)
+        or (isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) in names)
+    ]
+    assert len(keep) == len(names), [getattr(n, "name", None) for n in keep]
+    return "import torch\n\n\n" + "\n\n\n".join(ast.get_source_segment(src, n) for n in keep) + "\n"
+
+
+TAIL_NAMES = {"compute_kpool_tail_slot_mapping", "GLM53_TAIL_STASH_MASK"}
+
+
+def patched_tail_slot_source() -> str:
+    """compute_kpool_tail_slot_mapping and its hook, exactly as the patch writes them."""
+    src, applied = patch.plan_edits((SRC / INDEXER).read_text(), patch.FILE_EDITS[INDEXER])
+    assert applied == len(patch.FILE_EDITS[INDEXER])
+    return top_level(src, TAIL_NAMES)
+
+
 def module_namespace() -> dict:
     """Exec the shipped module with vllm.logger stubbed out."""
     tree = ast.parse(patch.MODULE)
@@ -83,12 +112,12 @@ def module_namespace() -> dict:
 # ---------------------------------------------------------------------------
 @unittest.skipUnless(HAVE_SRC, "set GLM53_V11_SRC to the dir holding the v11 vllm/")
 class ApplyTests(unittest.TestCase):
-    """The patch reads vllm/__init__.py and three files; census reads the runner."""
+    """The patch reads vllm/__init__.py and four files; census reads the runner."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="v13verify-"))
         self.root = self.tmp / "vllm"
-        for rel in ("__init__.py", ROUTER, SAMPLER, RUNNER):
+        for rel in ("__init__.py", ROUTER, SAMPLER, RUNNER, INDEXER):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(SRC / rel, self.root / rel)
 
@@ -118,7 +147,7 @@ class ApplyTests(unittest.TestCase):
         after = tree_digest(self.root)
         self.assertEqual(
             {k for k in after if before.get(k) != after[k]},
-            {ROUTER, SAMPLER, RUNNER, MODULE},
+            {ROUTER, SAMPLER, RUNNER, INDEXER, MODULE},
         )
         second = self.run_patch()
         self.assertEqual(second.returncode, 0, second.stderr)
@@ -143,6 +172,22 @@ class ApplyTests(unittest.TestCase):
             self.assertEqual(text.count("self._glm53_census."), 2)
             self.assertEqual(text.count("self._glm53_av."), 2)
 
+    def test_misc_and_verify_edit_the_indexer_in_either_order(self):
+        """Both edit indexer.py; the Dockerfile runs misc first."""
+        misc = load("patch_v13_misc", HERE / "patch_v13_misc.py")
+        src = (SRC / INDEXER).read_text()
+        results = []
+        for order in ((misc, patch), (patch, misc)):
+            text = src
+            for mod in order:
+                text, applied = mod.plan_edits(text, mod.FILE_EDITS[INDEXER])
+                self.assertEqual(applied, len(mod.FILE_EDITS[INDEXER]))
+            for mod in order:
+                self.assertEqual(mod.plan_edits(text, mod.FILE_EDITS[INDEXER])[1], 0)
+            results.append(text)
+        self.assertEqual(results[0], results[1])
+        ast.parse(results[0])
+
     def test_refuses_on_drift_and_writes_nothing(self):
         path = self.root / SAMPLER
         path.write_text(path.read_text().replace("sampled, num_sampled = rejection_sample(", "x = 1"))
@@ -154,7 +199,7 @@ class ApplyTests(unittest.TestCase):
 
     def test_touched_files_compile(self):
         self.assertEqual(self.run_patch().returncode, 0)
-        for rel in (ROUTER, SAMPLER, RUNNER, MODULE):
+        for rel in (ROUTER, SAMPLER, RUNNER, INDEXER, MODULE):
             py_compile.compile(
                 str(self.root / rel),
                 cfile=str(self.tmp / "pyc" / (rel.replace("/", "_") + "c")),
@@ -179,6 +224,17 @@ class ApplyTests(unittest.TestCase):
         router = (self.root / ROUTER).read_text()
         self.assertEqual(router.count("self.glm53_remap("), 1)
         self.assertLess(router.index("self.glm53_remap("), router.index("self.capture_fn(topk_ids)"))
+        # The tail-slot mask runs after v11 fills the slots, inside the one
+        # function the tail metadata builder calls.
+        indexer = (self.root / INDEXER).read_text()
+        self.assertEqual(indexer.count("GLM53_TAIL_STASH_MASK[:num_actual_tokens]"), 1)
+        self.assertEqual(indexer.count("if GLM53_TAIL_STASH_MASK is not None:\n"), 1)
+        fn = indexer[indexer.index("def compute_kpool_tail_slot_mapping(") :]
+        fn = fn[: fn.index("\nclass ")]
+        self.assertLess(
+            fn.index("out[:num_actual_tokens] = own_block"),
+            fn.index("if GLM53_TAIL_STASH_MASK is not None:"),
+        )
 
 
 class PatchStaticTests(unittest.TestCase):
@@ -408,6 +464,7 @@ class ModuleLogicTests(unittest.TestCase):
             "vllm.v1.worker.gpu.spec_decode.rejection_sampler": types.SimpleNamespace(
                 RejectionSampler=RejectionSampler
             ),
+            INDEXER_MOD: types.SimpleNamespace(GLM53_TAIL_STASH_MASK=None),
         }
         return runner, layers, modules
 
@@ -421,20 +478,24 @@ class ModuleLogicTests(unittest.TestCase):
             return self.env["maybe_create_adaptive_verify"](runner)
 
     def test_off_when_unset(self):
-        runner, layers, _ = self.fakes()
-        with mock.patch.dict(os.environ, {"GLM53_ADAPTIVE_VERIFY": "0"}):
+        runner, layers, modules = self.fakes()
+        with mock.patch.dict(os.environ, {"GLM53_ADAPTIVE_VERIFY": "0"}), mock.patch.dict(
+            sys.modules, modules
+        ):
             self.assertIsNone(self.env["maybe_create_adaptive_verify"](runner))
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(self.env["maybe_create_adaptive_verify"](None))
         self.assertTrue(all(lay.router.glm53_remap is None for lay in layers))
         self.assertIsNone(runner.rejection_sampler.glm53_mask_drafts)
+        self.assertIsNone(modules[INDEXER_MOD].GLM53_TAIL_STASH_MASK)
 
-    def test_on_binds_every_router_and_the_sampler(self):
+    def test_on_binds_every_router_the_sampler_and_the_tail_slots(self):
         runner, layers, modules = self.fakes()
         av = self.create(runner, modules)
         self.assertEqual((av.tau, av.cap), (0.1, K))
         self.assertTrue(all(lay.router.glm53_remap == av.remap for lay in layers))
         self.assertEqual(runner.rejection_sampler.glm53_mask_drafts, av.mask_drafts)
+        self.assertIs(modules[INDEXER_MOD].GLM53_TAIL_STASH_MASK, av.masked)
         self.assertIn("tau=0.1 max=7 (k=7)", self.env["LOG"].lines[-1])
         self.assertIn("in 3 MoE layers", self.env["LOG"].lines[-1])
         runner, _, modules = self.fakes()
@@ -461,6 +522,7 @@ class ModuleLogicTests(unittest.TestCase):
             vars(runner.parallel_config).update(par)
             with self.assertRaises(ValueError, msg=(par, env)):
                 self.create(runner, modules, **env)
+            self.assertIsNone(modules[INDEXER_MOD].GLM53_TAIL_STASH_MASK)
         runner, layers, modules = self.fakes()
         layers[1]._quant_method.is_monolithic = True
         with self.assertRaises(ValueError):
@@ -477,6 +539,53 @@ class ModuleLogicTests(unittest.TestCase):
         runner.rejection_sampler = type("Custom", (cls,), {})()  # might override _verify
         with self.assertRaises(ValueError):
             self.create(runner, modules)
+
+
+@unittest.skipUnless(HAVE_SRC and HAVE_TORCH, "needs GLM53_V11_SRC and torch")
+class TailSlotTests(unittest.TestCase):
+    """compute_kpool_tail_slot_mapping as the patch writes it, against v11's."""
+
+    def setUp(self):
+        import torch
+
+        self.torch = torch
+        self.v11, self.v13 = {}, {}
+        v11_src = top_level((SRC / INDEXER).read_text(), {"compute_kpool_tail_slot_mapping"})
+        exec(compile(v11_src, INDEXER, "exec"), self.v11)  # noqa: S102
+        exec(compile(patched_tail_slot_source(), INDEXER, "exec"), self.v13)  # noqa: S102
+        self.av = module_namespace()["AdaptiveVerify"](0.0, K, None, 4, 40, "cpu")
+
+    def slots(self, env, num_actual_tokens):
+        """c=2 verify (tail blocks 5 and 7) + a 5-token prefill chunk (block 9)
+        + 3 padding rows, the layout a FULL-graph metadata build sees."""
+        torch = self.torch
+        pos = [*range(100, 108), *range(37, 45), *range(10, 15), 0, 0, 0]
+        return env["compute_kpool_tail_slot_mapping"](
+            torch.arange(1000, 1028),  # generic slots; rows past the tokens stay
+            torch.tensor([[5, 0], [7, 0], [9, 0]], dtype=torch.int32),
+            torch.tensor([0, 8, 16, 21], dtype=torch.int32),
+            torch.tensor(pos),
+            num_actual_tokens,
+            3,
+            4,
+        )
+
+    def test_off_is_v11(self):
+        for n in (0, 21, 24):
+            self.assertTrue(self.torch.equal(self.slots(self.v13, n), self.slots(self.v11, n)))
+
+    def test_masked_rows_get_no_tail_slot(self):
+        torch, av = self.torch, self.av
+        av.verify_len[torch.tensor([2, 0])] = torch.tensor([3, 1], dtype=torch.int32)
+        av.prepare(synthetic_batch(torch, [(2, 8, 8), (0, 8, 8), (1, 5, 1)], pad=3))
+        self.v13["GLM53_TAIL_STASH_MASK"] = av.masked
+        want = self.slots(self.v11, 24)
+        want[[4, 5, 6, 7, 10, 11, 12, 13, 14, 15]] = -1  # local_pos > m: 3, then 1
+        self.assertTrue(torch.equal(self.slots(self.v13, 24), want))
+        self.assertTrue(torch.equal(self.slots(self.v13, 0), self.slots(self.v11, 0)))
+        # The next step's prepare() clears the rows: a prefill-only batch is v11's.
+        av.prepare(synthetic_batch(torch, [(1, 24, 1)]))
+        self.assertTrue(torch.equal(self.slots(self.v13, 24), self.slots(self.v11, 24)))
 
 
 # ---------------------------------------------------------------------------
@@ -717,6 +826,178 @@ class EndToEndInterpreterTest(unittest.TestCase):
             (tmp / "vllm" / MODULE).write_text(patch.MODULE)
             res = subprocess.run(
                 [sys.executable, "-c", E2E_SCRIPT, str(tmp), str(self.TRIALS)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "TRITON_INTERPRET": "1"},
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            print("\n  " + res.stdout.strip().replace("\n", "\n  "))
+
+
+# ---------------------------------------------------------------------------
+# Across steps: v11's indexer K-pool update kernel (Triton CPU interpreter)
+# ---------------------------------------------------------------------------
+KPOOL_SCRIPT = textwrap.dedent(
+    r'''
+    import importlib.util
+    import random
+    import sys
+    import zlib
+    from collections import Counter
+    from types import SimpleNamespace
+
+    import torch
+
+    root = sys.argv[1]
+    sys.path.insert(0, root)
+    import glm53_tail_slots as tail  # compute_kpool_tail_slot_mapping as patched
+    from vllm.v1.worker.gpu.spec_decode.glm53_adaptive_verify import AdaptiveVerify
+
+    spec = importlib.util.spec_from_file_location("kpool_compress", f"{root}/kpool_compress.py")
+    kc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(kc)
+
+    K, KPOOL, D, PAGE = 7, 4, 128, 64  # index_kpool = 4 in the pinned 09b04e5 config
+    STATES = [3, 1]  # request b: req_state STATES[b], tail block b + 1, pool page b
+    R = len(STATES)
+    APE = torch.randn(KPOOL, D, generator=torch.Generator().manual_seed(7))
+
+
+    def vec(key):
+        """A row's indexer K and gate: a function of the inputs the row saw."""
+        g = torch.Generator().manual_seed(zlib.crc32(repr(key).encode()))
+        return torch.randn(2, D, generator=g).to(torch.bfloat16)
+
+
+    def tail_slots(rows, mask):
+        """The tail slots the kpool tail metadata builder hands the indexer."""
+        qsl = [0]
+        for r in rows:
+            qsl.append(qsl[-1] + len(r))
+        tail.GLM53_TAIL_STASH_MASK = mask
+        flat = tail.compute_kpool_tail_slot_mapping(
+            torch.zeros(qsl[-1], dtype=torch.int64),
+            torch.arange(1, R + 1, dtype=torch.int32).view(R, 1),
+            torch.tensor(qsl, dtype=torch.int32),
+            torch.tensor([p for r in rows for p, _ in r]),
+            qsl[-1],
+            R,
+            KPOOL,
+        )
+        return [flat[qsl[b] : qsl[b + 1]].tolist() for b in range(R)]
+
+
+    def launch(kv, ring, rows, mask=None):
+        """One indexer decode update; short requests padded with -1, as the
+        indexer's non-uniform decode scatter pads them."""
+        n = max(len(r) for r in rows)
+        key = torch.zeros(R, n, 2, D, dtype=torch.bfloat16)
+        pos, slot, tslot = (torch.full((R, n), -1, dtype=torch.int32) for _ in range(3))
+        for b, (req_rows, req_tslots) in enumerate(zip(rows, tail_slots(rows, mask))):
+            for t, ((p, k), ts) in enumerate(zip(req_rows, req_tslots)):
+                key[b, t], pos[b, t], tslot[b, t] = vec(k), p, ts
+                if p % KPOOL == KPOOL - 1:  # pool-granular slot: the completing row
+                    slot[b, t] = b * PAGE + p // KPOOL
+        kc.kpool_decode_update_and_maybe_write_cache_batched(
+            kv, ring, tslot, key[:, :, 0].contiguous(), key[:, :, 1].contiguous(),
+            APE, slot, pos, KPOOL, D, round_scale=True,
+        )
+
+
+    def pool(kv, b, q):
+        """Pool q of request b: its fp8 K and its fp32 scale bytes."""
+        flat = kv[b].reshape(-1)
+        return torch.cat([flat[q * D : (q + 1) * D], flat[PAGE * D + 4 * q : PAGE * D + 4 * q + 4]])
+
+
+    def run(hist, plan, mode, kv, ring):
+        """Verify steps from anchors at `hist`. mode: "k'=m" runs rows 0..m;
+        "masked" runs rows 0..k with prepare()'s mask on the tail slots;
+        "unsuppressed" runs rows 0..k and lets masked rows stash, as the
+        first version of the patch did."""
+        P = list(hist)
+        av = AdaptiveVerify(0.0, K, None, 4, R * (K + 1), "cpu")
+        for s, step in enumerate(plan):
+            rows = []
+            for b, (m, a) in enumerate(step):
+                last = m if mode == "k'=m" else K
+                rows.append([
+                    (P[b] + j, ("true", b, P[b] + j) if j <= a else
+                     ("draft" if j <= m else "masked", s, b, P[b] + j))
+                    for j in range(last + 1)
+                ])
+                av.verify_len[STATES[b]] = m
+            n = R * (K + 1)
+            av.prepare(SimpleNamespace(
+                num_tokens_after_padding=n,
+                num_draft_tokens=R * K,
+                logits_indices=torch.arange(n),
+                expanded_local_pos=torch.arange(K + 1).repeat(R),
+                expanded_idx_mapping=torch.tensor(STATES).repeat_interleave(K + 1),
+            ))
+            launch(kv, ring, rows, av.masked if mode == "masked" else None)
+            P = [p + a + 1 for p, (_, a) in zip(P, step)]
+        return P
+
+
+    rng = random.Random(int(sys.argv[2]))
+    seen = Counter()
+    for trial in range(int(sys.argv[3])):
+        hist = [rng.randint(6, 13) for _ in range(R)]
+        plan = []
+        for _ in range(4):
+            step = []
+            for _ in range(R):
+                m = rng.randint(1, K)
+                step.append((m, min(m, rng.choice([0, 0, 1, 1, 2, 3, 5, 7]))))
+            plan.append(step)
+        # History: plain one-token decode of positions 0..hist-1. Ring block 0
+        # belongs to no request here; a masked completing row reads it.
+        kv0 = torch.zeros(R, PAGE, D + 4, dtype=torch.uint8)
+        ring0 = torch.zeros(R + 1, 2, KPOOL, D, dtype=torch.bfloat16)
+        ring0[0] = vec("another request").view(2, 1, D)
+        for p in range(max(hist)):
+            launch(kv0, ring0, [[(p, ("true", b, p))] if p < hist[b] else [] for b in range(R)])
+        out = {}
+        for mode in ("k'=m", "masked", "unsuppressed"):
+            kv, ring = kv0.clone(), ring0.clone()
+            out[mode] = (run(hist, plan, mode, kv, ring), kv, ring)
+        ends, ref_kv, ref_ring = out["k'=m"]
+        for mode in ("masked", "unsuppressed"):
+            _, kv, ring = out[mode]
+            seen[mode, "ring differs"] += not torch.equal(ring, ref_ring)
+            for b in range(R):
+                # Pools that end at or after the first anchor and are committed.
+                for q in range(hist[b] // KPOOL, ends[b] // KPOOL):
+                    seen[mode, "committed pools"] += 1
+                    seen[mode, "pool differs"] += not torch.equal(pool(kv, b, q), pool(ref_kv, b, q))
+    for key in sorted(seen):
+        print("%-13s %-16s %d" % (*key, seen[key]))
+    assert seen["masked", "ring differs"] == 0 and seen["masked", "pool differs"] == 0
+    assert seen["unsuppressed", "pool differs"] > 0, "the check cannot see unsuppressed stashes"
+    print("masked k=7 leaves the tail ring and every committed pool as k'=m does")
+    '''
+)
+
+
+@unittest.skipUnless(
+    HAVE_SRC and HAVE_TORCH and HAVE_TRITON, "needs GLM53_V11_SRC, torch, triton"
+)
+class KpoolTailRingInterpreterTest(unittest.TestCase):
+    TRIALS = 16
+
+    def test_masked_rows_leave_the_indexer_state_of_k_prime(self):
+        with tempfile.TemporaryDirectory(prefix="v13verify-kpool-") as tmp:
+            tmp = Path(tmp)
+            for rel, text in STUBS.items():
+                (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+                (tmp / rel).write_text(text)
+            (tmp / "vllm" / MODULE).write_text(patch.MODULE)
+            (tmp / "glm53_tail_slots.py").write_text(patched_tail_slot_source())
+            shutil.copy2(SRC / "models/glm5next/nvidia/ops/kpool_compress.py", tmp)
+            res = subprocess.run(
+                [sys.executable, "-c", KPOOL_SCRIPT, str(tmp), "0", str(self.TRIALS)],
                 capture_output=True,
                 text=True,
                 check=False,

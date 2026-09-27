@@ -19,7 +19,8 @@ Every edit is an exact-substring replace. An edit whose replacement text is
 already present counts as applied (so reruns are no-ops); an edit whose anchor
 does not occur exactly once refuses the whole run before anything is written.
 The anchors are independent of patch_v13_census.py, which also edits the V2
-model runner, so the two apply in either order.
+model runner, and of patch_v13_misc.py, which also edits the MLA indexer
+backend, so each pair applies in either order.
 """
 
 import ast
@@ -41,7 +42,7 @@ GLM53_ADAPTIVE_VERIFY_TAU (default 0.1, 0 = off), clamped to
 
 Shapes never change: a request still runs its 1 + n verify rows (n <= k
 drafts). Row j (j = 0 the anchor, j = i the draft d_i) is masked when j > m.
-One predicate, local_pos > verify_len[req_state], drives both halves:
+One predicate, local_pos > verify_len[req_state], drives all three parts:
 
   rejection sampler  a masked row's draft id becomes -1, which v11's kernel
                      always rejects (greedy stores the argmax of the row
@@ -50,15 +51,20 @@ One predicate, local_pos > verify_len[req_state], drives both halves:
                      emits.
   routed MoE         a masked row takes its anchor row's top-k ids with
                      weight 0, so it reads no expert the live rows do not.
+  kpool tail ring    a masked row's tail slot becomes -1, so it does not
+                     stash into the pos % index_kpool ring, where it would
+                     overwrite the slot of a committed position.
 
 The sampler reads rows 0..m only, and those rows depend on inputs 0..m only.
 docker/README-v13.md has the full argument.
 
 CUDA graphs: prepare() writes the persistent masked/anchor buffers before the
-forward, outside any graph; remap() runs inside the graphs on fixed shapes;
-record() runs after the draft. No step syncs the host.
+forward and before the attention metadata build, outside any graph; remap()
+runs inside the graphs on fixed shapes; the tail-slot mask runs in the eager
+metadata build; record() runs after the draft. No step syncs the host.
 """
 
+import importlib
 import os
 
 import torch
@@ -204,6 +210,8 @@ def maybe_create_adaptive_verify(runner) -> AdaptiveVerify | None:
     for layer in layers:
         layer.router.glm53_remap = state.remap
     runner.rejection_sampler.glm53_mask_drafts = state.mask_drafts
+    mla_indexer = importlib.import_module("vllm.v1.attention.backends.mla.indexer")
+    mla_indexer.GLM53_TAIL_STASH_MASK = state.masked
     logger.info(
         "GLM53_ADAPTIVE_VERIFY: tau=%g max=%d (k=%d); masked verify rows reuse "
         "their anchor's experts in %d MoE layers",
@@ -327,10 +335,47 @@ RUNNER_EDITS = [
     ),
 ]
 
+# --------------------------------------------------------------------------
+# Tail-ring stash: v1/attention/backends/mla/indexer.py (kpool tail group)
+# --------------------------------------------------------------------------
+INDEXER_EDITS = [
+    (
+        "indexer.py: tail-stash mask attribute",
+        """def compute_kpool_tail_slot_mapping(
+    slot_mapping: torch.Tensor,
+""",
+        """# GLM53_ADAPTIVE_VERIFY (v13): masked-row buffer bound by
+# glm53_adaptive_verify, else None.
+GLM53_TAIL_STASH_MASK: torch.Tensor | None = None
+
+
+def compute_kpool_tail_slot_mapping(
+    slot_mapping: torch.Tensor,
+""",
+    ),
+    (
+        "indexer.py: masked verify rows skip the tail-ring stash",
+        """    out[:num_actual_tokens] = own_block * kpool + torch.remainder(pos, kpool)
+    return out
+""",
+        """    out[:num_actual_tokens] = own_block * kpool + torch.remainder(pos, kpool)
+    if GLM53_TAIL_STASH_MASK is not None:
+        # GLM53_ADAPTIVE_VERIFY (v13): a masked verify row gets tail slot -1,
+        # so the kernel skips its stash into the pos % kpool ring, where it
+        # would overwrite the slot of a committed position in the open pool.
+        out[:num_actual_tokens].masked_fill_(
+            GLM53_TAIL_STASH_MASK[:num_actual_tokens], -1
+        )
+    return out
+""",
+    ),
+]
+
 FILE_EDITS = {
     "model_executor/layers/fused_moe/router/base_router.py": ROUTER_EDITS,
     "v1/worker/gpu/spec_decode/rejection_sampler.py": SAMPLER_EDITS,
     "v1/worker/gpu/model_runner.py": RUNNER_EDITS,
+    "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
 }
 
 NEW_FILES = {
