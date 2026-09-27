@@ -35,10 +35,13 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 ```bash
 python3 kit/render.py --check
-python3 -m unittest discover -s tests      # CPU: VALIDATE_ONLY guards, worker forwarding, template kwargs + Hub parity
+python3 -m unittest discover -s tests      # CPU: VALIDATE_ONLY guards, worker forwarding, JIT cache + shard warmer, template kwargs + Hub parity
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py   # v13 patches; the fp8 test reads the same var
 python3 bench_decode.py                    # published score: prose, c=1 and 2, after serve is up
 python3 smoke_vision.py                    # must not return HTTP 400 "is not a multimodal model"
 ```
+
+After a boot with `JIT_CACHE=1`, `~/projects/data/glm53-jit-cache/<image id>/` is non-empty on both nodes, and a second boot on the same image runs no FlashInfer / DeepGEMM nvcc or ptxas. Output must stay byte-identical with the cache on and off. With `WARM_SHARDS=1`, the head's `~/projects/data/glm53-jit-cache/logs/shard_warm-*.log` shows 32 `WILLNEED` lines and ends with `exit: advised 32 shard(s)`.
 
 Thinking-off smoke must not start `content` with chain-of-thought. Greedy count stays lossless (200 consecutive integers with thinking off). Published decode cells on this image are the LibertAIDAI pin; the nvidia pack is unmeasured until an exclusive TP=2 slot.
 
