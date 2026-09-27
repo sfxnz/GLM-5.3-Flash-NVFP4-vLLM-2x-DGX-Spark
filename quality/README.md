@@ -23,8 +23,10 @@ JSONL and summaries, `compare_tier1.py --json`) into `evidence/<run>/`.
 python3 quality/tier0.py record --name libertai-caca4e6
 # after each change:
 python3 quality/tier0.py compare --ref libertai-caca4e6
-# weight-quantization stages add the floors:
+# weight-quantization stages widen the nll gates around the reference's A/A:
 python3 quality/tier0.py compare --ref bf16-attn --stage fp8     # or nvfp4
+# the PLAN's fixed floors instead (they cannot pass on this serve, see below):
+python3 quality/tier0.py compare --ref bf16-attn --stage fp8 --stage-absolute
 ```
 
 `record` captures the logit reference and greedy outputs twice, so the
@@ -37,10 +39,10 @@ lengths. `--no-video` drops the video probe.
 
 | Criterion | Pass rule |
 |---|---|
-| `nll.delta` | \|mean NLL - ref\| <= max(3 sigma, 0.005) nats/token, sigma = the reference's rerun \|delta\| |
-| `nll.top1_rerun` | top-1 agreement >= the reference's rerun agreement - 0.5 points |
-| `nll.top1_stage` | `--stage fp8`: >= 99%; `--stage nvfp4`: >= 98% |
-| `nll.kl_stage` | `--stage fp8`: mean top-20 KL <= 1e-3; `nvfp4`: <= 3e-3 |
+| `nll.delta` | \|mean NLL - ref\| <= max(3 sigma, floor) nats/token, sigma = the reference's rerun \|delta\|; floor 0.005 (`--stage nvfp4`: 0.01) |
+| `nll.top1_rerun` | top-1 agreement >= the reference's rerun agreement - 0.5 points (no `--stage`, or `--stage-absolute`) |
+| `nll.top1_stage` | top-1 agreement >= the reference's rerun agreement - 0.5 points (`fp8`) or - 1.5 points (`nvfp4`); replaces `nll.top1_rerun` |
+| `nll.kl_stage` | mean top-20 KL <= the reference's rerun KL + 1e-3 (`fp8`) or + 3e-3 (`nvfp4`) |
 | `greedy.hazard` | per-token divergence hazard vs the reference's first run <= 2 x max(ref A/A hazard, 0.005) |
 | `count` | thinking off, the integers are exactly 1..200 |
 | `kwargs.core` | the 10 cells other than `thinking: true` pass (below) |
@@ -166,10 +168,18 @@ document materialises full-vocab logprobs per rank (a transient of roughly
 1-3 GB on UMA next to a 4.14 GiB KV pin), so watch `free -h` on both nodes
 during the first `record`.
 
-The recorded sigma is a same-boot rerun and is usually ~0, so the 0.005 floor
-sets the `nll.delta` limit. For pack or kernel A/Bs, also run the step-2 A/A
-compare after a reboot: a cross-boot `nll.delta` above 0.005 means the floor is
-too tight for that comparison.
+The reference stores its A/A in `nll.rerun` (`abs_delta` = sigma, `top1_agree`,
+`kl`): the two captures `record` makes on one boot. The serve is not run-to-run
+deterministic. On the e0 serve (nvidia 09b04e5, v11) the A/A was |dNLL| 6.3e-4,
+top-1 98.45% and KL 5.1e-3, and greedy text diverged in 14/20 prompts (hazard
+0.0096; `evidence/e0-nvidia-v11/tier0-notes.txt`). The PLAN's fixed stage floors
+(fp8 top-1 >= 99% and KL <= 1e-3; nvfp4 98% / 3e-3) sit inside that noise and
+can never pass, so `--stage` judges top-1 and KL as margins around the
+reference's A/A. `--stage-absolute` keeps the fixed floors for a serve made
+deterministic. 3 sigma is 0.0019 on e0, so the 0.005 floor
+still sets the `nll.delta` limit. For pack or kernel A/Bs, also run the step-2
+A/A compare after a reboot: a cross-boot `nll.delta` above 0.005 means the floor
+is too tight for that comparison.
 
 ## Tests
 
