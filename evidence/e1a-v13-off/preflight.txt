@@ -1,0 +1,30 @@
+== 2026-09-27T17:14:21Z preflight; env for run.sh: IMAGE=glm53-sm121-v13 EXTRA_ENV=MAX_JOBS=2
+git 20df9eee2d13dc5333c26f0b17453864d7c09864 opt/nvidia-perf-quality
+?? evidence/e1-microbench/
+?? evidence/e1-tools/
+?? evidence/e1-v13-build/
+?? evidence/e1a-v13-off/
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 5 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 8 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.9Gi        83Gi       119Mi        33Gi       115Gi
+Swap:           15Gi       3.3Gi        12Gi
+== spark1 image glm53-sm121-v13
+sha256:03384701172160dbfe74092bf01892411d4562644f234d82aa0be8bd6e3c2220
+== spark1 JIT cache
+ls: cannot access '/home/sfxnz/projects/data/glm53-jit-cache/': No such file or directory
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.5Gi       101Gi       996Ki        16Gi       117Gi
+Swap:           15Gi       1.7Gi        14Gi
+== spark2 image glm53-sm121-v13
+sha256:03384701172160dbfe74092bf01892411d4562644f234d82aa0be8bd6e3c2220
+== spark2 JIT cache
+ls: cannot access '/home/sfxnz/projects/data/glm53-jit-cache/': No such file or directory
+== spark2 GPU compute apps (process list, not memory)

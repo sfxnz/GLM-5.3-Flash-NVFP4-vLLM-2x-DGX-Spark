@@ -1,0 +1,47 @@
+E1b: E1a's serve (glm53-sm121-v13, every GLM53_* unset, EXTRA_ENV=MAX_JOBS=2, WARM_SHARDS=1) with the JIT cache now warm,
+plus the newer DFlash2 drafter incoai/GLM-5.3-Flash-DFlash2@bf582e4 via SPEC_CONFIG (e1b-env.sh; drafter-check.txt).
+Two changes against E1a by design: the cache state (boot-time only) and the drafter weights (acceptance only).
+  args/env/image parity OK; --speculative-config on both ranks points at bf582e4 (docker-args-check.txt); GLM53_ log lines 0
+
+boot (UTC)                    E1a (cold cache)                E1b (warm cache)
+  run.sh -> /v1/models        17:14:23 -> 17:35:35  21.2 min  18:13:11 -> 18:29:30  16.3 min
+  LOAD / PROFILE / KV_READY   889 s / 138 s / 245 s           859 s / 36 s / 83 s
+  head Loading weights        715.34 s                        721.01 s
+  head Model loading          806.97 s                        783.17 s
+  worker Loading / Model      212.51 s / 259.74 s             209.53 s / 260.44 s
+  init engine                 333.33 s                        46.43 s
+  graph capture               28 s                            4 s
+  compiler processes          PROFILE 101/94 s, KV_READY      none at all (compilers.tsv has only its header, boot and serving)
+                              110/107 s busy, peak 1.96 GiB
+  TileLang "begins to compile" 8 per rank                     0
+  first c=2 wave (J@c2) TTFT  8.67 s (TileLang mhc compile)   0.59 s
+  jit_monitor still logs 6 "JIT compilation during inference" first calls per rank (Triton DFlash/rejection/sampling
+  kernels, one TileLang mhc); with no compiler process running they are disk-cache loads, not builds.
+
+MemAvailable minima GiB (spark1 / spark2)      E1a             E1b
+  LOAD                                         14.27 / 15.44   14.37 / 15.37
+  PROFILE                                      10.36 /  8.57   10.74 / 11.44
+  KV_READY                                      6.53 /  5.65    5.65 / 10.05 (spark1 dip 7 s before ready, API-server start; head only)
+  SERVING (probes + 2 benches)                  8.00 /  8.92    7.37 / 10.07
+
+checks: count 200/200, thinking-off "PING" (probe-count.console.txt). Tier 0 not run on E1b.
+
+fast gate (all cells valid)
+  cell   E1a tok/s          E1b tok/s      E1b step_ms     E1b acc_len    per_pos p1..p7 (E1b bench-1 | bench-2)
+  A      19.05 / 18.94      19.51 / 18.18  115.4 / 118.8   2.257 / 2.159  .632 .321 .160 .068 .033 .015 .005 | .612 .296 .139 .063 .020 .010 .004
+  B      33.16 / 33.68      35.53 / 34.79  120.2 / 120.8   4.290 / 4.209  .812 .668 .528 .421 .327 .258 .187 | .824 .670 .514 .400 .307 .247 .181
+  J@c1   66.06 / 67.40      68.65 / 68.72  116.0 / 115.8   8.000 / 8.000
+  J@c2   48.34 / 57.49      58.29 / 59.36  135.7 / 134.1   7.974 / 8.000
+  H      13.67 / 13.63      13.36 / 13.73  167.3 / 161.4   2.235 / 2.215
+  E1a per_pos A (b2 | b3A): .634 .319 .151 .062 .025 .015 .006 | .615 .316 .155 .073 .026 .010 .004
+  E1a per_pos B (b1 | b2):  .843 .663 .523 .409 .324 .244 .173 | .817 .648 .505 .382 .300 .236 .164   (per-pos-vs-e1a.txt)
+
+kit/compare.py E1b vs E1a (compare-vs-e1a.txt)
+  A     tok/s -0.8% [-7.7,+6.1]  step -0.1%  acc -1.0%; paired per-prompt acc bootstrap -1.0% [-3.9,+1.5]  INCONCLUSIVE
+  B     tok/s +5.2% [+2.5,+7.9]  step -3.3%  acc +1.7%; paired per-prompt acc bootstrap +1.7% [-2.0,+5.9]  KEEP (by rule)
+  J@c1  +2.9% INCONCLUSIVE; J@c2 +11.2% INCONCLUSIVE; H -0.7% INCONCLUSIVE (acc -2.0% [-3.0,-0.9], boot-level interval);
+  K@c1 +4.2%, K@c2 -6.1% INCONCLUSIVE
+  The drafter can only move acceptance. Neither paired bootstrap excludes 0, and the per-position curves overlap
+  within the run-to-run spread. B's KEEP comes mostly from step time (-3.3%), which the drafter does not change
+  (same architecture and config); E1b step times match E0 (compare-vs-e0.txt: J@c1 step +0.3%), so that part is E1a's
+  slow boot. Verdict on bf582e4: no acceptance change detectable at this n; keep the 7d74cdd pin.

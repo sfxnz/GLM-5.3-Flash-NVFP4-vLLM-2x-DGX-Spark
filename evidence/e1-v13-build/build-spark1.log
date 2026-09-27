@@ -1,0 +1,61 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.sm121-v13
+#1 transferring dockerfile: 1.25kB 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/glm53-sm121-v11:latest
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/8] FROM docker.io/library/glm53-sm121-v11:latest
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 58.48kB done
+#5 DONE 0.0s
+
+#6 [2/8] COPY patch_v13_misc.py /tmp/patch_v13_misc.py
+#6 DONE 0.0s
+
+#7 [3/8] RUN touch /tmp/v13.stamp     && python3 /tmp/patch_v13_misc.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_misc.py
+#7 0.444 models/glm5next/nvidia/model.py: 3/3 edits to apply
+#7 0.444 v1/attention/backends/mla/indexer.py: 2/2 edits to apply
+#7 0.444 model_executor/warmup/kernel_warmup.py: 1/1 edits to apply
+#7 0.444 third_party/flash_linear_attention/ops/fused_recurrent.py: 4/4 edits to apply
+#7 0.444 third_party/flash_linear_attention/ops/kda.py: 6/6 edits to apply
+#7 0.444 model_executor/model_loader/ep_weight_filter.py: 2/2 edits to apply
+#7 0.444 v1/core/kv_cache_coordinator.py: 4/4 edits to apply
+#7 0.444 model_executor/warmup/glm5next_mhc_warmup.py: new file
+#7 0.444 v13 misc patches applied (8 files written)
+#7 DONE 0.5s
+
+#8 [4/8] COPY patch_v13_fp8.py /tmp/patch_v13_fp8.py
+#8 DONE 0.1s
+
+#9 [5/8] RUN python3 /tmp/patch_v13_fp8.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_fp8.py
+#9 0.230 patch_v13_fp8: 3 file(s) written under /usr/local/lib/python3.12/dist-packages/vllm
+#9 DONE 0.3s
+
+#10 [6/8] COPY patch_v13_census.py /tmp/patch_v13_census.py
+#10 DONE 0.1s
+
+#11 [7/8] RUN python3 /tmp/patch_v13_census.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_census.py
+#11 0.233 v1/worker/gpu/model_runner.py: 4/4 edits to apply
+#11 0.233 v1/worker/gpu/glm53_expert_census.py: new file
+#11 0.233 v13 census patch applied (2 files written)
+#11 DONE 0.3s
+
+#12 [8/8] RUN find "/usr/local/lib/python3.12/dist-packages/vllm" -name '*.py' -newer /tmp/v13.stamp -print0         | xargs -0 -r python3 -m compileall -q     && rm /tmp/v13.stamp
+#12 DONE 0.5s
+
+#13 exporting to image
+#13 exporting layers
+#13 exporting layers 0.2s done
+#13 writing image sha256:03384701172160dbfe74092bf01892411d4562644f234d82aa0be8bd6e3c2220 done
+#13 naming to docker.io/library/glm53-sm121-v13 done
+#13 DONE 0.2s
+rc=0
