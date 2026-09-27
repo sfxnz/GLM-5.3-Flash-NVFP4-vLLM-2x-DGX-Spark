@@ -146,12 +146,6 @@ if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY hides the native GLM-5.3-Flash vision tower. The NVIDIA pack ships vision_config and processor_config.json. Leave LANGUAGE_MODEL_ONLY=0. FORCE_UNSAFE_VISION=1 overrides." >&2
   exit 1
 fi
-if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
-    "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
-  exit 0
-fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
@@ -410,15 +404,51 @@ wait_ready() {
   exit 1
 }
 
+# One list drives the worker launch: every variable rank 1 needs to build the
+# same serve as rank 0 (all generated defaults plus the derived values).
+FORWARD_ENVS=(
+  MODEL SERVED_NAME IMAGE CONTAINER_NAME PORT MASTER_PORT HEAD_IP WORKER_HOST IFACE HCA TP NNODES
+  MAX_MODEL_LEN MAX_NUM_SEQS UTIL KV_CACHE_DTYPE NUM_SPECULATIVE_TOKENS MAX_NUM_BATCHED_TOKENS
+  FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
+  LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
+  KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
+  DRAFT_MODEL SPEC
+  SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
+  COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS
+)
+
+# The ssh command that starts rank 1. printf %q keeps quotes and JSON intact
+# (the worker's login shell must be bash).
+worker_command() {
+  local words=(env ROLE=worker ORCHESTRATE=0) v
+  for v in "${FORWARD_ENVS[@]}"; do
+    words+=("$v=${!v-}")
+  done
+  printf '%q ' "${words[@]}"
+  printf 'bash /tmp/glm53-run.sh\n'
+}
+
+worker_ssh_ok() {
+  command -v ssh >/dev/null 2>&1 && ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" true >/dev/null 2>&1
+}
+
+if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
+    "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
+    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+  printf '==> worker command: %s' "$(worker_command)"
+  echo
+  exit 0
+fi
+
 ROLE="$(detect_role)"
 log "role=$ROLE host=$(host_short)"
 
 if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
-  if command -v ssh >/dev/null 2>&1 && ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_HOST" true >/dev/null 2>&1; then
+  if worker_ssh_ok; then
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
-    ssh "$WORKER_HOST" \
-      "ROLE=worker ORCHESTRATE=0 IMAGE='$IMAGE' CONTAINER_NAME='$CONTAINER_NAME' PORT='$PORT' MASTER_PORT='$MASTER_PORT' HEAD_IP='$HEAD_IP' IFACE='$IFACE' HCA='$HCA' MAX_MODEL_LEN='$MAX_MODEL_LEN' MAX_NUM_SEQS='$MAX_NUM_SEQS' UTIL='$UTIL' KV_CACHE_MEMORY='$KV_CACHE_MEMORY' KV_CACHE_DTYPE='$KV_CACHE_DTYPE' BLOCK_SIZE='$BLOCK_SIZE' TP='$TP' NNODES='$NNODES' MODEL='$MODEL' SERVED_NAME='$SERVED_NAME' SKIP_DOWNLOAD='$SKIP_DOWNLOAD' SPEC='$SPEC' SPEC_CONFIG='$SPEC_CONFIG' NUM_SPECULATIVE_TOKENS='$NUM_SPECULATIVE_TOKENS' ENFORCE_EAGER='$ENFORCE_EAGER' COMPILATION_CONFIG='$COMPILATION_CONFIG' MAX_NUM_BATCHED_TOKENS='$MAX_NUM_BATCHED_TOKENS' FORCE_UNSAFE_CTX='$FORCE_UNSAFE_CTX' FORCE_UNSAFE_MOE='$FORCE_UNSAFE_MOE' FORCE_UNSAFE_VISION='$FORCE_UNSAFE_VISION' LANGUAGE_MODEL_ONLY='$LANGUAGE_MODEL_ONLY' MM_PROCESSOR_CACHE_GB='$MM_PROCESSOR_CACHE_GB' MAX_NEW_TOKENS='$MAX_NEW_TOKENS' VLLM_USE_BREAKABLE_CUDAGRAPH='$VLLM_USE_BREAKABLE_CUDAGRAPH' SNAPSHOT_REV='$SNAPSHOT_REV' MOE_BACKEND='$MOE_BACKEND' LINEAR_BACKEND='$LINEAR_BACKEND' FORCE_UNSAFE_LINEAR='$FORCE_UNSAFE_LINEAR' FORCE_UNSAFE_SPEC='$FORCE_UNSAFE_SPEC' REASONING_PARSER='$REASONING_PARSER' EXTRA_ARGS='$EXTRA_ARGS' bash /tmp/glm53-run.sh"
+    ssh "$WORKER_HOST" "$(worker_command)"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
   else
