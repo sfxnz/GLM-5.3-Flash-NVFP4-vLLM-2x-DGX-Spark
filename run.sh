@@ -32,7 +32,7 @@ LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
 # vLLM default is 4 GiB of processed MM tensors in the head EngineCore (UMA).
 MM_PROCESSOR_CACHE_GB="${MM_PROCESSOR_CACHE_GB:-1}"
 # Server-wide output ceiling (--override-generation-config max_new_tokens).
-# Without it one thinking-on request could decode for hours. Empty drops it.
+# Without it one thinking-on request could decode for hours. 0 drops it.
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-65536}"
 # Empty: engine auto-enables breakable CUDA graphs. 0 slowed structured
 # c=1 69.4→67.0 and c=2 59.7→52.1. Leave unset.
@@ -130,8 +130,8 @@ if [[ "$LINEAR_BACKEND" != marlin && "$FORCE_UNSAFE_LINEAR" != 1 ]]; then
   echo "LINEAR_BACKEND=$LINEAR_BACKEND: the nvidia pack's layers 0-2 dense MLP is NVFP4, and non-Marlin NVFP4 GEMMs JIT-compile on sm_121 during the first profile forward. Six 2026-09-16 boots collapsed there. Stay on marlin. FORCE_UNSAFE_LINEAR=1 overrides." >&2
   exit 1
 fi
-if [[ -n "$MAX_NEW_TOKENS" && ! "$MAX_NEW_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS: want a positive integer, or empty to drop the ceiling." >&2
+if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS: want a positive integer, or 0 to drop the ceiling." >&2
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
@@ -346,7 +346,7 @@ start_local() {
     fi
   fi
   local gen_args=()
-  if [[ -n "$MAX_NEW_TOKENS" ]]; then
+  if [[ "$MAX_NEW_TOKENS" != 0 ]]; then
     gen_args+=(--override-generation-config "{\"max_new_tokens\": $MAX_NEW_TOKENS}")
   fi
 
