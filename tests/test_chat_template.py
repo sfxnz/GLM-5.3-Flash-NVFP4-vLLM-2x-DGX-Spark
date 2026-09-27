@@ -91,6 +91,14 @@ class KwargMatrix(unittest.TestCase):
         out = render(LOCAL, enable_thinking=False, thinking=True)
         self.assertTrue(out.endswith("<|assistant|><think>"))
 
+    def test_vllm_passes_both_kwargs_through(self):
+        # vllm/renderers/hf.py drops chat_template_kwargs the template never references.
+        import jinja2.meta
+
+        env = ImmutableSandboxedEnvironment(extensions=["jinja2.ext.loopcontrols"])
+        names = jinja2.meta.find_undeclared_variables(env.parse(LOCAL.read_text()))
+        self.assertLessEqual({"thinking", "enable_thinking", "reasoning_effort"}, names)
+
     def test_hub_template_always_opens_think(self):
         self.assertTrue(render(HUB, enable_thinking=False).endswith("<|assistant|><think>"))
 
