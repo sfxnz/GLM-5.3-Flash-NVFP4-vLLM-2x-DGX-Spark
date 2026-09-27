@@ -10,6 +10,7 @@ it on the Sparks.
   GLM53_MHC_WARMUP=1               pre-compile Glm5Next mHC TileLang variants
   GLM53_KDA_TRIM=1                 skip 4 .contiguous() copies per KDA layer
   GLM53_SKIP_MTP_WEIGHTS=1         do not read MTP layer tensors when spec != mtp
+  GLM53_DFLASH_PREFIX_CACHE_FIX=1  EAGLE block drop on the DFlash draft group only
 
 Usage: python3 patch_v13_misc.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
@@ -535,6 +536,93 @@ EP_FILTER_EDITS = [
     ),
 ]
 
+# --------------------------------------------------------------------------
+# GLM53_DFLASH_PREFIX_CACHE_FIX: v1/core/kv_cache_coordinator.py
+# --------------------------------------------------------------------------
+COORDINATOR_EDITS = [
+    (
+        "kv_cache_coordinator.py: import os",
+        "from abc import ABC, abstractmethod\n",
+        "import os\nfrom abc import ABC, abstractmethod\n",
+    ),
+    (
+        "kv_cache_coordinator.py: draft-group predicate",
+        "logger = init_logger(__name__)\n",
+        '''logger = init_logger(__name__)
+
+# GLM53_DFLASH_PREFIX_CACHE_FIX (v13): port of tonyd2wild's
+# patch_prefix_cache_draft_group.py (GLM-5.3 DFlash2 2x DGX Spark recipe).
+_GLM53_PREFIX_CACHE_FIX = os.environ.get("GLM53_DFLASH_PREFIX_CACHE_FIX") == "1"
+
+
+def _glm53_is_draft_swa_spec(spec) -> bool:
+    """True only for the DFlash draft sliding-window group (patch_v11).
+
+    Exact type on purpose: KpoolTailSpec subclasses SlidingWindowSpec. The
+    draft group spec is a UniformTypeKVCacheSpecs of SlidingWindowSpec layers.
+    """
+    specs = getattr(spec, "kv_cache_specs", None)
+    if isinstance(specs, dict) and specs:
+        spec = next(iter(specs.values()))
+    return type(spec) is SlidingWindowSpec
+''',
+    ),
+    (
+        "kv_cache_coordinator.py: EAGLE fallback flags the draft group only",
+        """        if use_eagle and not self.eagle_group_ids:
+            self.eagle_group_ids = set(range(len(kv_cache_config.kv_cache_groups)))
+""",
+        """        if use_eagle and not self.eagle_group_ids:
+            # GLM53_DFLASH_PREFIX_CACHE_FIX: only the DFlash draft window needs
+            # the EAGLE last-block drop; the target MLA and KDA groups hold
+            # complete KV/state for every cached token.
+            draft_swa_ids = (
+                {
+                    i
+                    for i, g in enumerate(kv_cache_config.kv_cache_groups)
+                    if _glm53_is_draft_swa_spec(g.kv_cache_spec)
+                }
+                if _GLM53_PREFIX_CACHE_FIX
+                else set()
+            )
+            self.eagle_group_ids = draft_swa_ids or set(
+                range(len(kv_cache_config.kv_cache_groups))
+            )
+            if draft_swa_ids:
+                logger.info_once(
+                    "GLM53_DFLASH_PREFIX_CACHE_FIX: EAGLE block drop on draft KV "
+                    "group(s) %s only",
+                    sorted(draft_swa_ids),
+                )
+""",
+    ),
+    (
+        "kv_cache_coordinator.py: draft window never shrinks the target hit",
+        """                elif _new_hit_length < curr_hit_length:
+                    # length shrunk; invalidate previous eagle verifications
+                    eagle_verified.clear()
+                curr_hit_length = _new_hit_length
+""",
+        """                elif _new_hit_length < curr_hit_length:
+                    # length shrunk; invalidate previous eagle verifications
+                    eagle_verified.clear()
+                if _GLM53_PREFIX_CACHE_FIX and _glm53_is_draft_swa_spec(spec):
+                    # The short draft window must not shrink the hit the target
+                    # and KDA groups agreed on. A shorter draft hit is dropped
+                    # (fresh draft pages); the target still verifies every
+                    # draft token, so output stays lossless.
+                    hit_ok = _new_hit_length >= curr_hit_length
+                    for group_id, blocks in zip(group_ids, hit_blocks):
+                        hit_blocks_by_group[group_id] = blocks if hit_ok else None
+                        hit_length_by_group[group_id] = (
+                            _new_hit_length if hit_ok else 0
+                        )
+                    continue
+                curr_hit_length = _new_hit_length
+""",
+    ),
+]
+
 FILE_EDITS = {
     "models/glm5next/nvidia/model.py": MODEL_EDITS + MODEL_SKIP_MTP_EDITS,
     "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
@@ -542,6 +630,7 @@ FILE_EDITS = {
     "third_party/flash_linear_attention/ops/fused_recurrent.py": FUSED_RECURRENT_EDITS,
     "third_party/flash_linear_attention/ops/kda.py": KDA_OPS_EDITS,
     "model_executor/model_loader/ep_weight_filter.py": EP_FILTER_EDITS,
+    "v1/core/kv_cache_coordinator.py": COORDINATOR_EDITS,
 }
 
 NEW_FILES = {
