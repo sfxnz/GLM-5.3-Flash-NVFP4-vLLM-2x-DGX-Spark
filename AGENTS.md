@@ -35,6 +35,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 ```bash
 python3 kit/render.py --check
+python3 -m unittest discover -s tests      # CPU: VALIDATE_ONLY guards, worker forwarding, template kwargs + Hub parity
 python3 bench_decode.py                    # published score: prose, c=1 and 2, after serve is up
 python3 smoke_vision.py                    # must not return HTTP 400 "is not a multimodal model"
 ```
