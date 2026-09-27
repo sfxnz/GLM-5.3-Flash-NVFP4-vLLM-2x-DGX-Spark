@@ -46,7 +46,7 @@ lengths. `--no-video` drops the video probe.
 | `greedy.hazard` | per-token divergence hazard vs the reference's first run <= 2 x max(ref A/A hazard, 0.005) |
 | `count` | thinking off, the integers are exactly 1..200 |
 | `kwargs.core` | the 10 cells other than `thinking: true` pass (below) |
-| `kwargs.thinking_alias` | both `thinking: true` cells pass (known FAIL today, see below) |
+| `kwargs.thinking_alias` | both `thinking: true` cells pass (the template's `thinking` alias, below) |
 | `utf8` | zero U+FFFD, rows 1..40 present, every n^2 right, finish `stop` |
 | `tools.json_valid` | >= 98% of 50 tool calls parse as a JSON object (a missing call counts as a failure) |
 | `vision` | every image check passes; the video check may SKIP |
@@ -78,11 +78,10 @@ What each component sends:
   thinking off the content does not open with chain-of-thought. `effort_low`
   may leave reasoning empty (the template opens `<think>`, and the model closes
   it at once on this question); then its content is checked for chain-of-thought.
-  **Known failure:** with today's `chat_template.jinja` the two `thinking: true`
-  cells fail (QUAL-2: the parser treats `thinking` as on, the template ignores
-  it, so the answer lands in `reasoning`). They pass once the template alias fix
-  lands. Until then add `--skip-gate kwargs.thinking_alias`; `kwargs.core`
-  still gates chain-of-thought leaking into content with thinking off.
+  The two `thinking: true` cells guard QUAL-2: a template that ignores the
+  `thinking` alias while the parser treats it as on puts the whole answer in
+  `reasoning`. `chat_template.jinja` honors the alias, and both cells pass
+  (e0 compare, 2026-09-27: 2/2).
 - **utf8**: a streamed 40-row markdown table (n, n², n³, Chinese numeral).
   n³ and numeral errors are reported, not gated.
 - **tools**: `data/tools50.json`, `tool_choice: auto`, odd items streamed.

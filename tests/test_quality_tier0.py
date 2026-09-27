@@ -226,7 +226,7 @@ class CriteriaTests(unittest.TestCase):
         self.assertNotIn("greedy.hazard", line)
 
     def test_kwargs_split(self):
-        # today's template: only the two thinking:true cells fail (QUAL-2)
+        # a template without the thinking alias: only the two thinking:true cells fail (QUAL-2)
         cells = [{"cell": f"{n}.{s}", "pass": not n.startswith("thinking_true")}
                  for n, _, _ in tier0.KWARG_SHAPES for s in ("block", "stream")]
         rows = tier0.criteria({"kwargs": {"pass": False, "cells": cells}}, None, None, {"kwargs.thinking_alias"})

@@ -79,7 +79,7 @@ GATES = {
     "greedy.hazard": "golden divergence hazard <= 2 * max(ref A/A hazard, 0.005)",
     "count": "thinking-off count is exactly 1..200",
     "kwargs.core": "the 10 kwarg-matrix cells other than thinking:true pass",
-    "kwargs.thinking_alias": "both thinking:true cells pass (known FAIL until the QUAL-2 template alias)",
+    "kwargs.thinking_alias": "both thinking:true cells pass (the template's thinking alias, QUAL-2)",
     "utf8": "zero U+FFFD, rows 1..40 present, every n^2 right, finish_reason stop",
     "tools.json_valid": "tool-call JSON-valid rate >= 0.98 over 50 calls (a missing call counts as invalid)",
     "vision": "every vision check passes (video may SKIP)",
