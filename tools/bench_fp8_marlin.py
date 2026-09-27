@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-rank BF16 vs Marlin FP8 W8A16 vs Marlin NVFP4 W4A16 GEMM bench.
+r"""Per-rank BF16 vs Marlin FP8 W8A16 vs Marlin NVFP4 W4A16 GEMM bench.
 
 Covers GLM53_FP8_W8A16 and GLM53_NVFP4_W4A16. Shapes come from the safetensors
 headers of the nvidia target pack and the DFlash2 drafter, sharded as one TP
@@ -11,8 +11,16 @@ quantize the same (checkpoint or --random) weights with the patch's own code.
   # CPU only, no torch: bytes per group per rank per step
   python3 tools/bench_fp8_marlin.py --report-bytes
 
-  # GPU, inside glm53-sm121-v13 (needs patch_v13_fp8), exclusive GPU slot
-  python3 tools/bench_fp8_marlin.py --json fp8-bench.json
+  # GPU, exclusive slot (no serve up), in glm53-sm121-v13 (needs patch_v13_fp8).
+  # The image's entrypoint is `vllm serve`, so replace it with python3. Mount
+  # the repo and the HF cache (E1 mounted it at /hf: evidence/e1-microbench/).
+  docker run --rm --gpus all --entrypoint python3 \
+    -v "$PWD":/work -w /work -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
+    glm53-sm121-v13 tools/bench_fp8_marlin.py --json fp8-bench.json
+
+--ckpt and --draft default to the snapshots of recipe.yaml's model.revision
+and model.draft_revision under $HF_HUB_CACHE (else $HF_HOME/hub). Pass --draft
+to bench another drafter revision.
 
 Pass: for every group, at each --gate-m, the count-weighted FP8 time is at most
 --max-ratio (0.6) of BF16, i.e. >= 0.85x of the ideal 2x byte saving, and the
@@ -26,13 +34,21 @@ import argparse
 import json
 import math
 import os
+import re
 import struct
 import sys
 from pathlib import Path
 
-REV = "09b04e5e74bca08ca8549fc736d4cdd8624bfde3"
-DRAFT_REV = "7d74cdd881ed7e32c31175984a67823127b66cfe"
+RECIPE = Path(__file__).resolve().parent.parent / "recipe.yaml"
 GROUPS = ("draft", "shared", "mla", "kda_o", "kda_in", "lm_head")
+
+
+def recipe_pin(key: str) -> str:
+    """A pinned sha from recipe.yaml, the source of truth (`key: &key <sha>`; no PyYAML)."""
+    m = re.search(rf"^\s*{key}: &{key} ([0-9a-f]{{40}})\s*$", RECIPE.read_text(encoding="utf-8"), re.M)
+    if m is None:
+        raise SystemExit(f"{RECIPE}: no `{key}: &{key} <40-hex sha>` line")
+    return m.group(1)
 
 
 def hub_dir() -> Path:
@@ -343,9 +359,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ckpt", type=Path, default=hub_dir()
-                   / f"models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/{REV}")
+                   / f"models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/{recipe_pin('revision')}")
     p.add_argument("--draft", type=Path, default=hub_dir()
-                   / f"models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{DRAFT_REV}")
+                   / f"models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{recipe_pin('draft_revision')}")
     p.add_argument("--tp", type=int, default=2)
     p.add_argument("--rank", type=int, default=0)
     p.add_argument("--groups", type=lambda s: s.split(","), default=list(GROUPS))
