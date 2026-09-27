@@ -130,7 +130,7 @@ def analyze(meta: dict, topk: np.ndarray, seg: np.ndarray, gbps: float = 230.0) 
         prefix.append({
             "n": n, "blocks": len(full), "distinct": round(d, 3),
             "independent": round(dn, 3), "ratio": round(d / dn, 4),
-            "dup": round(1 - d / (n * k), 4), "dup_independent": round(1 - dn / (n * k), 4),
+            "dup": round(1 - d / (n * k), 4), "dup_independent": round(max(0.0, 1 - dn / (n * k)), 4),
         })
 
     npos = int(blocks[:, SEG["nrows"]].max()) if len(blocks) else 0
