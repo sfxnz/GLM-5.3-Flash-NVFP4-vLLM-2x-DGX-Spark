@@ -220,7 +220,7 @@ python3 bench_decode.py --cells J             # structured count only (acceptanc
 python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/bench.json
 ```
 
-The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
+The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. Cell T (`--full` or `--cells T`) sends A's prompts with thinking on (`enable_thinking: true`, no `reasoning_effort`, so Max effort), the regime upstream DFlash2 was trained and benchmarked in (acceptance 4-5.8 on GSM8K / MT-Bench). Its 512 forced tokens count reasoning + content, and TTFT ends at the first reasoning or content token. T is not a published score. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
 
 ## Logs
 

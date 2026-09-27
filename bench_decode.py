@@ -11,6 +11,9 @@ tokens, greedy, thinking off). Every cell is factorized from Prometheus
 
 decode_s runs from the first streamed token (content, reasoning or tool call)
 to the end of the stream, so the prefill token is excluded from both sides.
+TTFT ends at that same first token, so a thinking-on cell (T) whose first
+tokens are all reasoning is timed like A. T's forced 512 tokens count
+reasoning + content (usage.completion_tokens).
 Sanity: tok_s ~= acceptance_len * 1000 / step_ms. Stdlib only.
 """
 
@@ -116,6 +119,7 @@ CELLS = {
     "F": "image prompt (generated PNG), 256 forced, c=1",
     "G": "prose 8x512 forced, sampled T=1.0 top_p=0.95 seed fixed, c=1",
     "K": "legacy prose (~98 natural tokens, max 200), c=1 and c=2 (continuity)",
+    "T": "prose 8x512 forced (reasoning + content), greedy, thinking on (Max effort), c=1",
 }
 DEFAULT_CELLS = "A,B,J,H,K"
 
@@ -315,9 +319,11 @@ def plan_cell(cell: str, runs: int, n: int) -> tuple[list[dict], list[tuple[str,
     """(warm-up specs, waves). A wave is (group, concurrency, specs). E is planned later."""
     waves: list[tuple[str, int, list[dict]]] = []
     greedy = {"temperature": 0.0}
-    if cell in ("A", "B", "G"):
+    if cell in ("A", "B", "G", "T"):
         prompts = CODE if cell == "B" else PROSE
         sampling = {"temperature": 1.0, "top_p": 0.95, "seed": SEED} if cell == "G" else greedy
+        if cell == "T":
+            sampling = {**greedy, "thinking": True}
         warm = [spec("warm", WARM_CODE if cell == "B" else WARM_PROSE, WARMUP_TOKENS, True, **sampling)]
         for _ in range(runs):
             waves += [(cell, 1, [s]) for s in forced_set(cell, prompts, n, **sampling)]
@@ -368,8 +374,8 @@ def request_body(model: str, s: dict) -> bytes:
         "temperature": s.get("temperature", 0.0),
         "stream": True,
         "stream_options": {"include_usage": True},
-        # Thinking off; reasoning_effort is deliberately not sent.
-        "chat_template_kwargs": {"enable_thinking": False},
+        # Thinking off except cell T; reasoning_effort is deliberately not sent (Max).
+        "chat_template_kwargs": {"enable_thinking": bool(s.get("thinking"))},
     }
     if s["forced"]:
         body["min_tokens"] = s["max_tokens"]
@@ -601,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cells", default=DEFAULT_CELLS, help=f"comma list (default {DEFAULT_CELLS})")
     p.add_argument("--full", action="store_true", help="all cells: " + ",".join(CELLS))
     p.add_argument("--runs", type=int, default=1, help="repeat each cell's prompt set")
-    p.add_argument("--tokens", type=int, default=512, help="forced length for A/B/G/H/I")
+    p.add_argument("--tokens", type=int, default=512, help="forced length for A/B/G/H/I/T")
     p.add_argument("--remote-meminfo", nargs="?", const="spark2", default=None, metavar="HOST",
                    help="also sample /proc/meminfo on HOST over ssh (default spark2)")
     p.add_argument("--out", default=None, help="directory for bench.txt and bench.json")
