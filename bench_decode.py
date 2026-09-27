@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import random
@@ -107,8 +108,9 @@ WORDS = (
 CELLS = {
     "A": "prose 8x512 forced, greedy, c=1 (published score)",
     "B": "code 8x512 forced, greedy, c=1",
-    "J": "structured count 1..200, max 200, c=1 and c=2 (legacy structured phase)",
-    "H": "prose distinct prompts, 512 forced, c=2",
+    "J": "structured count 1..200, max 200, c=1 and c=2 (legacy structured phase; "
+         "sanity_err > 3% expected: max_tokens cuts the last verify step)",
+    "H": "prose distinct prompts, 512 forced, c=2 (A's prompts: prefix-cache hit, TTFT not comparable to A)",
     "I": "prose distinct prompts, 512 forced, c=4 (capacity; queues at MAX_NUM_SEQS=2)",
     "E": "long-context TTFT + prefill at 32k and 128k, unique salt, 128 forced",
     "F": "image prompt (generated PNG), 256 forced, c=1",
@@ -389,6 +391,8 @@ def stream_one(url: str, model: str, s: dict, t_zero: float) -> dict:
     usage: dict = {}
     finish = None
     text = []
+    done = False
+    server_error = None
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
             for raw in resp:
@@ -397,11 +401,15 @@ def stream_one(url: str, model: str, s: dict, t_zero: float) -> dict:
                     continue
                 payload = line[5:].strip()
                 if payload == "[DONE]":
+                    done = True
                     break
                 try:
                     ev = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
+                # vLLM streams failures as data: {"error": ...} and then [DONE].
+                if ev.get("error"):
+                    server_error = server_error or ev["error"]
                 if ev.get("usage"):
                     usage = ev["usage"]
                 for ch in ev.get("choices") or []:
@@ -413,14 +421,27 @@ def stream_one(url: str, model: str, s: dict, t_zero: float) -> dict:
                         first = time.perf_counter()
                     text.append(piece)
                     finish = ch.get("finish_reason") or finish
-    except (OSError, urllib.error.URLError, ValueError) as exc:
-        row["error"] = str(exc)
+    except urllib.error.HTTPError as exc:
+        row["error"] = f"{exc}: {exc.read()[:500].decode('utf-8', 'replace')}"
+        return row
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        # IncompleteRead (server died mid-chunk) is an HTTPException, not an OSError.
+        row["error"] = f"{type(exc).__name__}: {exc}"
         return row
     t1 = time.perf_counter()
-    if first is None:
-        row["error"] = "no streamed tokens"
-        return row
     completion = int(usage.get("completion_tokens") or 0)
+    if server_error is not None:
+        row["error"] = f"server error event: {json.dumps(server_error)[:500]}"
+    elif not done:
+        row["error"] = "stream ended without [DONE]"
+    elif first is None:
+        row["error"] = "no streamed tokens"
+    elif not usage:
+        row["error"] = "no usage chunk"
+    elif completion == 0:
+        row["error"] = "completion_tokens == 0"
+    if "error" in row:
+        return row
     decode_tokens = max(completion - 1, 0)
     decode_s = t1 - first
     row.update(
@@ -507,6 +528,7 @@ def summarize(waves: list[dict], invalid: dict[str, str]) -> list[dict]:
             "group": group, "cell": cell, "c": ws[0]["c"],
             "n_waves": len(ok), "n_failed": len(ws) - len(ok), "n_requests": len(rows),
             "tok_s": describe([w["tok_s"] for w in ok]),
+            "stream_tok_s": describe([r["tok_s"] for r in rows]),
             "step_ms": describe([w.get("step_ms") for w in ok]),
             "acceptance_len": describe([w.get("acceptance_len") for w in ok]),
             "agg_tok_s": describe([w.get("agg_tok_s") for w in ok]),
@@ -557,9 +579,11 @@ def served_models(base: str) -> list[str]:
 
 
 def git_sha() -> str | None:
+    """HEAD sha, suffixed -dirty when tracked files differ from HEAD."""
     try:
         res = subprocess.run(
-            ["git", "-C", os.path.dirname(os.path.abspath(__file__)), "rev-parse", "HEAD"],
+            ["git", "-C", os.path.dirname(os.path.abspath(__file__)), "describe", "--always",
+             "--abbrev=40", "--dirty", "--match=NONE"],
             capture_output=True, text=True, timeout=10, check=True,
         )
         return res.stdout.strip()
@@ -585,8 +609,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cells = list(CELLS) if args.full else [c.strip().upper() for c in args.cells.split(",") if c.strip()]
     unknown = [c for c in cells if c not in CELLS]
-    if unknown:
-        p.error(f"unknown cells {unknown}; known: {','.join(CELLS)}")
+    if unknown or not cells:
+        p.error(f"unknown or empty cells {unknown}; known: {','.join(CELLS)}")
 
     base = args.url.split("/v1/", 1)[0]
     metrics_url = base + "/metrics"
@@ -612,13 +636,33 @@ def main(argv: list[str] | None = None) -> int:
     log(f"ruler={RULER_VERSION} url={args.url} model={model} cells={','.join(cells)} "
         f"runs={args.runs} tokens={args.tokens} git={report['git_sha']}")
     invalid: dict[str, str] = {}
+    failed_cells: list[str] = []
+    unverified: list[str] = []
+
+    def write_out() -> None:
+        # Rewritten after every cell so a crash or engine death keeps what was measured.
+        report["summary"] = summarize(report["waves"], invalid)
+        report["failed_cells"], report["hygiene_unverified"] = failed_cells, unverified
+        if not args.out:
+            return
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "bench.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        with open(os.path.join(args.out, "bench.json"), "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=1)
+
     for cell in cells:
         warm, waves = plan_cell(cell, args.runs, args.tokens)
         warm_wave = run_wave(args.url, metrics_url, model, f"{cell}:warmup", len(warm), warm)
         if cell == "E":
             r = warm_wave["requests"][0]
             if "error" in r or not r["prompt_tokens"]:
-                raise RuntimeError(f"E calibration request failed: {r}")
+                log(f"cell E FAILED: calibration request {r.get('error', 'returned 0 prompt tokens')}")
+                failed_cells.append(cell)
+                report["cells"][cell] = {"desc": CELLS[cell], "warmup": warm_wave,
+                                         "error": "calibration request failed"}
+                write_out()
+                continue
             waves = plan_long(args.runs, r["prompt_tokens"] / 6000)
         before = snapshot_hosts(args.remote_meminfo)
         cell_waves = []
@@ -638,24 +682,33 @@ def main(argv: list[str] | None = None) -> int:
         if reason:
             invalid[cell] = reason
             log(f"cell {cell} INVALID: {reason}")
+        blind = sorted(h for h in set(before) | set(after) if not before.get(h) or not after.get(h))
+        if blind:
+            unverified.append(cell)
+            log(f"WARN cell {cell} hygiene_unverified: meminfo unreadable on {','.join(blind)}")
         report["cells"][cell] = {"desc": CELLS[cell], "meminfo_before": before,
                                  "meminfo_after": after, "invalid_reason": reason,
-                                 "warmup": warm_wave}
+                                 "hygiene_unverified": blind, "warmup": warm_wave}
         report["waves"] += cell_waves
+        write_out()
 
-    report["summary"] = summarize(report["waves"], invalid)
+    summary = report["summary"] = summarize(report["waves"], invalid)
     log("")
-    for line in table(report["summary"]):
+    for line in table(summary):
         log(line)
     log("published decode score = cell A tok/s (prose, c=1); K is the legacy continuity row")
-    print("SUMMARY", json.dumps(report["summary"]), flush=True)
-    if args.out:
-        os.makedirs(args.out, exist_ok=True)
-        with open(os.path.join(args.out, "bench.txt"), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
-        with open(os.path.join(args.out, "bench.json"), "w", encoding="utf-8") as fh:
-            json.dump(report, fh, indent=1)
-    return 1 if invalid or any(s["n_failed"] for s in report["summary"]) else 0
+    # The pre-v2 ruler published the median of per-stream tok/s with no warm-up.
+    for s in summary:
+        if s["cell"] == "K" and s["stream_tok_s"]:
+            log(f"{s['group']} legacy-comparable median per-stream tok/s = {s['stream_tok_s']['median']:.2f} "
+                f"(the tok/s column is the mean of wave means)")
+    short = sum(s["short_requests"] for s in summary)
+    if short:
+        log(f"FAIL {short} forced request(s) stopped before max_tokens")
+    print("SUMMARY", json.dumps(summary), flush=True)
+    write_out()
+    failed = invalid or failed_cells or unverified or short or any(s["n_failed"] for s in summary)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

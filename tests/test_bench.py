@@ -35,13 +35,17 @@ NATURAL = 40        # natural length when min_tokens is not sent
 class FakeServer:
     """OpenAI-compatible SSE server with vLLM-style spec-decode Prometheus counters."""
 
-    def __init__(self, reasoning_first: bool = False):
+    # fault: None, "error_event" (vLLM mid-stream failure: error event then [DONE]),
+    # "truncate" (connection dies mid-chunk), "no_done" (clean close, no usage, no [DONE]),
+    # "http400" (request rejected with a JSON body), "short" (ignores min_tokens).
+    def __init__(self, reasoning_first: bool = False, fault: str | None = None):
         self.lock = threading.Lock()
         self.counters = {"drafts": 0, "draft_tokens": 0, "accepted": 0,
                          "itl_count": 0, "itl_sum": 0.0, "prefill_count": 0, "prefill_sum": 0.0}
         self.per_pos = [0] * K_SPEC
         self.bodies: list[dict] = []
         self.reasoning_first = reasoning_first
+        self.fault = fault
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -63,6 +67,12 @@ class FakeServer:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 with fake.lock:
                     fake.bodies.append(body)
+                if fake.fault == "http400":
+                    self._send(400, "application/json", b'{"error": {"message": "is not a multimodal model"}}')
+                    return
+                if fake.fault in ("error_event", "truncate", "no_done"):
+                    self._fail(body)
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
@@ -70,6 +80,26 @@ class FakeServer:
                     self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
                     self.wfile.flush()
                 self.wfile.write(b"data: [DONE]\n\n")
+
+            def _fail(self, body):
+                events = fake.events(body)
+                first = [next(events), next(events)]  # role delta + first content token
+                data = b"".join(f"data: {json.dumps(ev)}\n\n".encode() for ev in first)
+                if fake.fault == "truncate":
+                    # Raw HTTP/1.1 chunked body; the last chunk promises more bytes than arrive.
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                                     b"Transfer-Encoding: chunked\r\n\r\n")
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+                    self.wfile.write(b"400\r\ndata: {\"choi")
+                    self.close_connection = True
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(data)
+                if fake.fault == "error_event":
+                    err = {"error": {"message": "EngineCore died", "type": "InternalServerError", "code": 500}}
+                    self.wfile.write(f"data: {json.dumps(err)}\n\ndata: [DONE]\n\n".encode())
 
             def _send(self, code, ctype, data):
                 self.send_response(code)
@@ -94,7 +124,8 @@ class FakeServer:
         return int(len(content.split()) * 1.3)
 
     def events(self, body):
-        n = body["max_tokens"] if body.get("min_tokens") else min(NATURAL, body["max_tokens"])
+        forced = body.get("min_tokens") and self.fault != "short"
+        n = body["max_tokens"] if forced else min(NATURAL, body["max_tokens"])
         mk = lambda delta: {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}  # noqa: E731
         yield mk({"role": "assistant"})
         time.sleep(0.01)  # prefill
@@ -352,6 +383,89 @@ class TestEndToEnd(unittest.TestCase):
     def test_unknown_cell_rejected(self):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             bd.main(["--url", self.server.url, "--cells", "A,Z"])
+
+    def test_empty_cells_rejected(self):
+        for cells in ("", " , "):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                bd.main(["--url", self.server.url, "--cells", cells])
+
+    def test_unreadable_meminfo_is_flagged(self):
+        seq = [{"local": {"swap_used_mib": 100.0}, "spark2": None},
+               {"local": {"swap_used_mib": 100.0}, "spark2": None}]
+        with mock.patch.object(bd, "snapshot_hosts", side_effect=seq):
+            rc, rep = self.run_bench("--cells", "K")
+        self.assertEqual(rc, 1)
+        self.assertEqual(rep["cells"]["K"]["hygiene_unverified"], ["spark2"])
+        self.assertEqual(rep["hygiene_unverified"], ["K"])
+        self.assertIsNone(rep["cells"]["K"]["invalid_reason"])
+
+    def test_k_reports_legacy_stream_median(self):
+        _, rep = self.run_bench("--cells", "K")
+        k2 = next(s for s in rep["summary"] if s["group"] == "K@c2")
+        self.assertEqual(k2["stream_tok_s"]["n"], 6)
+        with open(os.path.join(self.tmp.name, "bench.txt"), encoding="utf-8") as fh:
+            self.assertIn("K@c2 legacy-comparable median per-stream tok/s", fh.read())
+
+
+class TestFailures(unittest.TestCase):
+    """Server failures must fail the wave and the exit code, never score as tok/s 0."""
+
+    def run_faulty(self, fault: str, cells: str = "A", tokens: int = 31) -> tuple[int, dict]:
+        server = FakeServer(fault=fault)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(server.close)
+        mem = {"local": {"swap_used_mib": 100.0}}
+        with mock.patch.object(bd, "snapshot_hosts", return_value=mem), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = bd.main(["--url", server.url, "--tokens", str(tokens), "--cells", cells, "--out", tmp.name])
+        with open(os.path.join(tmp.name, "bench.json"), encoding="utf-8") as fh:
+            return rc, json.load(fh)
+
+    def one_row(self, fault: str) -> dict:
+        server = FakeServer(fault=fault)
+        try:
+            return bd.stream_one(server.url, "fake/GLM", bd.spec("x", "hi", 31, True), time.perf_counter())
+        finally:
+            server.close()
+
+    def test_error_event_after_tokens(self):
+        row = self.one_row("error_event")
+        self.assertIn("server error event", row["error"])
+        self.assertIn("EngineCore died", row["error"])
+        rc, rep = self.run_faulty("error_event")
+        self.assertEqual(rc, 1)
+        a = next(s for s in rep["summary"] if s["group"] == "A")
+        self.assertEqual((a["n_waves"], a["n_failed"]), (0, 8))
+        self.assertIsNone(a["tok_s"])
+
+    def test_truncated_chunked_body(self):
+        row = self.one_row("truncate")
+        self.assertIn("IncompleteRead", row["error"])
+        rc, rep = self.run_faulty("truncate")
+        self.assertEqual(rc, 1)
+        a = next(s for s in rep["summary"] if s["group"] == "A")
+        self.assertEqual((a["n_waves"], a["n_failed"]), (0, 8))
+
+    def test_stream_without_done_or_usage(self):
+        self.assertEqual(self.one_row("no_done")["error"], "stream ended without [DONE]")
+        rc, _ = self.run_faulty("no_done", cells="K")
+        self.assertEqual(rc, 1)
+
+    def test_http_error_body_captured(self):
+        self.assertIn("is not a multimodal model", self.one_row("http400")["error"])
+
+    def test_short_forced_request_fails_exit(self):
+        rc, rep = self.run_faulty("short", tokens=NATURAL + 24)  # natural stop before 64
+        self.assertEqual(rc, 1)
+        a = next(s for s in rep["summary"] if s["group"] == "A")
+        self.assertEqual((a["n_waves"], a["short_requests"]), (8, 8))
+
+    def test_e_calibration_failure_is_a_failed_cell(self):
+        rc, rep = self.run_faulty("http400", cells="E,K")
+        self.assertEqual(rc, 1)
+        self.assertEqual(rep["failed_cells"], ["E"])
+        self.assertIn("K", rep["cells"])  # the bench carried on past E
 
 
 class TestTTFT(unittest.TestCase):
