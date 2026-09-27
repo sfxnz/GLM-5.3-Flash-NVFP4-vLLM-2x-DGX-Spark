@@ -135,7 +135,11 @@ finished items and retries errored ones. `--limit 3` is a quick smoke.
   PASS needs the point estimate >= -2.0 (SE about 0.93 at 1,010 items).
 - **groups** IFEval, GSM8K, MMLU-Pro, BFCL, Vision: a group FAILS only if the
   exact McNemar p < 0.01 **and** its accuracy drops >= 5 points.
-- more than 2% of pairs lost to errors: `INVALID` (exit 2).
+- `INVALID` (exit 2, no verdict) when more than 2% of pairs are lost to errors,
+  when either run has items the other lacks (a crashed or `--limit` run), when
+  the runs' `meta.ids_sha256` differ, or when the pairs miss any id pinned in
+  `quality/data/tier1_ids.json`. `--allow-subset` drops only the last check, for
+  two runs made with the same `--tasks` subset.
 
 ## Validating on the Sparks
 

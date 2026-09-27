@@ -100,8 +100,38 @@ class CompareTests(unittest.TestCase):
                 {"task": "gsm8k", "group": "GSM8K", "id": 1, "correct": 1}]) + "\n")
             pb.write_text(json.dumps({"task": "gsm8k", "group": "GSM8K", "id": 1, "correct": 1}) + "\n")
             self.assertEqual(C.load(pa)[("gsm8k", "1")]["correct"], 1)
-            self.assertEqual(C.main([str(pa), str(pb), "--json", str(Path(d, "c.json"))]), 0)
+            self.assertEqual(C.main([str(pa), str(pb), "--allow-subset", "--json", str(Path(d, "c.json"))]), 0)
             self.assertEqual(json.loads(Path(d, "c.json").read_text())["verdict"], "PASS")
+            # without --allow-subset, one item cannot stand in for the pinned 1,010
+            self.assertEqual(C.main([str(pa), str(pb)]), 2)
+
+    def test_truncated_candidate_is_invalid(self):
+        # reviewer repro: A = GSM8K 200 + Vision 100, B crashed after 10 (or 2) GSM8K rows
+        a = {**rows("GSM8K", "gsm8k", [1] * 200), **rows("Vision", "chartqa", [1] * 100)}
+        for n in (10, 2):
+            b = rows("GSM8K", "gsm8k", [1] * n)
+            res = C.compare(a, b)
+            self.assertEqual(res["verdict"], "INVALID")
+            self.assertEqual(res["unpaired"], {"only_a": 300 - n, "only_b": 0})
+        # and the other way round: extra items only in B
+        self.assertEqual(C.compare(rows("GSM8K", "gsm8k", [1] * 10), a)["verdict"], "INVALID")
+
+    def test_ids_sha_mismatch_is_invalid(self):
+        a = rows("GSM8K", "gsm8k", [1] * 100)
+        res = C.compare(a, a, meta_a={"ids_sha256": "x"}, meta_b={"ids_sha256": "y"})
+        self.assertEqual(res["verdict"], "INVALID")
+        self.assertEqual(C.compare(a, a, meta_a={"ids_sha256": "x"}, meta_b={"ids_sha256": "x"})["verdict"], "PASS")
+
+    def test_pinned_coverage(self):
+        exp = C.expected_keys()
+        self.assertEqual(len(exp), 1010)
+        full = {k: {"task": k[0], "group": "G", "id": k[1], "correct": 1} for k in exp}
+        self.assertEqual(C.compare(full, full, exp)["verdict"], "PASS")
+        part = dict(list(full.items())[:500])
+        res = C.compare(part, part, exp)  # same subset on both sides still misses pinned ids
+        self.assertEqual(res["verdict"], "INVALID")
+        self.assertIn("500/1010", res["invalid_reasons"][0])
+        self.assertEqual(C.compare(part, part)["verdict"], "PASS")  # --allow-subset path
 
 
 if __name__ == "__main__":
