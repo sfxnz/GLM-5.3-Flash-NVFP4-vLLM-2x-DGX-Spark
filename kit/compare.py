@@ -10,6 +10,10 @@ ratio of boot means, 95%).
     KEEP          lower bound > 0 and point gain >= +3%
     REVERT        upper bound < +1%
     INCONCLUSIVE  otherwise, or fewer than 2 valid boots in either arm
+The z-interval follows the PLAN. At 2-3 boots per arm a Welch t-interval
+(df ~2-4, t ~2.8-4.3) would be 1.4-2.2x wider, so this 95% interval is
+anti-conservative and false KEEPs are more likely than 5%. Treat a KEEP whose
+lower bound sits near 0 as needing another boot per arm.
 step_ms and acceptance_len get the same interval for reading, not for the verdict.
 For acceptance-changing experiments it also prints a paired per-prompt bootstrap
 of acceptance_len (c=1 cells, prompts matched by prompt_id). Stdlib only.
