@@ -26,6 +26,10 @@ MODULE = "model_executor/layers/quantization/glm53_fp8_w8a16.py"
 TOUCHED = [MODULE, "model_executor/model_loader/utils.py", "envs.py"]
 
 try:
+    import numpy as np
+except ImportError:
+    np = None
+try:
     import torch
 except ImportError:
     torch = None
@@ -87,14 +91,17 @@ class PatchTest(unittest.TestCase):
         last = fn.body[-1]
         self.assertIsInstance(last, ast.If)
         self.assertEqual(
-            ast.unparse(last.test), "_os.environ.get('GLM53_FP8_W8A16', '').strip()"
+            ast.unparse(last.test),
+            "_os.environ.get('GLM53_FP8_W8A16', '').strip() or "
+            "_os.environ.get('GLM53_NVFP4_W4A16', '').strip()",
         )
         self.assertIn("apply_glm53_fp8_w8a16(model, target_device)", ast.unparse(last))
 
     def test_compile_factor_only_when_set(self):
         text = (self.root / "envs.py").read_text()
-        self.assertEqual(text.count('factors["GLM53_FP8_W8A16"]'), 1)
-        self.assertIn('if os.getenv("GLM53_FP8_W8A16", "").strip():', text)
+        self.assertEqual(text.count("factors[_glm53] = "), 1)
+        self.assertIn('for _glm53 in ("GLM53_FP8_W8A16", "GLM53_NVFP4_W4A16"):', text)
+        self.assertIn('if os.getenv(_glm53, "").strip():', text)
 
     def test_refuses_drift_without_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,12 +182,259 @@ class PatchTest(unittest.TestCase):
         logits = (SRC / "model_executor/layers/logits_processor.py").read_text()
         self.assertIn("return lm_head.quant_method.apply(", logits)
 
+    def test_marlin_nvfp4_api_matches(self):
+        """quantize_layer_to_marlin_nvfp4 feeds prepare_fp4_layer_for_marlin a
+        ModelOpt-shaped layer; these are the v11 facts it relies on."""
+        text = (SRC / "model_executor/layers/quantization/utils/marlin_utils_fp4.py").read_text()
+        fns = {n.name: n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)}
+        self.assertEqual([a.arg for a in fns["prepare_fp4_layer_for_marlin"].args.args],
+                         ["layer", "input_dtype"])
+        gemm = [a.arg for a in fns["apply_fp4_marlin_linear"].args.args]
+        for arg in ("input", "weight", "weight_scale", "weight_global_scale", "workspace",
+                    "size_n", "size_k", "bias"):
+            self.assertIn(arg, gemm)
+        for needle in (
+            'is_nvfp4 = hasattr(layer, "weight_global_scale")',
+            "param_dtype = layer.params_dtype",
+            "assert layer.weight.shape == (part_size_n, part_size_k // 2)",
+            "qweight = layer.weight.view(torch.int32).T.contiguous()",
+            "weight_scale = layer.weight_scale.T.contiguous()",
+            "weight_global_scale = layer.weight_global_scale.to(torch.float32)",
+            # Why block scales must stay e4m3 normals (>= 2^-6):
+            "marlin_scales[marlin_scales < 2] = 0",
+            # Packing reference: element 2j is the low nibble.
+            "fp4_weight2 = fp4_weight << 4",
+            "[fp4_weight_part_2.unsqueeze(2), fp4_weight_part_1.unsqueeze(2)], 2",
+        ):
+            self.assertIn(needle, text)
+        kernel = (SRC / "model_executor/kernels/linear/nvfp4/marlin.py").read_text()
+        self.assertIn("weight_global_scale=layer.weight_global_scale,", kernel)
+
 
 def load_module(root: Path):
     spec = importlib.util.spec_from_file_location("glm53_fp8_w8a16", root / MODULE)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def module_constants() -> dict:
+    """Literal top-level constants of the installed module, read without torch."""
+    spec = importlib.util.spec_from_file_location("patch_v13_fp8", PATCH)
+    patch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(patch)
+    out = {}
+    for node in ast.parse(patch.MODULE_SRC).body:
+        if isinstance(node, ast.Assign):
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                continue
+            for t in node.targets:
+                names = t.elts if isinstance(t, ast.Tuple) else [t]
+                values = value if isinstance(t, ast.Tuple) else [value]
+                for n, v in zip(names, values):
+                    out[n.id] = v
+    return out
+
+
+# numpy reference of quantize_nvfp4, step for step (same fp32 ops and order).
+C = module_constants()
+if np is not None:
+    GRID = np.array(C["E2M1_GRID"], np.float32)
+    MIDS = np.array(C["E2M1_MIDS"], np.float32)
+
+
+def e4m3_encode(x):
+    """float32 in the e4m3 normal range [2^-6, 448] -> code, round half to even."""
+    f, e = np.frexp(x)
+    m = np.rint((f * 2 - 1) * 8)
+    carry = m == 8
+    return ((e + 6 + carry) * 8 + np.where(carry, 0, m)).astype(np.uint8)
+
+
+def e4m3_decode(code):
+    """Any finite e4m3fn code (subnormals included) -> float32."""
+    c = code.astype(np.int32)
+    e, m = (c >> 3) & 15, c & 7
+    mag = np.where(e == 0, np.ldexp(m / 8, -6), np.ldexp(1 + m / 8, e - 7))
+    return np.where(c & 0x80, -mag, mag).astype(np.float32)
+
+
+def np_quantize_nvfp4(w, steps=None, chunk_rows=256):
+    """Returns (packed uint8 (N, K/2), scale codes uint8 (N, K/16), global fp32)."""
+    steps = C["NVFP4_CODE_STEPS"] if steps is None else steps
+    n, k = w.shape
+    g = np.maximum(np.abs(w).max() / np.float32(6 * C["FP8_MAX"]), np.float32(1e-30))
+    nib = np.empty((n, k), np.uint8)
+    codes = np.empty((n, k // 16), np.uint8)
+    for i in range(0, n, chunk_rows):
+        wb = w[i : i + chunk_rows].reshape(-1, k // 16, 16)
+        s0 = np.abs(wb).max(-1) / (np.float32(6) * g)
+        base = e4m3_encode(np.clip(s0, np.float32(2**-6), np.float32(C["FP8_MAX"])))
+        sign = (wb < 0).astype(np.uint8) << 3
+        best = None
+        for step in steps:
+            code = np.clip(base.astype(np.int32) + step, C["E4M3_MIN_NORMAL_CODE"],
+                           C["E4M3_MAX_CODE"]).astype(np.uint8)
+            s = (e4m3_decode(code) * g)[..., None]
+            x = wb / s
+            idx = np.searchsorted(MIDS, np.abs(x), side="left").astype(np.uint8)
+            err = np.square(np.copysign(GRID[idx], x) * s - wb).sum(-1)
+            q = idx | sign
+            if best is None:
+                best, bcode, bq = err, code, q
+            else:
+                better = err < best
+                best = np.where(better, err, best)
+                bcode = np.where(better, code, bcode)
+                bq = np.where(better[..., None], q, bq)
+        nib[i : i + chunk_rows] = bq.reshape(-1, k)
+        codes[i : i + chunk_rows] = bcode
+    return nib[:, 0::2] | (nib[:, 1::2] << 4), codes, g
+
+
+def np_dequantize_nvfp4(packed, codes, g):
+    n = packed.shape[0]
+    nib = np.stack([packed & 15, packed >> 4], -1).reshape(n, -1)
+    v = np.where(nib & 8, -GRID[nib & 7], GRID[nib & 7])
+    return (v.reshape(n, -1, 16) * (e4m3_decode(codes) * g)[..., None]).reshape(n, -1)
+
+
+def bf16_bits_to_f32(u16):
+    return (u16.astype(np.uint32) << 16).view(np.float32)
+
+
+def rel_err(a, b):
+    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+
+CKPT = Path(os.path.expanduser(os.environ.get("HF_HUB_CACHE", "~/.cache/huggingface/hub"))) \
+    / "models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3"
+REAL_ROWS = 256  # rows read per tensor: 2-8 MiB each, dropped from page cache after
+REAL_TENSORS = {  # group -> checkpoint tensor (layer 5 is KDA, layer 3 is MLA)
+    "kda_in": "model.language_model.layers.5.self_attn.q_proj.weight",
+    "kda_o": "model.language_model.layers.5.self_attn.o_proj.weight",
+    "mla": "model.language_model.layers.3.self_attn.q_b_proj.weight",
+    "shared": "model.language_model.layers.3.mlp.shared_experts.down_proj.weight",
+    "lm_head": "lm_head.weight",
+}
+
+
+def read_headers(snapshot: Path) -> dict:
+    spec = importlib.util.spec_from_file_location(
+        "bench_fp8_marlin", HERE.parent / "tools/bench_fp8_marlin.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    return bench.read_headers(snapshot)
+
+
+def read_rows(headers: dict, name: str, rows: int):
+    path, start, dtype, (r, c) = headers[name]
+    assert dtype == "BF16", (name, dtype)
+    nbytes = min(rows, r) * c * 2
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        buf = os.pread(fd, nbytes, start)
+        os.posix_fadvise(fd, start, nbytes, os.POSIX_FADV_DONTNEED)
+    finally:
+        os.close(fd)
+    return bf16_bits_to_f32(np.frombuffer(buf, np.uint16).reshape(-1, c))
+
+
+def synthetic_weight(n=300, k=512, seed=0):
+    rng = np.random.default_rng(seed)
+    w = (rng.standard_normal((n, k)) * 0.02).astype(np.float32)
+    w[3, 7] = 1.5  # outlier: sets the global scale
+    w[5] *= 1e-2  # small row: block scales well inside the e4m3 range
+    w[6] *= 1e-5  # tiny row: block scales clamp to the e4m3 normal floor
+    w[9] = 0.0  # all-zero row
+    return bf16_bits_to_f32((w.view(np.uint32) >> 16).astype(np.uint16))  # truncate to bf16
+
+
+@unittest.skipIf(np is None, "numpy not importable")
+class Nvfp4ReferenceTest(unittest.TestCase):
+    """numpy-only: NVFP4 format facts, and the quantizer's error on real weights."""
+
+    def test_e2m1_grid_matches_marlin_bit_trick(self):
+        # rand_marlin_weight_nvfp4_like decodes a nibble as e4m3 bits
+        # (sign << 4 | magnitude << 2) times 2^6.
+        nib = np.arange(16, dtype=np.uint8)
+        as_e4m3 = ((nib & 8) << 4) | ((nib & 7) << 2)
+        want = np.where(nib & 8, -GRID[nib & 7], GRID[nib & 7])
+        np.testing.assert_array_equal(e4m3_decode(as_e4m3) * 64, want)
+
+    def test_e4m3_encode_roundtrips_normals_and_rounds_half_even(self):
+        codes = np.arange(C["E4M3_MIN_NORMAL_CODE"], C["E4M3_MAX_CODE"] + 1, dtype=np.uint8)
+        np.testing.assert_array_equal(e4m3_encode(e4m3_decode(codes)), codes)
+        self.assertEqual(float(e4m3_decode(np.uint8(C["E4M3_MAX_CODE"]))), 448.0)
+        mid = (e4m3_decode(np.array([8, 9], np.uint8)).sum() / 2).astype(np.float32)
+        self.assertEqual(int(e4m3_encode(mid)), 8)  # tie -> even mantissa
+
+    def test_marlin_scale_format_keeps_normal_block_scales(self):
+        """nvfp4_marlin_process_scales: half(s) * 2^7, zero if < 2, keep the top
+        byte of (bits << 1). Lossless for e4m3 normals, zero for subnormals."""
+        codes = np.arange(1, C["E4M3_MAX_CODE"] + 1, dtype=np.uint8)
+        s = e4m3_decode(codes).astype(np.float16) * np.float16(2**7)
+        s[s < 2] = 0
+        top = ((s.view(np.uint16) << 1) >> 8).astype(np.int32)  # S0E5M3 byte
+        back = np.where(top == 0, 0, np.ldexp(1 + (top & 7) / 8, (top >> 3) - 15 - 7))
+        normal = codes >= C["E4M3_MIN_NORMAL_CODE"]
+        np.testing.assert_array_equal(back[normal], e4m3_decode(codes[normal]))
+        self.assertTrue((back[~normal] == 0).all())
+
+    def test_roundtrip_error_bounds(self):
+        w = synthetic_weight()
+        packed, codes, g = np_quantize_nvfp4(w)
+        self.assertEqual(packed.shape, (300, 256))
+        self.assertEqual(codes.shape, (300, 32))
+        self.assertTrue(((codes >= 8) & (codes <= 0x7E)).all())
+        self.assertEqual(g.dtype, np.float32)
+        deq = np_dequantize_nvfp4(packed, codes, g)
+        self.assertTrue((deq[9] == 0).all())
+        # Elementwise: at most a 2-code-step clip (6 * 1.125^2 * 1.0625) of the
+        # chosen block scale, else half the widest E2M1 gap.
+        s = np.repeat(e4m3_decode(codes) * g, 16, axis=1)
+        self.assertTrue((np.abs(deq - w) <= 2.1 * s).all())
+        self.assertLess(rel_err(deq, w), 0.09)
+        # The global scale puts the largest block scale on the e4m3 maximum.
+        base_codes = np_quantize_nvfp4(w, steps=(0,))[1]
+        self.assertEqual(int(base_codes.max()), C["E4M3_MAX_CODE"])
+        # A row 1e-2 below the outlier keeps NVFP4 relative precision. Blocks
+        # below amax / (6 * 448 * 64) sit on the scale floor: only the
+        # absolute bound above holds for them (row 6).
+        self.assertLess(rel_err(deq[5], w[5]), 0.1)
+        self.assertTrue((codes[6] == C["E4M3_MIN_NORMAL_CODE"]).all())
+
+    def test_search_never_loses_to_amax_over_6(self):
+        w = synthetic_weight(seed=2)
+        base = np_dequantize_nvfp4(*np_quantize_nvfp4(w, steps=(0,)))
+        best = np_dequantize_nvfp4(*np_quantize_nvfp4(w))
+        blk = lambda d: np.square(d - w).reshape(300, -1, 16).sum(-1)  # noqa: E731
+        self.assertTrue((blk(best) <= blk(base)).all())
+        self.assertLess(rel_err(best, w), rel_err(base, w))
+
+    def test_chunking_is_exact(self):
+        w = synthetic_weight(n=257, k=256, seed=1)
+        a = np_quantize_nvfp4(w)
+        b = np_quantize_nvfp4(w, chunk_rows=7)
+        for x, y in zip(a, b):
+            np.testing.assert_array_equal(x, y)
+
+    @unittest.skipUnless(CKPT.is_dir(), f"checkpoint not at {CKPT}")
+    def test_real_checkpoint_error(self):
+        """Relative Frobenius error on the first REAL_ROWS rows of one tensor
+        per group. Measured 2026-09-27 on 09b04e5: 0.083-0.086 (FP8 per-channel
+        is 0.025-0.029 on the same tensors; amax/6 alone is 0.092-0.095)."""
+        headers = read_headers(CKPT)
+        for group, name in REAL_TENSORS.items():
+            w = read_rows(headers, name, REAL_ROWS)
+            base = rel_err(np_dequantize_nvfp4(*np_quantize_nvfp4(w, steps=(0,))), w)
+            best = rel_err(np_dequantize_nvfp4(*np_quantize_nvfp4(w)), w)
+            print(f"\n  {group:8} {name} {w.shape}: amax/6 {base:.4f}, search {best:.4f}",
+                  end="")
+            self.assertLess(best, 0.09, name)
+            self.assertLess(best, base * 0.95, name)
 
 
 @unittest.skipUnless(SRC.is_dir(), "set GLM53_V11_SRC to the v11 vLLM source")
@@ -302,6 +556,43 @@ class QuantizerTest(unittest.TestCase):
         """Marlin folds 2^120 into BF16 scales; realistic scales must stay finite."""
         s = self.m.quantize_per_channel(self.weight())[1]
         self.assertTrue(torch.isfinite(s * 2.0**120).all())
+
+    def test_selected_modes(self):
+        env = {"GLM53_FP8_W8A16": "draft,shared", "GLM53_NVFP4_W4A16": " kda_o, mla "}
+        self.assertEqual(self.m.selected_modes(env), {
+            "draft": "fp8", "shared": "fp8", "kda_o": "nvfp4", "mla": "nvfp4"})
+        self.assertEqual(self.m.selected_modes({}), {})
+        with self.assertRaisesRegex(ValueError, "both"):
+            self.m.selected_modes({"GLM53_FP8_W8A16": "mla", "GLM53_NVFP4_W4A16": "mla"})
+        with self.assertRaisesRegex(ValueError, "GLM53_NVFP4_W4A16: unknown"):
+            self.m.selected_modes({"GLM53_NVFP4_W4A16": "attn"})
+
+    @unittest.skipIf(np is None, "numpy not importable")
+    def test_nvfp4_matches_numpy_reference(self):
+        w = synthetic_weight()
+        packed, scale, g = self.m.quantize_nvfp4(torch.from_numpy(w).to(torch.bfloat16))
+        rp, rc, rg = np_quantize_nvfp4(w)
+        self.assertEqual((packed.dtype, scale.dtype, g.dtype),
+                         (torch.uint8, torch.float8_e4m3fn, torch.float32))
+        self.assertEqual(float(g), float(rg))
+        # Block SSE sums may round differently, so allow rare tie flips.
+        codes = scale.view(torch.uint8).numpy()
+        self.assertGreater((codes == rc).mean(), 0.999)
+        self.assertGreater((packed.numpy() == rp).mean(), 0.999)
+        deq = self.m.dequantize_nvfp4(packed, scale, g).numpy()
+        np.testing.assert_allclose(deq, np_dequantize_nvfp4(packed.numpy(), codes, rg),
+                                   rtol=1e-6, atol=0)
+        self.assertLess(rel_err(deq, w), 0.09)
+
+    def test_nvfp4_chunking_is_exact(self):
+        w = self.weight(n=257, k=256, seed=1)
+        a = self.m.quantize_nvfp4(w)
+        for chunk in (3 * 256, 1):
+            b = self.m.quantize_nvfp4(w, chunk_elems=chunk)
+            self.assertTrue(torch.equal(a[0], b[0]) and torch.equal(a[2], b[2]))
+            self.assertTrue(torch.equal(a[1].view(torch.uint8), b[1].view(torch.uint8)))
+        with self.assertRaises(ValueError):
+            self.m.quantize_nvfp4(torch.zeros(4, 24, dtype=torch.bfloat16))
 
 
 if __name__ == "__main__":
