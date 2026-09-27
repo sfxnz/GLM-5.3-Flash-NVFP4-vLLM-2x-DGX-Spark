@@ -146,7 +146,7 @@ Stop both ranks from the head:
 | `--mm-processor-cache-gb` | 1 (vLLM default is 4; caps processed image/video tensors cached in the head's EngineCore on UMA) |
 | Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; empty `MAX_NEW_TOKENS` drops the flag) |
 | `--block-size` | 2304 |
-| CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
+| CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | Reasoning / tools | `glm45` / `glm47` |
