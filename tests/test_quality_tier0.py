@@ -286,6 +286,21 @@ class RoundTripTests(unittest.TestCase):
         finally:
             worse.close()
 
+    def test_missing_token_ids_fails_loudly(self):
+        def no_ids(body):
+            out = count_chat(body)
+            out.pop("token_ids", None)
+            return out
+
+        s = FakeServe(no_ids)
+        try:
+            code, rec = self._run(s, "record", "--name", "noids")
+        finally:
+            s.close()
+        self.assertEqual(code, 1)
+        self.assertIn("greedy.error", {c["name"] for c in rec["criteria"] if not c["pass"]})
+        self.assertFalse((Path(self.tmp.name) / "ref/noids.json").exists())  # no vacuous reference
+
 
 if __name__ == "__main__":
     unittest.main()

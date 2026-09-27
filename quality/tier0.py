@@ -401,7 +401,9 @@ def capture_greedy(c: Client) -> list[list[int]]:
     seqs = []
     for p in GREEDY_PROMPTS:
         out = c.chat(p, max_tokens=GREEDY_TOKENS, temperature=0, return_token_ids=True, **OFF)
-        seqs.append(out["token_ids"] or [])
+        if not out.get("token_ids"):  # an empty sequence would make the hazard pass vacuously
+            raise RuntimeError(f"no token_ids returned for greedy prompt {p[:40]!r}")
+        seqs.append(out["token_ids"])
     return seqs
 
 
