@@ -4,7 +4,7 @@ set -euo pipefail
 
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
-SERVED_NAME="${SERVED_NAME:-nvidia/GLM-5.3-Flash-NVFP4}"
+SERVED_NAME="${SERVED_NAME:-$MODEL}"
 IMAGE="${IMAGE:-glm53-sm121-v11}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"

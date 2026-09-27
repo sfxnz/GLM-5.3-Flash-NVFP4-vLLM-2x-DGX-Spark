@@ -129,7 +129,7 @@ Stop both ranks from the head:
 | Setting | Value |
 |---|---|
 | Image | `glm53-sm121-v11` (local) |
-| Model | `nvidia/GLM-5.3-Flash-NVFP4` |
+| Model | `nvidia/GLM-5.3-Flash-NVFP4` (served under `SERVED_NAME`, which defaults to `$MODEL`) |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
 | `--max-num-seqs` | 2 |

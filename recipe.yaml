@@ -6,7 +6,7 @@
 model:
   id: &model nvidia/GLM-5.3-Flash-NVFP4
   revision: &revision 09b04e5e74bca08ca8549fc736d4cdd8624bfde3
-  served_name: &served_name nvidia/GLM-5.3-Flash-NVFP4
+  served_name: *model
   family: GLM-5.3-Flash
   params: 320B total / 18B active
   quant: NVFP4 W4A4 on routed experts and dense MLP (ModelOpt 0.47.0, nvfp4_experts_dense_mlp-kv_fp8_cast). Attn, shared experts, and vision stay BF16. KV scheme is kv_fp8_cast.
@@ -31,7 +31,7 @@ serve:
   # The `# BEGIN generated` block of run.sh, in run.sh order. Each key renders as NAME="${NAME:-value}".
   env:
     MODEL: *model
-    SERVED_NAME: *served_name
+    SERVED_NAME: $MODEL
     IMAGE: *image
     CONTAINER_NAME: glm53-flash-nvfp4
     PORT: 8000
@@ -67,7 +67,7 @@ readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
   defaults:
     - Image: "`{IMAGE}` (local)"
-    - Model: "`{MODEL}`"
+    - Model: "`{MODEL}` (served under `SERVED_NAME`, which defaults to `$MODEL`)"
     - "`--tensor-parallel-size` / `--nnodes`": "{TP} / {NNODES}"
     - "`--max-model-len`": "{MAX_MODEL_LEN}"
     - "`--max-num-seqs`": "{MAX_NUM_SEQS}"

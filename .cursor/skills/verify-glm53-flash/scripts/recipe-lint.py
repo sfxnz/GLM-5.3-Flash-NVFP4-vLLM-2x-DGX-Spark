@@ -125,7 +125,7 @@ def main() -> int:
         "KV_CACHE_MEMORY": "4445787956",
         "BLOCK_SIZE": "2304",
         "SPEC": "dflash2",
-        "SERVED_NAME": "nvidia/GLM-5.3-Flash-NVFP4",
+        "SERVED_NAME": "$MODEL",
         "LANGUAGE_MODEL_ONLY": "0",
         "FORCE_UNSAFE_VISION": "0",
         "CONTAINER_NAME": "glm53-flash-nvfp4",
