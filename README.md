@@ -173,9 +173,13 @@ Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCC
 ## Repeat the decode bench
 
 ```bash
-python3 bench_decode.py                    # published score: prose, c=1,2, 3 runs
-python3 bench_decode.py --phase structured # occupancy / acceptance only
+python3 bench_decode.py                       # ruler v2: cells A,B,J,H,K (~10 min)
+python3 bench_decode.py --full --out DIR      # all cells; writes DIR/bench.txt + bench.json
+python3 bench_decode.py --cells J             # structured count only (acceptance ceiling)
+python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/bench.json
 ```
+
+The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. A cell is INVALID if swap use grows more than 64 MiB while it runs. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
 
 ## Logs
 
