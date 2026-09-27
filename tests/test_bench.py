@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import itertools
 import json
 import math
 import os
@@ -30,6 +31,7 @@ K_SPEC = 7          # draft slots the fake server reports
 ACC = 3             # tokens per verify step the fake server emits
 STEP_S = 0.002      # fake verify step
 NATURAL = 40        # natural length when min_tokens is not sent
+BOOT_ID_TEXT = "1.79051205311e+09"  # evidence/iter-nvidia-linear-marlin/metrics-before.txt
 
 
 class FakeServer:
@@ -177,6 +179,8 @@ class FakeServer:
             f"vllm:request_prefill_time_seconds_sum{{{lab}}} {c['prefill_sum']}",
             f"vllm:request_prefill_time_seconds_count{{{lab}}} {c['prefill_count']}.0",
             "vllm:num_requests_running 0.0",
+            # prometheus_client's process collector, as the serve prints it
+            f"process_start_time_seconds {BOOT_ID_TEXT}",
         ]
         lines += [f'vllm:spec_decode_num_accepted_tokens_per_pos_total{{{lab},position="{i}"}} {v}.0'
                   for i, v in enumerate(per_pos)]
@@ -205,8 +209,12 @@ class TestMetrics(unittest.TestCase):
             'vllm:inter_token_latency_seconds_sum{engine="0"} 1.5',
             'vllm:inter_token_latency_seconds_count{engine="0"} 15.0',
             'vllm:inter_token_latency_seconds_bucket{engine="0",le="+Inf"} 15.0',
+            "# TYPE process_start_time_seconds gauge",
+            f"process_start_time_seconds {BOOT_ID_TEXT}",
         ])
         m = bd.parse_metrics(text)
+        self.assertEqual(m["boot_id"], 1790512053.11)
+        self.assertNotIn("boot_id", bd.parse_metrics(text.replace("process_start", "other_start")))
         self.assertEqual(m["drafts"], 15.0)
         self.assertEqual(m["accepted"], 21.0)
         self.assertEqual(m["per_pos"], {0: 12.0, 1: 4.0})
@@ -331,6 +339,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(rep["ruler_version"], "v2")
         self.assertEqual(rep["model"], "fake/GLM")
+        self.assertEqual(rep["boot_id"], float(BOOT_ID_TEXT))
         self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "bench.txt")))
         groups = {s["group"]: s for s in rep["summary"]}
         self.assertEqual(sorted(groups), sorted(
@@ -512,14 +521,20 @@ class TestTTFT(unittest.TestCase):
         self.assertAlmostEqual(row["tok_s"], 30 / row["decode_s"])
 
 
-def fake_report(tok_s: list[float], acc: dict[str, float] | None = None, valid: bool = True) -> dict:
-    """One boot: cell A with the given per-request tok_s; optional per-prompt acceptance."""
+_BOOT_IDS = itertools.count(1)
+
+
+def fake_report(tok_s: list[float], acc: dict[str, float] | None = None, valid: bool = True,
+                boot: float | None = None) -> dict:
+    """One panel: cell A with the given per-request tok_s; optional per-prompt acceptance.
+    Every call is its own boot unless `boot` (a boot_id) is given."""
     acc = acc or {}
     waves = [{"group": "A", "c": 1, "ok": True, "acceptance_len": a,
               "requests": [{"prompt_id": pid}]} for pid, a in acc.items()]
     mean = sum(tok_s) / len(tok_s)
     return {
         "ruler_version": "v2", "model": "m", "_path": "mem",
+        "boot_id": 1.79e9 + 3600 * next(_BOOT_IDS) if boot is None else boot,
         "summary": [{"group": "A", "valid": valid, "invalid_reason": None if valid else "swap",
                      "tok_s": {"mean": mean}, "step_ms": {"mean": 2400.0 / mean},
                      "acceptance_len": {"mean": 2.4}}],
@@ -545,14 +560,76 @@ class TestCompare(unittest.TestCase):
         self.assertEqual(self.verdict([20.0, 20.1, 19.9], [20.4, 20.5, 20.3]), "INCONCLUSIVE")
         # Big gain but noisy boots: the lower bound crosses zero.
         self.assertEqual(self.verdict([18.0, 22.0, 20.0], [19.0, 25.0, 22.0]), "INCONCLUSIVE")
-        # One boot per arm cannot give a boot-level interval.
-        self.assertEqual(self.verdict([20.0], [25.0]), "INCONCLUSIVE")
+        # One panel of one boot per arm: a point estimate, no interval at all.
+        self.assertEqual(self.verdict([20.0], [25.0]), "INCONCLUSIVE(single-boot)")
 
     def test_rel_change_math(self):
         c = compare.rel_change([10.0, 10.0], [11.0, 11.0])
         self.assertAlmostEqual(c["rel"], 0.1)
         self.assertAlmostEqual(c["lo"], 0.1)
-        self.assertIsNone(compare.rel_change([10.0], [11.0, 12.0]))
+        c = compare.rel_change([10.0], [11.0, 12.0])
+        self.assertAlmostEqual(c["rel"], 0.15)
+        self.assertEqual((c["lo"], c["hi"]), (None, None))
+        self.assertIsNone(compare.rel_change([], [11.0]))
+
+    def one_boot_each(self, a: list[float], b: list[float], **kw) -> dict:
+        """Each arm is several panels of a single boot."""
+        return compare.compare([fake_report([x], boot=1.0e9) for x in a],
+                               [fake_report([x], boot=2.0e9) for x in b], **kw)[0]
+
+    def test_same_boot_panels_are_one_boot(self):
+        # E1a vs E0 cell A: two tight panels per arm, -3.7%. The old per-file rule said REVERT.
+        row = self.one_boot_each([19.79, 19.66], [19.05, 18.94])
+        self.assertEqual((row["n_a"], row["n_b"], row["panels_a"], row["panels_b"]), (1, 1, 2, 2))
+        self.assertEqual(row["interval"], "within-boot")
+        self.assertAlmostEqual(row["tok_s"]["change"]["rel"], 19.0 / 19.73 - 1, places=3)
+        self.assertLess(row["tok_s"]["change"]["hi"], 0)  # the within-boot interval is still reported
+        self.assertEqual(row["verdict"], "INCONCLUSIVE(single-boot)")
+        # Two boots in A but one in B is still single-boot.
+        rows = compare.compare([fake_report([20.0]), fake_report([20.1])],
+                               [fake_report([x], boot=2.0e9) for x in (25.0, 25.1)])
+        self.assertEqual((rows[0]["n_a"], rows[0]["n_b"], rows[0]["interval"]), (2, 1, "within-boot"))
+
+    def test_boot_means_average_same_boot_panels(self):
+        # Boot 1 has panels 20 and 22 (mean 21), boot 2 one panel at 20: A = 20.5, not the panel mean 20.67.
+        arm_a = [fake_report([20.0], boot=1.0e9), fake_report([22.0], boot=1.0e9), fake_report([20.0], boot=1.1e9)]
+        arm_b = [fake_report([22.0]), fake_report([22.1])]
+        row = compare.compare(arm_a, arm_b)[0]
+        self.assertEqual((row["n_a"], row["panels_a"], row["interval"]), (2, 3, "boot"))
+        self.assertAlmostEqual(row["tok_s"]["a"], 20.5)
+
+    def test_single_boot_verdict_needs_the_band(self):
+        self.assertEqual(self.one_boot_each([20.0, 20.1], [17.0, 17.1])["verdict"], "REVERT")  # -15%
+        self.assertEqual(self.one_boot_each([20.0, 20.1], [24.0, 24.1])["verdict"], "KEEP")    # +20%
+        # +3.5%, tight: a KEEP across boots, not beyond the 4% band on one boot.
+        self.assertEqual(self.one_boot_each([20.0, 20.02], [20.7, 20.72])["verdict"], "INCONCLUSIVE(single-boot)")
+        # The band is a flag: at 2% the E1a-vs-E0 cell A panels would REVERT.
+        row = self.one_boot_each([19.79, 19.66], [19.05, 18.94], band=0.02)
+        self.assertEqual(row["verdict"], "REVERT")
+
+    def test_files_without_boot_id_group_by_evidence_dir(self):
+        def legacy(path):
+            rep = fake_report([20.0])
+            del rep["boot_id"]
+            rep["_path"] = path
+            return compare.boot_of(rep)
+
+        self.assertEqual(legacy("ev/e1a/bench-1/bench.json"), legacy("ev/e1a/bench-3-A/bench.json"))
+        self.assertEqual(legacy("ev/e1a/bench-1/bench.json"), os.path.relpath("ev/e1a"))
+        self.assertNotEqual(legacy("ev/e1a/bench-1/bench.json"), legacy("ev/e1b/bench-1/bench.json"))
+        self.assertNotEqual(legacy("ev/rebench-1/bench.json"), legacy("ev/rebench-2/bench.json"))
+        self.assertEqual(compare.boot_of(fake_report([20.0], boot=1790512053.11)),
+                         "serve started 2026-09-27T12:27:33Z")
+
+    def test_e1_boots_do_not_revert(self):
+        """E1a (v13, switches off) vs E0 (v11): one boot each, same code path. Every cell used to REVERT."""
+        ev = os.path.join(ROOT, "evidence")
+        e0 = compare.load([f"{ev}/e0-nvidia-v11/bench-{i}/bench.json" for i in (1, 2)])
+        e1a = compare.load([f"{ev}/e1a-v13-off/bench-{i}/bench.json" for i in ("1", "2", "3-A")])
+        rows = {r["group"]: r for r in compare.compare(e0, e1a)}
+        self.assertEqual({r["verdict"] for r in rows.values()}, {"INCONCLUSIVE(single-boot)"})
+        self.assertEqual((rows["A"]["n_a"], rows["A"]["n_b"], rows["A"]["panels_b"]), (1, 1, 2))
+        self.assertAlmostEqual(rows["A"]["tok_s"]["change"]["rel"], -0.037, places=3)
 
     def test_invalid_boot_skipped(self):
         arm_a = [fake_report([20.0]), fake_report([20.2]), fake_report([19.8])]

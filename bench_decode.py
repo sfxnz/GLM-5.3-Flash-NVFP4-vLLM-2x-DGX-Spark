@@ -135,11 +135,14 @@ SPEC_NAMES = {
     "vllm:request_prefill_time_seconds_count": "prefill_count",
 }
 PER_POS = "vllm:spec_decode_num_accepted_tokens_per_pos"
+# The API server's start time: fixed for one serve boot, new on the next.
+BOOT_METRIC = "process_start_time_seconds"
 _POS_RE = re.compile(r'position="(\d+)"')
 
 
 def parse_metrics(text: str) -> dict:
-    """Sum the counters we need across label sets. per_pos is keyed by position."""
+    """Sum the counters we need across label sets. per_pos is keyed by position.
+    boot_id is BOOT_METRIC when the server exposes it."""
     out: dict = {"per_pos": {}}
     for line in text.splitlines():
         if not line or line.startswith("#"):
@@ -158,6 +161,8 @@ def parse_metrics(text: str) -> dict:
             if m:
                 pos = int(m.group(1))
                 out["per_pos"][pos] = out["per_pos"].get(pos, 0.0) + value
+        elif name == BOOT_METRIC:
+            out["boot_id"] = value
         elif name in SPEC_NAMES:
             key = SPEC_NAMES[name]
             out[key] = out.get(key, 0.0) + value
@@ -635,6 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         "url": args.url,
         "model": model,
         "served_models": served,
+        # kit/compare.py averages the panels of one boot before comparing boots.
+        "boot_id": (scrape(metrics_url) or {}).get("boot_id"),
         "args": vars(args),
         "cells": {},
         "waves": [],

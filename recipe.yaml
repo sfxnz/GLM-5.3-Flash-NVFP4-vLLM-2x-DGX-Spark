@@ -74,7 +74,6 @@ serve:
     SPEC: dflash2
     JIT_CACHE: 1
     JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
-    WARM_SHARDS: 1
     # 1 = fp32-output lm_head (target and DFlash2 drafter); needs the v13 image.
     # Stays 0 until the A/A and bench measure it.
     LOGITS_FP32: 0
@@ -101,7 +100,6 @@ readme:
     - Draft: "`{DRAFT_MODEL}` @ `{DRAFT_REV}` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter)"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
     - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
-    - Shard warmer: "`WARM_SHARDS={WARM_SHARDS}`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off)"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
     - API: "`http://<head>:{PORT}/v1`"
 

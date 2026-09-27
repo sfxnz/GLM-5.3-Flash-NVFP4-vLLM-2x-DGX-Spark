@@ -151,7 +151,6 @@ Stop both ranks from the head:
 | Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
-| Shard warmer | `WARM_SHARDS=1`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
@@ -194,7 +193,7 @@ With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` a
 - `TRITON_CACHE_DIR`
 - `TILELANG_CACHE_DIR`
 
-The first boot on an image still compiles everything. That covers FlashInfer topk during PROFILE; FlashInfer batch_mla, batch_prefill, xqa and sampling during KV_READY; and DeepGEMM and TileLang mHC. Later boots should load those kernels from disk instead of running nvcc and ptxas; on 2026-09-27 the compilers together peaked at 3.5–3.9 GiB during PROFILE. The skipped compile time and memory are not measured yet. A new image gets a new directory, so it never reuses kernels built by an older one. `JIT_CACHE=0` gives every boot an empty cache, as before. The worker gets the same settings from the head and keys its directory by its own image ID.
+The first boot on an image still compiles everything. That covers FlashInfer topk during PROFILE; FlashInfer batch_mla, batch_prefill, xqa and sampling during KV_READY; and DeepGEMM and TileLang mHC. Later boots should load those kernels from disk instead of running nvcc and ptxas; on 2026-09-27 the compilers together peaked at 3.5–3.9 GiB during PROFILE. On `glm53-sm121-v13` the second boot with a warm cache was ready in 16.3 min instead of 21.2 (init engine 46 s instead of 333 s) and started no compiler process at boot or while serving (`evidence/e1b-v13-warmcache-draft-bf582e4/notes.txt`). A new image gets a new directory, so it never reuses kernels built by an older one. `JIT_CACHE=0` gives every boot an empty cache, as before. The worker gets the same settings from the head and keys its directory by its own image ID.
 
 The container runs as root, so the cached files are root-owned. To clear a cache, stop the serve, then run this on each node:
 
@@ -204,24 +203,18 @@ sudo rm -rf ~/projects/data/glm53-jit-cache/<id>                   # one image
 docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v11 -rf /c/<id>   # no sudo
 ```
 
-## Shard warmer
-
-On 2026-09-27 the head loaded weights in 770 s and the worker in 262 s. The cause on spark1 is diagnosed as a copy path driven by UVM page faults, made worse by low, fragmented free memory. `WARM_SHARDS=1` (the default) starts `kit/shard_warm.py` in the background on the head right after `docker run`. It needs no root. It follows `docker logs -f` for vLLM's `Loading safetensors checkpoint shards: … n/N` lines. Each time one appears, it calls `posix_fadvise(WILLNEED)` on the next shard only, in vLLM's natural-sort order. Extra page cache therefore stays at one shard (8.33 GiB at most on this pack). It exits at `Loading weights took` or when the container stops.
-
-It logs each shard it advises, and how long the call took, to `JIT_CACHE_DIR/logs/shard_warm-<host>-<UTC>.log`.
-
-`WARM_SHARDS=all` also starts it on the worker; the head copies it to `spark2:/tmp/glm53-shard_warm.py` next to `run.sh`. vLLM prints the progress lines on global rank 0 only, so on the worker the warmer currently just logs that there was nothing to follow. `WARM_SHARDS=0` turns it off. The effect on load time is not measured yet.
-
 ## Repeat the decode bench
 
 ```bash
 python3 bench_decode.py                       # ruler v2: cells A,B,J,H,K (~10 min)
 python3 bench_decode.py --full --out DIR      # all cells; writes DIR/bench.txt + bench.json
 python3 bench_decode.py --cells J             # structured count only (acceptance ceiling)
-python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/bench.json
+python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/bench.json   # 2+ boots per arm
 ```
 
-The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. Cell T (`--full` or `--cells T`) sends A's prompts with thinking on (`enable_thinking: true`, no `reasoning_effort`, so Max effort), the regime upstream DFlash2 was trained and benchmarked in (acceptance 4-5.8 on GSM8K / MT-Bench). Its 512 forced tokens count reasoning + content, and TTFT ends at the first reasoning or content token. T is not a published score. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
+The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. Cell T (`--full` or `--cells T`) sends A's prompts with thinking on (`enable_thinking: true`, no `reasoning_effort`, so Max effort), the regime upstream DFlash2 was trained and benchmarked in (acceptance 4-5.8 on GSM8K / MT-Bench). Its 512 forced tokens count reasoning + content, and TTFT ends at the first reasoning or content token. T is not a published score. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell.
+
+`kit/compare.py` uses the serve boot as the sample, not the `bench.json` file. `bench.json` records the boot as `boot_id` (the API server's `process_start_time_seconds`). Older files are grouped by their `evidence/<boot>/bench-N/` directory. Panels from one boot are averaged first. With 2 or more boots per arm it prints KEEP, REVERT or INCONCLUSIVE per cell. With one boot in an arm, the only interval is the within-boot one from same-boot panels, which cannot see boot-to-boot variance. The verdict is then `INCONCLUSIVE(single-boot)` unless that interval clears the ±4% cross-boot band (`--boot-band`). On the same code path, E1a moved tok/s by up to 3.7% against E0 (`evidence/e1a-v13-off/notes.txt`). The old per-file rule called that a REVERT. For a verdict, run 2 boots per arm, ABAB.
 
 ## Logs
 
