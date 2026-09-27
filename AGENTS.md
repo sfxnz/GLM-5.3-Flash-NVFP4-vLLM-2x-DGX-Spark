@@ -34,6 +34,12 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
 
+## Measured (E1, 2026-09-27)
+
+- Build once on the head and ship it: `docker save glm53-sm121-v13 | ssh spark2 docker load` took 253 s and gave both nodes the same image ID. Separate builds do not; E0 ran two different v11 builds (`evidence/e1-v13-build/`).
+- `JIT_CACHE=1` pays from the second boot on an image: ready 21.2 → 16.3 min, init engine 333 → 46 s, no compiler process at boot or while serving, and the first c=2 wave's TTFT falls from 8.7 s to 0.6 s. The cache is ~131 MB per node (`evidence/e1b-v13-warmcache-draft-bf582e4/`).
+- Non-MoE linears (KDA, MLA, shared experts, lm_head read twice, drafter), per rank per verify step at M=8: BF16 41.1 ms, Marlin FP8 W8A16 20.8 ms, Marlin NVFP4 W4A16 12.4 ms. These are kernel times; a serve saves at most ~20 ms (FP8) or ~29 ms (NVFP4) of a ~115 ms step (`evidence/e1-microbench/`).
+
 ## Verify
 
 ```bash
