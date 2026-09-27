@@ -26,7 +26,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 - Any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. `flashinfer_cutlass` OOM'd spark2 during JIT after 90.67 GiB weights. Stay on Marlin until an SM121 W4A4 MoE path exists that does not JIT-OOM.
 - Any `LINEAR_BACKEND` other than `marlin` unless `FORCE_UNSAFE_LINEAR=1`. `--moe-backend` covers routed experts only; the nvidia pack's layer 0-2 dense MLP is NVFP4, and auto selection picks a FlashInfer FP4 GEMM that JIT-compiles on sm_121 during the first profile forward.
 - `SPEC=mtp` with `MODEL=nvidia/GLM-5.3-Flash-NVFP4` unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. LibertAI's MTP experts are NVFP4.
-- `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`.
+- `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`, and anything other than exactly `0` or `1` always.
 - KV pin at or below `3886945403` (3.62 GiB) cannot hold 327680. Tony's 3.0 GiB pin is a 262144-ctx budget.
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
