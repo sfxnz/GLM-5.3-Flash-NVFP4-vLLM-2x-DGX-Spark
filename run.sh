@@ -59,8 +59,11 @@ MOE_BACKEND="${MOE_BACKEND:-marlin}"
 LINEAR_BACKEND="${LINEAR_BACKEND:-marlin}"
 REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
-DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
-DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+# DFlash2 snapshot (full commit sha). bf582e4 (2026-08-31) and dc77ff1 (2026-08-28)
+# are weights-only updates with the same config.json; the default waits on an A/B.
+DRAFT_REV="${DRAFT_REV:-7d74cdd881ed7e32c31175984a67823127b66cfe}"
+DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
+DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
 # the glm53-sm121-v11 image) or mtp (GLM's native MTP head; LibertAI pack only).
 SPEC="${SPEC:-dflash2}"
@@ -73,6 +76,10 @@ JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # ahead) while rank 0 loads. 1 = head only (spark1 loads ~3x slower than
 # spark2), all = both nodes, 0 = off. Logs go to JIT_CACHE_DIR/logs/.
 WARM_SHARDS="${WARM_SHARDS:-1}"
+# LOGITS_FP32=1 runs the lm_head GEMM with fp32 output (bf16 inputs) for the
+# target and the DFlash2 drafter, via --hf-overrides text_config.head_dtype.
+# Needs the v13 image (docker/patch_v13_determinism.py). 0 until measured.
+LOGITS_FP32="${LOGITS_FP32:-0}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -151,12 +158,28 @@ if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY: want exactly 0 or 1." >&2
   exit 1
 fi
+# The draft path is snapshots/<rev>, and the hub names snapshot dirs by full commit sha only.
+if [[ ! "$DRAFT_REV" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DRAFT_REV=$DRAFT_REV: want a full 40-hex commit sha (the draft path is snapshots/\$DRAFT_REV)." >&2
+  exit 1
+fi
 if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
   echo "JIT_CACHE=$JIT_CACHE: want exactly 0 or 1." >&2
   exit 1
 fi
 if [[ "$WARM_SHARDS" != 0 && "$WARM_SHARDS" != 1 && "$WARM_SHARDS" != all ]]; then
   echo "WARM_SHARDS=$WARM_SHARDS: want 0, 1 (head only) or all." >&2
+  exit 1
+fi
+if [[ "$LOGITS_FP32" != 0 && "$LOGITS_FP32" != 1 ]]; then
+  echo "LOGITS_FP32=$LOGITS_FP32: want exactly 0 or 1." >&2
+  exit 1
+fi
+# v11's LogitsProcessor takes a head_dtype override only on an
+# UnquantizedEmbeddingMethod lm_head; ModelOpt's excluded lm_head is
+# UnquantizedLinearMethod, so v11 raises at the first logits.
+if [[ "$LOGITS_FP32" == 1 && "$IMAGE" == glm53-sm121-v11 ]]; then
+  echo "LOGITS_FP32=1 needs IMAGE=glm53-sm121-v13 (docker/patch_v13_determinism.py). On $IMAGE the fp32 lm_head raises ValueError at the first logits: v11 accepts head_dtype only for an UnquantizedEmbeddingMethod lm_head, and ModelOpt gives this one UnquantizedLinearMethod." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
@@ -168,11 +191,16 @@ ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 # Extra container env on both ranks: space-separated NAME=VALUE pairs, e.g.
-# EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'. Engine/runtime names only.
+# EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'. Engine/runtime names only.
 EXTRA_ENV="${EXTRA_ENV:-}"
 extra_env_args=()
+jit_verbose="" jit_debug=""
 read -r -a extra_env_pairs <<<"$EXTRA_ENV"
 for pair in "${extra_env_pairs[@]}"; do
+  case "$pair" in
+    FLASHINFER_JIT_VERBOSE=*) jit_verbose="${pair#*=}" ;;
+    FLASHINFER_JIT_DEBUG=*) jit_debug="${pair#*=}" ;;
+  esac
   name="${pair%%=*}"
   [[ "$pair" == *=* ]] || name="(an entry without =)"
   if [[ "$pair" != *=* || "$name" =~ TOKEN|KEY|SECRET ]] ||
@@ -182,6 +210,12 @@ for pair in "${extra_env_pairs[@]}"; do
   fi
   extra_env_args+=(-e "$pair")
 done
+# This image's FlashInfer reads FLASHINFER_JIT_VERBOSE=1 as FLASHINFER_JIT_DEBUG=1 when DEBUG
+# is unset (flashinfer/jit/core.py:525-528): every JIT kernel builds -O0 --device-debug.
+if [[ "$jit_verbose" == 1 && "$jit_debug" != 0 ]]; then
+  echo "EXTRA_ENV FLASHINFER_JIT_VERBOSE=1 without FLASHINFER_JIT_DEBUG=0 builds every FlashInfer JIT kernel -O0 --device-debug (flashinfer/jit/core.py:525-528). The serving kernels would be debug builds, and on 2026-09-27 the topk ptxas grew past 3.28 GiB and PROFILE fell under the 8 GiB floor. Add FLASHINFER_JIT_DEBUG=0 to keep verbose ninja output with -O3 builds." >&2
+  exit 1
+fi
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -293,8 +327,8 @@ ensure_weights() {
     log "Using pinned draft snapshot $DRAFT_SNAPSHOT"
   elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
-    log "Downloading $DRAFT_MODEL (resumes under $HF_CACHE)"
-    "$HF" download "$DRAFT_MODEL"
+    log "Downloading $DRAFT_MODEL @ $DRAFT_REV (resumes under $HF_CACHE)"
+    "$HF" download "$DRAFT_MODEL" --revision "$DRAFT_REV"
   else
     # The dflash config points at the pinned snapshot path inside the
     # container, so vLLM cannot pull it on demand.
@@ -420,6 +454,14 @@ start_local() {
   if [[ "$MAX_NEW_TOKENS" != 0 ]]; then
     gen_args+=(--override-generation-config "{\"max_new_tokens\": $MAX_NEW_TOKENS}")
   fi
+  # Nested on purpose: the language model's LogitsProcessor reads its
+  # ModelConfig built from text_config, and Glm5NextConfig mirrors text_config
+  # keys to the top level, where the DFlash2 drafter's LogitsProcessor reads it.
+  # A flat {"head_dtype": ...} would reach the drafter only.
+  local head_args=()
+  if [[ "$LOGITS_FP32" == 1 ]]; then
+    head_args+=(--hf-overrides '{"text_config":{"head_dtype":"float32"}}')
+  fi
 
   log "Starting $CONTAINER_NAME rank=$rank model=$serve_model ctx=$MAX_MODEL_LEN kv=$KV_CACHE_MEMORY eager=$ENFORCE_EAGER spec=$SPEC"
   docker run -d \
@@ -462,6 +504,7 @@ start_local() {
     "${template_args[@]}" \
     "${mm_args[@]}" \
     "${gen_args[@]}" \
+    "${head_args[@]}" \
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
@@ -501,7 +544,7 @@ FORWARD_ENVS=(
   FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
+  DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS LOGITS_FP32
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -538,9 +581,9 @@ check_image_parity() {
 }
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s draft_rev=%s moe=%s linear=%s logits_fp32=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+    "$SNAPSHOT_REV" "$DRAFT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$LOGITS_FP32" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
   # The real key is each node's own image ID; validate-only does not call docker.
   set_jit_args "$JIT_CACHE_DIR/<image-id>"
   printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"

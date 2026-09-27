@@ -98,7 +98,18 @@ class Guards(RunShCase):
                 self.assertRefused(self.run_sh(EXTRA_ENV=bad), "EXTRA_ENV refuses")
 
     def test_extra_env_allowlist_accepted(self):
-        self.assertAccepted(self.run_sh(EXTRA_ENV="MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 NCCL_DEBUG=INFO GLM53_X=1"))
+        self.assertAccepted(self.run_sh(EXTRA_ENV="MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 NCCL_DEBUG=INFO GLM53_X=1 "
+                                                  "FLASHINFER_JIT_DEBUG=0"))
+
+    def test_jit_verbose_needs_jit_debug_0(self):
+        # FlashInfer reads VERBOSE=1 as DEBUG=1 when DEBUG is unset: -O0 --device-debug serving kernels.
+        for bad in ("FLASHINFER_JIT_VERBOSE=1", "MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1",
+                    "FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=1"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(EXTRA_ENV=bad), "FLASHINFER_JIT_DEBUG=0")
+        for ok in ("FLASHINFER_JIT_DEBUG=0 FLASHINFER_JIT_VERBOSE=1", "FLASHINFER_JIT_VERBOSE=0"):
+            with self.subTest(ok=ok):
+                self.assertAccepted(self.run_sh(EXTRA_ENV=ok))
 
     def test_max_new_tokens_must_be_integer(self):
         self.assertRefused(self.run_sh(MAX_NEW_TOKENS="12x"), "positive integer")
@@ -151,6 +162,34 @@ class Forwarding(RunShCase):
         self.assertEqual(head.stdout, worker.stdout)
 
 
+class DraftRev(RunShCase):
+    PIN = "7d74cdd881ed7e32c31175984a67823127b66cfe"
+    NEWER = "bf582e4eacc1810f76656d1811693ff6c6737d2a"
+
+    def test_default_is_the_pin(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        self.assertIn(f" draft_rev={self.PIN} ", proc.stdout)
+        words = shell_words(worker_command(proc.stdout))
+        self.assertIn(f"DRAFT_REV={self.PIN}", words)
+        self.assertIn(f"snapshots/{self.PIN}\"", next(w for w in words if w.startswith("SPEC_CONFIG=")))
+
+    def test_override_drives_both_paths_and_the_worker(self):
+        proc = self.run_sh(DRAFT_REV=self.NEWER)
+        self.assertAccepted(proc)
+        self.assertIn(f" draft_rev={self.NEWER} ", proc.stdout)
+        words = shell_words(worker_command(proc.stdout))
+        self.assertIn(f"DRAFT_REV={self.NEWER}", words)
+        spec = next(w for w in words if w.startswith("SPEC_CONFIG="))
+        self.assertIn(f"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{self.NEWER}\"", spec)
+        self.assertNotIn(self.PIN, proc.stdout)
+
+    def test_short_or_branch_rev_refused(self):
+        for bad in ("bf582e4", "main", self.NEWER.upper()):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(DRAFT_REV=bad), "want a full 40-hex commit sha")
+
+
 class JitCache(RunShCase):
     ENVS = ("FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", "VLLM_CACHE_ROOT=/jit-cache/vllm",
             "DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm", "TRITON_CACHE_DIR=/jit-cache/triton",
@@ -201,6 +240,37 @@ class WarmShards(RunShCase):
         self.assertIn("WARM_SHARDS=all", shell_words(worker_command(self.run_sh(WARM_SHARDS="all").stdout)))
 
 
+class LogitsFp32(RunShCase):
+    V13 = {"IMAGE": "glm53-sm121-v13"}
+
+    def test_default_is_0(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        self.assertIn(" logits_fp32=0 ", proc.stdout)
+        self.assertIn("LOGITS_FP32=0", shell_words(worker_command(proc.stdout)))
+
+    def test_1_is_forwarded_and_the_worker_resolves_the_same(self):
+        head = self.run_sh(LOGITS_FP32="1", **self.V13)
+        self.assertAccepted(head)
+        self.assertIn(" logits_fp32=1 ", head.stdout)
+        words = shell_words(worker_command(head.stdout))
+        self.assertIn("LOGITS_FP32=1", words)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "VALIDATE_ONLY": "1",
+               **dict(w.split("=", 1) for w in words[1:-2])}
+        worker = subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertAccepted(worker)
+        self.assertEqual(head.stdout, worker.stdout)
+
+    def test_only_0_or_1(self):
+        for bad in ("2", "yes", "01", "true"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(LOGITS_FP32=bad, **self.V13), f"LOGITS_FP32={bad}: want exactly 0 or 1")
+
+    def test_1_refused_on_the_v11_image(self):
+        self.assertRefused(self.run_sh(LOGITS_FP32="1"), "LOGITS_FP32=1 needs IMAGE=glm53-sm121-v13")
+        self.assertAccepted(self.run_sh(LOGITS_FP32="0"))
+
+
 class StubbedLaunch(RunShCase):
     """The real launch path (no VALIDATE_ONLY) with docker, sudo and curl stubbed.
 
@@ -233,11 +303,11 @@ class StubbedLaunch(RunShCase):
             (self.snap / f"model-{i:05d}-of-00033.safetensors").write_bytes(b"\0" * 4096)
 
     def launch(self, **extra):
-        env = self.base_env(
-            PATH=f"{self.home / 'bin'}:{os.environ['PATH']}", STUB_LOG=str(self.log),
-            STUB_DOCKER_LOGS=str(REPO / "evidence/iter-nvidia-linear-marlin/head.docker.log"),
-            IMAGE="glm53-test-stub-image", CONTAINER_NAME="glm53-test-stub", HF_CACHE=str(self.home / "hf"),
-            SNAPSHOT=str(self.snap), SKIP_DOWNLOAD="1", **extra)
+        env = self.base_env(**{
+            "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
+            "STUB_DOCKER_LOGS": str(REPO / "evidence/iter-nvidia-linear-marlin/head.docker.log"),
+            "IMAGE": "glm53-test-stub-image", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
+            "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
         del env["VALIDATE_ONLY"]
         return subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
 
@@ -271,6 +341,28 @@ class StubbedLaunch(RunShCase):
         self.assertNotIn("/jit-cache", self.log.read_text())
         self.assertNotIn("Shard warmer", proc.stdout)
         self.assertFalse((self.home / "projects/data/glm53-jit-cache").exists())
+
+    def test_draft_download_pins_draft_rev(self):
+        self.stub("hf", 'echo "hf $*" >>"$STUB_LOG"\n')
+        rev = DraftRev.NEWER
+        proc = self.launch(SKIP_DOWNLOAD="0", JIT_CACHE="0", WARM_SHARDS="0", DRAFT_REV=rev)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"Downloading incoai/GLM-5.3-Flash-DFlash2 @ {rev}", proc.stdout)
+        calls = [line for line in self.log.read_text().splitlines() if line.startswith("hf ")]
+        self.assertEqual(calls, [f"hf download incoai/GLM-5.3-Flash-DFlash2 --revision {rev}"])
+        run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
+        self.assertIn(f"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{rev}", run)
+
+    def test_logits_fp32_passes_the_nested_head_dtype_override(self):
+        want = '--hf-overrides {"text_config":{"head_dtype":"float32"}} '
+        for value, present in (("0", False), ("1", True)):
+            with self.subTest(LOGITS_FP32=value):
+                self.log.unlink(missing_ok=True)
+                proc = self.launch(LOGITS_FP32=value, JIT_CACHE="0", WARM_SHARDS="0")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
+                self.assertEqual(want in run, present, run)
+                self.assertEqual("--hf-overrides" in run, present, run)
 
     def test_worker_warms_only_with_all(self):
         proc = self.launch(ROLE="worker")

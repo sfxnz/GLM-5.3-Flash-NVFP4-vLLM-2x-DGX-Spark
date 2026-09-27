@@ -68,7 +68,7 @@ MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc2566
 
 `run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16 that are not in the quant ignore list, so they cannot load (NVFP4 params expected) or fit (~6.9 GiB per rank). LibertAI's MTP experts are NVFP4.
 
-`run.sh` downloads the draft weights (~2.2 GiB, snapshot pinned) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":$NUM_SPECULATIVE_TOKENS}` to both ranks. Default is 7. CUDA graph sizes are derived as 1/2/4 plus `(num_spec+1)×{1..MAX_NUM_SEQS}`.
+`run.sh` downloads the draft weights (~2.2 GiB) at the pinned `DRAFT_REV` (a full commit sha, see Defaults) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":$NUM_SPECULATIVE_TOKENS}` to both ranks. Default is 7. CUDA graph sizes are derived as 1/2/4 plus `(num_spec+1)×{1..MAX_NUM_SEQS}`. `DRAFT_REV` sets both the host and container snapshot paths, and the head forwards it to the worker. Two newer revisions have the same `config.json` as the pin, so they are weights-only updates: `bf582e4eacc1810f76656d1811693ff6c6737d2a` (2026-08-31) and `dc77ff1c99eeb2df044ee3d4f0094eb033fee410` (2026-08-28). The default stays on the pin until an A/B against it is done, for example `DRAFT_REV=bf582e4eacc1810f76656d1811693ff6c6737d2a ./run.sh`.
 
 Seven slots is the trained block. At four sequences those extra KDA copies starve the 4th request (~10 s queue). The default therefore runs two sequences. Rollback to the old four-way occupancy:
 
@@ -148,6 +148,7 @@ Stop both ranks from the head:
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
+| Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
 | Shard warmer | `WARM_SHARDS=1`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off) |
@@ -181,7 +182,7 @@ export MAX_NUM_SEQS=2
 
 Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`.
 
-`EXTRA_ENV` adds container env on both ranks as space-separated `NAME=VALUE` pairs, for example `EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'`. Names must match `^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$` or be `MAX_JOBS`; names containing `TOKEN`, `KEY` or `SECRET` are refused. `EXTRA_ARGS` adds `vllm serve` flags on both ranks. The head forwards both, and every other setting, to the worker from one `FORWARD_ENVS` list; `VALIDATE_ONLY=1 ./run.sh` prints the exact worker command.
+`EXTRA_ENV` adds container env on both ranks as space-separated `NAME=VALUE` pairs, for example `EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'`. For verbose FlashInfer JIT logs use `EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=0'`: this image's FlashInfer treats `FLASHINFER_JIT_VERBOSE=1` as `FLASHINFER_JIT_DEBUG=1` when `FLASHINFER_JIT_DEBUG` is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel, the serving kernels included, builds `-O0 --device-debug`. On 2026-09-27 that debug topk build pushed spark1 under the 8 GiB PROFILE floor (`evidence/e0-nvidia-v11/boot1-killed/cause.txt`). `run.sh` refuses `FLASHINFER_JIT_VERBOSE=1` without `FLASHINFER_JIT_DEBUG=0`. Names must match `^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$` or be `MAX_JOBS`; names containing `TOKEN`, `KEY` or `SECRET` are refused. `EXTRA_ARGS` adds `vllm serve` flags on both ranks. The head forwards both, and every other setting, to the worker from one `FORWARD_ENVS` list; `VALIDATE_ONLY=1 ./run.sh` prints the exact worker command.
 
 ## JIT and compile cache
 
@@ -220,7 +221,7 @@ python3 bench_decode.py --cells J             # structured count only (acceptanc
 python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/bench.json
 ```
 
-The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
+The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. Cell T (`--full` or `--cells T`) sends A's prompts with thinking on (`enable_thinking: true`, no `reasoning_effort`, so Max effort), the regime upstream DFlash2 was trained and benchmarked in (acceptance 4-5.8 on GSM8K / MT-Bench). Its 512 forced tokens count reasoning + content, and TTFT ends at the first reasoning or content token. T is not a published score. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell. `kit/compare.py` treats each boot as one sample and prints KEEP, REVERT or INCONCLUSIVE per cell.
 
 ## Logs
 

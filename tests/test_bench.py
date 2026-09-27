@@ -129,7 +129,9 @@ class FakeServer:
         mk = lambda delta: {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}  # noqa: E731
         yield mk({"role": "assistant"})
         time.sleep(0.01)  # prefill
-        first_key = "reasoning" if self.reasoning_first else "content"
+        # Thinking on: every token is reasoning (512 tokens at Max effort rarely reach content).
+        think = bool((body.get("chat_template_kwargs") or {}).get("enable_thinking"))
+        first_key = "reasoning" if self.reasoning_first or think else "content"
         yield mk({first_key: "t0 "})
         emitted, steps, accepted, pos = 1, 0, 0, [0] * K_SPEC
         while emitted < n:
@@ -139,7 +141,7 @@ class FakeServer:
             accepted += k - 1
             for j in range(k - 1):
                 pos[j] += 1
-            yield mk({"content": "tok " * k})
+            yield mk({"reasoning" if think else "content": "tok " * k})
             emitted += k
         yield {"choices": [{"index": 0, "delta": {},
                             "finish_reason": "length" if n == body["max_tokens"] else "stop"}]}
@@ -332,7 +334,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "bench.txt")))
         groups = {s["group"]: s for s in rep["summary"]}
         self.assertEqual(sorted(groups), sorted(
-            ["A", "B", "J@c1", "J@c2", "H", "I", "E@32k", "E@128k", "F", "G", "K@c1", "K@c2"]))
+            ["A", "B", "J@c1", "J@c2", "H", "I", "E@32k", "E@128k", "F", "G", "K@c1", "K@c2", "T"]))
         a = groups["A"]
         self.assertEqual((a["n_waves"], a["n_requests"], a["short_requests"]), (8, 8, 0))
         self.assertAlmostEqual(a["acceptance_len"]["mean"], expected_acceptance(31))
@@ -351,9 +353,12 @@ class TestEndToEnd(unittest.TestCase):
         self.assertLess(abs(e32 / 32768 - 1), 0.02)
         self.assertLess(abs(e128 / 131072 - 1), 0.02)
         self.assertIsNotNone(groups["E@32k"]["server_prefill_tok_s"])
-        # Request bodies: forced cells send min_tokens, thinking is off, no effort kwarg.
+        # Request bodies: forced cells send min_tokens, thinking is off except T, no effort kwarg.
         bodies = self.server.bodies
-        self.assertTrue(all(b["chat_template_kwargs"] == {"enable_thinking": False} for b in bodies))
+        thinking = [b for b in bodies if b["chat_template_kwargs"] != {"enable_thinking": False}]
+        self.assertEqual(len(thinking), 1 + 8)  # T: warm-up + 8 prose prompts
+        self.assertTrue(all(b["chat_template_kwargs"] == {"enable_thinking": True} for b in thinking))
+        self.assertEqual(groups["T"]["n_requests"], 8)
         self.assertFalse(any("reasoning_effort" in b for b in bodies))
         forced = [b for b in bodies if b.get("min_tokens")]
         self.assertTrue(all(b["min_tokens"] == b["max_tokens"] for b in forced))
@@ -371,6 +376,31 @@ class TestEndToEnd(unittest.TestCase):
         row = next(w for w in rep["waves"] if w["group"] == "A")["requests"][0]
         self.assertEqual(row["finish_reason"], "length")
         self.assertEqual(len(row["sha256"]), 64)
+
+    def test_thinking_cell_t(self):
+        rc, rep = self.run_bench("--cells", "T")
+        self.assertEqual(rc, 0)
+        (t,) = rep["summary"]
+        self.assertEqual((t["group"], t["n_waves"], t["n_requests"], t["short_requests"]), ("T", 8, 8, 0))
+        # Same metrics as A; the fake streams reasoning only, so TTFT and decode start at a reasoning token.
+        self.assertAlmostEqual(t["acceptance_len"]["mean"], expected_acceptance(31))
+        self.assertTrue(t["sanity_ok"])
+        self.assertLess(t["ttft_s"]["median"], 0.5)
+        self.assertIsNotNone(t["step_ms"]["mean"])
+        bodies = self.server.bodies
+        self.assertEqual(len(bodies), 1 + 8)
+        self.assertEqual({b["messages"][0]["content"] for b in bodies[1:]}, set(bd.PROSE))
+        for b in bodies:
+            self.assertEqual(b["chat_template_kwargs"], {"enable_thinking": True})
+            self.assertNotIn("reasoning_effort", b)  # unset renders Max effort
+            self.assertEqual((b["temperature"], b["min_tokens"]), (0.0, b["max_tokens"]))
+        self.assertEqual({b["max_tokens"] for b in bodies[1:]}, {31})
+        row = next(w for w in rep["waves"] if w["group"] == "T")["requests"][0]
+        self.assertEqual(row["completion_tokens"], 31)  # reasoning + content
+        self.assertAlmostEqual(row["tok_s"], 30 / row["decode_s"])
+
+    def test_fast_gate_unchanged(self):
+        self.assertEqual(bd.DEFAULT_CELLS, "A,B,J,H,K")  # T runs with --full or --cells T
 
     def test_swap_growth_invalidates_cell(self):
         seq = [{"local": {"swap_used_mib": 100.0}}, {"local": {"swap_used_mib": 300.0}}]
