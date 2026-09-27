@@ -57,6 +57,11 @@ and never committed:
 | OCRBench | echo840/OCRBench test | research use (see the dataset card) |
 | MMMU | MMMU/MMMU validation | Apache-2.0 |
 
+MMMU: on 2026-09-27 datasets-server returned permanent HTTP 500 for the
+Accounting, Agriculture and Architecture_and_Engineering configs, so the 60
+MMMU ids are 2 per each of the other 27 subjects plus 6 drawn from the rest
+of their pool. The pinned ids keep that selection fixed.
+
 `quality/ifeval.py` ports the IFEval checks from google-research
 (Apache-2.0, Copyright The Google Research Authors).
 
