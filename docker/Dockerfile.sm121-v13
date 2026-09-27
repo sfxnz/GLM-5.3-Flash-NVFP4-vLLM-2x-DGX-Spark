@@ -1,0 +1,23 @@
+FROM glm53-sm121-v11
+
+# v13: opt-in runtime patches, Python only. Every behaviour sits behind a
+# GLM53_* env var and is off by default, so with no GLM53_* set v13 serves
+# like v11. docker/README-v13.md lists the switches and their GPU checks.
+ARG VLLM_ROOT=/usr/local/lib/python3.12/dist-packages/vllm
+
+# Router fp32, indexer workspace factor, mHC warmup, KDA .contiguous() trims,
+# MTP-weight skip, DFlash prefix-cache fix.
+COPY patch_v13_misc.py /tmp/patch_v13_misc.py
+RUN touch /tmp/v13.stamp \
+    && python3 /tmp/patch_v13_misc.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_misc.py
+
+# FP8 weight-only lane (patch_v13_fp8.py is owned by that lane).
+COPY patch_v13_fp8.py /tmp/patch_v13_fp8.py
+RUN python3 /tmp/patch_v13_fp8.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_fp8.py
+
+# Byte-compile exactly the files the two patch layers wrote or created.
+RUN find "$VLLM_ROOT" -name '*.py' -newer /tmp/v13.stamp -print0 \
+        | xargs -0 -r python3 -m compileall -q \
+    && rm /tmp/v13.stamp
