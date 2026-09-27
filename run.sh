@@ -168,11 +168,16 @@ ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 # Extra container env on both ranks: space-separated NAME=VALUE pairs, e.g.
-# EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'. Engine/runtime names only.
+# EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'. Engine/runtime names only.
 EXTRA_ENV="${EXTRA_ENV:-}"
 extra_env_args=()
+jit_verbose="" jit_debug=""
 read -r -a extra_env_pairs <<<"$EXTRA_ENV"
 for pair in "${extra_env_pairs[@]}"; do
+  case "$pair" in
+    FLASHINFER_JIT_VERBOSE=*) jit_verbose="${pair#*=}" ;;
+    FLASHINFER_JIT_DEBUG=*) jit_debug="${pair#*=}" ;;
+  esac
   name="${pair%%=*}"
   [[ "$pair" == *=* ]] || name="(an entry without =)"
   if [[ "$pair" != *=* || "$name" =~ TOKEN|KEY|SECRET ]] ||
@@ -182,6 +187,12 @@ for pair in "${extra_env_pairs[@]}"; do
   fi
   extra_env_args+=(-e "$pair")
 done
+# This image's FlashInfer reads FLASHINFER_JIT_VERBOSE=1 as FLASHINFER_JIT_DEBUG=1 when DEBUG
+# is unset (flashinfer/jit/core.py:525-528): every JIT kernel builds -O0 --device-debug.
+if [[ "$jit_verbose" == 1 && "$jit_debug" != 0 ]]; then
+  echo "EXTRA_ENV FLASHINFER_JIT_VERBOSE=1 without FLASHINFER_JIT_DEBUG=0 builds every FlashInfer JIT kernel -O0 --device-debug (flashinfer/jit/core.py:525-528). The serving kernels would be debug builds, and on 2026-09-27 the topk ptxas grew past 3.28 GiB and PROFILE fell under the 8 GiB floor. Add FLASHINFER_JIT_DEBUG=0 to keep verbose ninja output with -O3 builds." >&2
+  exit 1
+fi
 
 log() { printf '==> %s\n' "$*"; }
 

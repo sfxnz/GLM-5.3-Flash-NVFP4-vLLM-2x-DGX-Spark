@@ -28,6 +28,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 - `SPEC=mtp` with `MODEL=nvidia/GLM-5.3-Flash-NVFP4` unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. LibertAI's MTP experts are NVFP4.
 - `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`, and anything other than exactly `0` or `1` always.
 - KV pin at or below `3886945403` (3.62 GiB) cannot hold 327680. Tony's 3.0 GiB pin is a 262144-ctx budget.
+- `EXTRA_ENV` with `FLASHINFER_JIT_VERBOSE=1` unless it also sets `FLASHINFER_JIT_DEBUG=0`. This image's FlashInfer reads verbose as debug when debug is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel builds `-O0 --device-debug`; on 2026-09-27 that pushed spark1 under the PROFILE floor.
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
 

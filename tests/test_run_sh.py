@@ -98,7 +98,18 @@ class Guards(RunShCase):
                 self.assertRefused(self.run_sh(EXTRA_ENV=bad), "EXTRA_ENV refuses")
 
     def test_extra_env_allowlist_accepted(self):
-        self.assertAccepted(self.run_sh(EXTRA_ENV="MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 NCCL_DEBUG=INFO GLM53_X=1"))
+        self.assertAccepted(self.run_sh(EXTRA_ENV="MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 NCCL_DEBUG=INFO GLM53_X=1 "
+                                                  "FLASHINFER_JIT_DEBUG=0"))
+
+    def test_jit_verbose_needs_jit_debug_0(self):
+        # FlashInfer reads VERBOSE=1 as DEBUG=1 when DEBUG is unset: -O0 --device-debug serving kernels.
+        for bad in ("FLASHINFER_JIT_VERBOSE=1", "MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1",
+                    "FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=1"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(EXTRA_ENV=bad), "FLASHINFER_JIT_DEBUG=0")
+        for ok in ("FLASHINFER_JIT_DEBUG=0 FLASHINFER_JIT_VERBOSE=1", "FLASHINFER_JIT_VERBOSE=0"):
+            with self.subTest(ok=ok):
+                self.assertAccepted(self.run_sh(EXTRA_ENV=ok))
 
     def test_max_new_tokens_must_be_integer(self):
         self.assertRefused(self.run_sh(MAX_NEW_TOKENS="12x"), "positive integer")
