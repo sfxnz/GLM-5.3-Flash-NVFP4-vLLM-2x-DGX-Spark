@@ -19,13 +19,27 @@ page, so nothing is allocated. The prefill seed kernel addresses the block
 through the tail view's real strides (v11 assumes a contiguous view, but the
 view is carved out of the indexer tensor at the indexer's page stride).
 
+The tail slot mapping (v1/attention/backends/mla/indexer.py) changes too:
+
+- The V2 runner (SPEC=dflash2 and SPEC=mtp) builds no positions for the
+  attention metadata, so v11's tail builder keeps the generic slots, which put
+  every token at pos >= block_size into block 0: one ring shared by all
+  running requests. With the switch the builder derives each token's position
+  from seq_lens and query_start_loc and maps it into its request's own block.
+- It writes the slots in place into the tail group's persistent slot-mapping
+  row. A FULL CUDA graph (the uniform verify batch) replays the address it
+  captured; v11's fresh clone would be read stale on replay.
+- It maps the real tokens only. CUDA-graph padding keeps the slot kernel's -1.
+
 Usage: python3 patch_v13_kpool_tail.py [VLLM_ROOT]
 VLLM_ROOT defaults to the image's site-packages vllm directory.
 
 Every edit is an exact-substring replace. An edit whose replacement text is
 already present counts as applied (so reruns are no-ops); an edit whose anchor
 does not occur exactly once refuses the whole run before anything is written.
-No other v13 patch edits these two files.
+No other v13 patch edits kpool_compress.py or attention.py. patch_v13_misc.py
+and patch_v13_verify.py also edit indexer.py, at disjoint anchors, so each
+pair applies in either order.
 """
 
 import ast
@@ -300,9 +314,122 @@ ATTENTION_EDITS = [
     ),
 ]
 
+# --------------------------------------------------------------------------
+# Tail slots: v1/attention/backends/mla/indexer.py (KpoolTailMetadataBuilder)
+# --------------------------------------------------------------------------
+INDEXER_EDITS = [
+    (
+        "indexer.py: tail slot mapping takes seq_lens and in_place",
+        """    num_reqs: int,
+    kpool: int,
+) -> torch.Tensor:
+    \"\"\"Circular tail slots: every token of request r lands in r's own block.
+""",
+        """    num_reqs: int,
+    kpool: int,
+    seq_lens: torch.Tensor | None = None,
+    in_place: bool = False,
+) -> torch.Tensor:
+    \"\"\"Circular tail slots: every token of request r lands in r's own block.
+""",
+    ),
+    (
+        "indexer.py: tail slots in place",
+        """    Pure torch (no Triton, no device sync): the indexer op consumes the tail
+    slot mapping on its eager break, so the returned tensor need not be the
+    persistent ``BlockTables`` buffer.
+    \"\"\"
+    out = slot_mapping.clone()
+""",
+        """    Pure torch (no Triton, no device sync). v11 returns a clone, which only a
+    PIECEWISE graph tolerates: the indexer op reads the tail slots from the
+    forward context on its eager break. GLM53_KPOOL_TAIL_FIX (v13) passes
+    ``in_place``: a FULL graph (the uniform verify batch) records the indexer
+    op and replays the address it captured, so the slots go into
+    ``slot_mapping`` itself, the tail group's persistent slot-mapping row.
+    Only the switch passes ``positions`` None (the V2 runner builds none);
+    token t of request r then sits at ``seq_lens[r] - (query_start_loc[r + 1]
+    - t)``.
+    \"\"\"
+    out = slot_mapping if in_place else slot_mapping.clone()
+""",
+    ),
+    (
+        "indexer.py: positions from seq_lens",
+        """    pos = positions[:num_actual_tokens].to(torch.int64)
+""",
+        """    if positions is None:
+        # GLM53_KPOOL_TAIL_FIX (v13): no positions (V2 runner), see docstring.
+        last = seq_lens[:num_reqs] - query_start_loc[1 : num_reqs + 1]
+        pos = tokens + last.index_select(0, req)
+    else:
+        pos = positions[:num_actual_tokens].to(torch.int64)
+""",
+    ),
+    (
+        "indexer.py: tail builder reads the switch",
+        """        # slot_mapping, which is rebuilt per step from the group's block table.
+        super().__init__(kv_cache_spec, layer_names, vllm_config, device)
+""",
+        """        # slot_mapping, which is rebuilt per step from the group's block table.
+        super().__init__(kv_cache_spec, layer_names, vllm_config, device)
+        # GLM53_KPOOL_TAIL_FIX (v13): read where the ring size is decided.
+        from vllm.models.glm5next.nvidia.ops.kpool_compress import (
+            GLM53_KPOOL_TAIL_FIX,
+        )
+
+        self.glm53_tail_fix = GLM53_KPOOL_TAIL_FIX
+""",
+    ),
+    (
+        "indexer.py: tail builder maps V2 batches, in place",
+        """        positions = common_attn_metadata.positions
+        if positions is not None:
+            # Circular per-request layout; the generic kernel output collapses
+            # onto tail block 0 for pos >= kpool (see compute_... docstring).
+            slot_mapping = compute_kpool_tail_slot_mapping(
+                slot_mapping,
+                common_attn_metadata.block_table_tensor,
+                common_attn_metadata.query_start_loc,
+                positions,
+                common_attn_metadata.num_actual_tokens,
+                common_attn_metadata.num_reqs,
+                self.kv_cache_spec.block_size,
+            )
+""",
+        """        positions = common_attn_metadata.positions
+        num_tokens = common_attn_metadata.num_actual_tokens
+        if self.glm53_tail_fix:
+            # GLM53_KPOOL_TAIL_FIX (v13): map without positions too. The V2
+            # runner builds none, and its generic slots put every token at pos
+            # >= block_size into block 0, one ring for all requests. Map the
+            # real tokens only: CUDA-graph padding past query_start_loc[num_reqs]
+            # keeps the slot kernel's -1, so it stashes nothing.
+            num_tokens = int(
+                common_attn_metadata.query_start_loc_cpu[common_attn_metadata.num_reqs]
+            )
+        if positions is not None or self.glm53_tail_fix:
+            # Circular per-request layout; the generic kernel output collapses
+            # onto tail block 0 for pos >= kpool (see compute_... docstring).
+            slot_mapping = compute_kpool_tail_slot_mapping(
+                slot_mapping,
+                common_attn_metadata.block_table_tensor,
+                common_attn_metadata.query_start_loc,
+                positions,
+                num_tokens,
+                common_attn_metadata.num_reqs,
+                self.kv_cache_spec.block_size,
+                seq_lens=common_attn_metadata.seq_lens,
+                in_place=self.glm53_tail_fix,
+            )
+""",
+    ),
+]
+
 FILE_EDITS = {
     "models/glm5next/nvidia/ops/kpool_compress.py": KPOOL_EDITS,
     "models/glm5next/nvidia/attention.py": ATTENTION_EDITS,
+    "v1/attention/backends/mla/indexer.py": INDEXER_EDITS,
 }
 
 
