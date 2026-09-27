@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 import tempfile
 import unittest
@@ -168,6 +169,51 @@ class CriteriaTests(unittest.TestCase):
         self.assertTrue(line.startswith("FAIL"))
         self.assertIn("tools.json_valid", line)
         self.assertNotIn("greedy.hazard", line)
+
+
+def probe_chat(body):
+    """Answers every Tier-0 probe correctly, the way a healthy serve would."""
+    text = body["messages"][-1]["content"]
+    if body.get("tools"):
+        spec = json.loads((tier0.DATA / "tools50.json").read_text())
+        item = next(i for i in spec["items"] if i["prompt"] == text)
+        args = {**item["expect"]["args"], **{k: "x" for k in item.get("ignore", [])}}
+        return {"content": "", "tool_calls": [{"name": item["expect"]["name"], "arguments": json.dumps(args)}]}
+    if text == tier0.KWARG_PROMPT:
+        kw = body.get("chat_template_kwargs") or {}
+        think = kw.get("enable_thinking", kw.get("thinking", body.get("reasoning_effort", "none") != "none"))
+        return {"content": "Paris", "reasoning": "France's capital." if think else ""}
+    if text == tier0.UTF8_PROMPT:
+        rows = "\n".join(f"| {n} | {n * n} | {n ** 3} | {tier0.chinese_numeral(n)} |" for n in range(1, 41))
+        return {"content": "| n | n² | n³ | 中文 |\n|---|---|---|---|\n" + rows}
+    m = re.search(r"The vault code assigned to (.+?) is (\S+)\.", text)
+    if m:
+        return {"content": m.group(2)}
+    return count_chat(body)
+
+
+class ProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.s = FakeServe(probe_chat)
+        self.c = common.Client(self.s.url)
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_kwargs_matrix(self):
+        res = tier0.run_kwargs(self.c, default_thinking=False)
+        self.assertEqual((res["passed"], res["total"]), (12, 12), [x for x in res["cells"] if not x["pass"]])
+        sent = [b for p, b in self.s.requests if p == "/v1/chat/completions"]
+        self.assertEqual(sum(1 for b in sent if b.get("stream")), 6)
+        self.assertTrue(any("chat_template_kwargs" not in b and "reasoning_effort" not in b for b in sent))
+
+    def test_utf8_tools_needle(self):
+        self.assertTrue(tier0.run_utf8(self.c)["pass"])
+        tools = tier0.run_tools(self.c)
+        self.assertEqual((tools["n"], tools["json_valid"], tools["args_ok"]), (50, 1.0, 1.0))
+        needle = tier0.run_needle(self.c, (3000,))
+        self.assertTrue(needle["pass"], needle)
+        self.assertEqual(needle["per_length"], {"3000": 3})
 
 
 def count_chat(body):
