@@ -171,7 +171,7 @@ GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_verify.py   # CPU; torch +
 One predicate on logit rows drives everything: `local_pos > verify_len[req_state]`. Local position 0 is the anchor (the last sampled token) and local position i is draft d_i. The state lives in `v1/worker/gpu/spec_decode/glm53_adaptive_verify.py`.
 
 1. `prepare()` runs in the runner after `prepare_attn`, outside every graph and before `model_state.prepare_attn` builds the attention metadata. It zeroes `masked[:num_tokens_after_padding]`, scatters the predicate onto the input rows `logits_indices`, and stores each row's anchor row as `logits_indices - local_pos`.
-2. `compute_kpool_tail_slot_mapping` (`indexer.py`) runs in the kpool tail metadata build, which is eager. After v11 fills the tail slots, it sets the slot of every masked row to -1. The indexer's K-pool update kernel then skips that row's stash into the `pos % index_kpool` tail ring (`kpool_compress.py:596`). This costs one eager kernel per step. The lossless section says why the ring needs it.
+2. `compute_kpool_tail_slot_mapping` (`indexer.py`) runs in the kpool tail metadata build, which is eager. After v11 fills the tail slots, it sets the slot of every masked row to -1. The indexer's K-pool update kernel then skips that row's stash into the `pos % index_kpool` tail ring (`kpool_compress.py:596`). This costs one eager kernel per step. The lossless section says why the ring needs it. On the V2 runner, the only one that creates this state, v11's tail builder never calls that function (V2 builds no positions), so the hook only runs with `GLM53_KPOOL_TAIL_FIX=1`. See that section.
 3. `remap()` runs in `BaseRouter._select_experts`, after `_compute_routing` and before the census capture and EPLB. That code is inside the opaque `moe_forward` op, so the remap is captured in the FULL and PIECEWISE graphs. A masked row takes its anchor's top-8 ids with weight 0. This costs 4 fixed-shape kernels per MoE layer: the out-of-place `masked_fill` is a clone plus `masked_fill_`, then a gather and a `where`.
 4. `mask_drafts()` runs in `RejectionSampler._verify`, after `apply_sampling_params`. A masked row's draft id becomes -1 in the tensor handed to `rejection_sample`. The sampling-parameter kernels still see the real ids.
 5. `record()` runs in the runner after the draft. It sets `verify_len[idx_mapping] = m` for the drafts just proposed. The next step's 1-4 read it, in stream order.
@@ -210,7 +210,7 @@ Take one verify request with n drafts (n = k = 7 unless the scheduler truncated)
     - This is a pre-existing v11 defect of every draft length k ≥ 2, DFlash2 and MTP alike. `KpoolTailSpec` and the kernel docstring assume completed pools never roll back, and speculative decoding breaks that assumption.
     - It matters above index_topk = 2048 tokens, where the indexer really ranks pools.
     - This lane does not fix it. Adaptive verify equals k' = m exactly and overwrites fewer committed slots than baseline k=7.
-    - The root fix belongs in its own lane: a ring of at least kpool - 1 + k + 1 slots addressed `pos % R`, or a re-stash after acceptance.
+    - The root fix belongs in its own lane: a ring of at least kpool - 1 + k + 1 slots addressed `pos % R`, or a re-stash after acceptance. `GLM53_KPOOL_TAIL_FIX` (below) is that fix.
 - **Conclusion.** The step's output distribution equals k' = m speculation from the same drafts, and so does every piece of state a later step reads. For sampling that is lossless by Leviathan et al., and for greedy by construction, up to the ring defect that k' = m and baseline k=7 share.
 
 `test_v13_verify.py` checks this on v11's own kernels under the Triton interpreter.
@@ -290,3 +290,186 @@ Follow AGENTS.md and keep receipts in `evidence/iter-adaptive-verify/`, with `tr
    - Keep a setting only if A and H beat noise and B does not regress beyond noise.
    - step_ms should fall toward the table. Acceptance should fall by at most the share of the truncated positions.
 6. **Optional microbench.** On one Spark, time the image's `fused_marlin_moe` on one nvidia-pack layer at M=8 rows. Draw `topk_ids` to touch D ∈ {8, 16, 24, 32, 48, 58} distinct experts, with 200 graph replays each. The slope in ms per distinct expert, times 42 layers, settles 0.75 against 1.25 ms and so the table's range.
+
+## GLM53_KPOOL_TAIL_FIX: a tail ring sized for the verify window (`patch_v13_kpool_tail.py`)
+
+Under speculative decoding, v11's DSA indexer builds committed pool keys from rejected drafts. On the V2 runner, which is the runner the serve uses, it also builds them from other requests' tokens. The switch below fixes both. After every step, every committed pool and every tail-ring slot a later step can read equals what non-speculative decoding writes. This holds on V2 (SPEC=dflash2 and SPEC=mtp) and on V1, at c=1 and above. The published serve (DFlash2-7) and the MTP-4 rollback are both affected once a context passes index_topk = 2048 tokens.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_KPOOL_TAIL_FIX=1` | off | Give each request's tail ring enough slots for the verify window, and on V2 its own tail block. Write the tail slots in place, and write the prefill seed through the tail view's real strides. Off keeps every v11 address. |
+
+```bash
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_kpool_tail.py   # CPU; torch adds the builder tests, triton the kernel simulation (~3 min)
+```
+
+### The bug: rejected rows overwrite committed slots
+
+- **The ring.** Each of the 11 indexer layers keeps a request's open pool in a tail block of index_kpool = 4 slots. A slot holds one token's raw indexer K and gate, addressed `pos % 4` (`indexer.py:565`; the `KpoolTailSpec` block size is kpool). The K-pool update kernel stashes every row. When the pool's last token arrives, the kernel compresses the pool from the three stashed slots plus the current row and writes the fp8 pool key (`kpool_compress.py:596-697`).
+- **A verify step** runs 1 + k rows at positions P..P+k (k = 7 for DFlash2, 4 for MTP). It stashes all of them in position order, gated only on the tail slot, so row r overwrites the slot of position r − 4.
+  - After rejection sampling, P..P+a is committed. The open pool at P' = P + a + 1 has up to three committed positions, ⌊P'/4⌋·4 .. P'−1.
+  - Rows four positions later overwrote their slots. Those rows are rejected drafts, or the row at the bonus position.
+  - Nothing rewrites those slots before the pool completes in a later step. That step compresses the rejected drafts' K and gate into a committed pool key.
+- **Example.** P = 10, so pool [8..11] is open with 8 and 9 committed. The step runs rows 10..17 and accepts nothing (a = 0, P' = 11). Rows 12, 13 and 14 overwrite the slots of positions 8, 9 and 10, and rows 16 and 17 then overwrite rows 12 and 13. The next step's row 11 completes pool [8..11] from rows 16, 17 and 14, all rejected.
+- **Scope.**
+  - Any k ≥ 2 is affected. k = 1 is safe: for it, the bound below asks for R ≥ kpool, which is v11's ring.
+  - Only pools built during decode are affected. Prefill compresses pools straight from the batch (`_kpool_compress_insert`) and never reads the ring.
+  - Below index_topk = 2048 tokens every pool is selected, so nothing changes. Above it the indexer ranks pools by these keys, so a corrupted pool can drop out of the 512 selected pools, or take another pool's place.
+  - The E0 long-context cells (E at 32k and 128k) ran with the defect.
+- **With adaptive verify.** Masked rows stash nothing, but only where its tail mask runs, which on V2 needs this switch (next section). Its live rejected rows still overwrite committed slots (the "Shared with baseline k=7" bullet above).
+
+### On the served runner: one ring for every request
+
+- **Where the tail slots come from.** The tail builder (`KpoolTailMetadataBuilder.build`, `indexer.py:600-633`) maps each token to `own_block · kpool + pos % kpool` (`compute_kpool_tail_slot_mapping`, `indexer.py:529-566`) only when the attention metadata carries positions. Without positions it keeps the generic slots of `_compute_slot_mappings_kernel`, which are `bt[req][pos // kpool] · kpool + pos % kpool` (`v1/worker/gpu/block_table.py:262`).
+- **The served runner passes none.**
+  - SPEC=dflash2 forces the V2 runner (`config/vllm.py` `_is_dflash2_draft`). GLM-5-Next is also a default V2 architecture (`config/vllm.py:73-78`), so SPEC=mtp runs V2 too. The E0 logs say `Using V2 Model Runner` (`evidence/e0-nvidia-v11/worker.docker.log`).
+  - GLM-5-Next is hybrid, so V2 uses `MambaHybridModelState`. Its `prepare_attn` calls `build_attn_metadata` without `positions` (`mamba_hybrid.py:270-287`), unlike `DefaultModelState` (`default.py:181`). The V2 speculators' draft builds pass none either.
+  - Only V1 passes positions (`gpu_model_runner.py:2505`).
+- **Effect.**
+  - The V2 tail block table is `cdiv(max_model_len, kpool)` wide and zero-filled, and only column 0 is written, because `KpoolTailManager` allocates one block per request.
+  - Every token at pos ≥ kpool of every request therefore maps into block 0, the null block: one ring shared by all running requests.
+  - At c=1 that ring is only misplaced. At c=2 the requests overwrite each other's slots, and each completes pools from the other's K.
+- **The larger ring alone does not fix it.** On V2 slots, 40 of 105 committed pools still differed at c=2 with the first version of this patch (review rerun). Adaptive verify's tail mask lives in `compute_kpool_tail_slot_mapping`, so on V2 it never ran either.
+
+### A third v11 defect in the same ring: the prefill seed writes the wrong bytes
+
+- **What the seed does.** `kpool_seed_tail_cache` copies the last kpool tokens of each prefill chunk into the ring, so that decode can complete the prompt's boundary pool. Its kernel puts tail block b at element `(b·2·kpool + pos % kpool)·128` (`kpool_compress.py:481`), which is the address in a contiguous `[num_blocks, 2, kpool, 128]` tensor.
+- **The real layout is not contiguous.**
+  - The tail co-owns the indexer tensor: its page is padded to the indexer page (`kv_cache_utils.py:1461`).
+  - The runner carves the tail view with the padded page as its block stride (`attn_utils.py:295-316`). That stride is idx_page = 2304/4 · 132 = 76,032 bytes.
+  - The decode kernel addresses the ring through that stride (`TAIL_BLOCK_ELEMS = stride(0)`, `kpool_compress.py:783`). The seed kernel does not.
+- **Where the seed lands.** The seed for tail block b goes to byte b·2048 of each of the 11 indexer tensors.
+  - For b ≤ 36 that is the null block's page.
+  - For larger b it lands in block ⌊b·2048/76032⌋'s page, over 2 KB of the compressed pool keys (or their scales) of whichever request owns that block.
+- **What the boundary pool reads.** The ring keeps what the KV block zeroer left there, which is zeros. So when the prompt length is not a multiple of 4, the boundary pool compresses zeros for its prompt tokens.
+- **Where it bites.** On V1, and on the served V2 path too. Speculation plays no part.
+  - On V2 today the prompt's last kpool tokens map to block 0 (previous section), where the contiguous and the strided address coincide, so the boundary pool reads the right slots.
+  - The prompt's first kpool tokens map to the request's own block, and the token kpool ahead of each maps to block 0. The seed kernel therefore takes them for the request's tail and writes them at the contiguous address: 2 KB at byte b·2048 of each indexer tensor, for every new request.
+  - In the CPU simulation, v11 as served writes 8-36 KB per scenario past block 0, and only the seed writes there. The fix writes none.
+- **Why the fix touches it.** Per-request blocks and a larger ring put every seed where the defect bites. v11's addressing on a 16-slot block would scatter 8 KB per request instead of 2 KB, so the fix has to address the seed correctly.
+
+### The fix
+
+- **Ring size.** `KpoolTailSpec.block_size`, the ring, becomes R = the next power of two ≥ k + kpool − 1. That is 16 for DFlash2-7 and 8 for MTP-4 (and for k = 5). The size comes from `glm53_tail_ring_slots` in `kpool_compress.py`, which `Glm5NextTailCache.get_kv_cache_spec` calls.
+- **Kernels.**
+  - The K-pool update kernel stashes at `pos % RING`, reads a completion's three slots at `pos % RING`, and takes the tail block as `tail_slot // RING`. RING is the tail view's slot count.
+  - The seed kernel uses the same arithmetic and addresses the block through the view's two strides.
+  - With the switch off, RING = kpool and the seed gets v11's contiguous strides, so every address is v11's. The CPU test compares the whole indexer tensor byte for byte.
+- **Tail slots** (`KpoolTailMetadataBuilder` in `indexer.py`). With the switch the builder:
+  - **Maps V2 batches too.** Without positions it derives them on device: token t of request r sits at `seq_lens[r] - (query_start_loc[r + 1] - t)`. That is how V2 computes them (`prepare_pos_seq_lens`, `input_batch.py:331-358`). Each token then lands in `own_block · R + pos % R`.
+  - **Writes the slots in place** into `slot_mapping`, the tail group's row of the persistent `BlockTables.slot_mappings`, and returns that row. v11 returns a clone, which is safe only where the indexer op is an eager break (PIECEWISE), because the op reads the tail slots from the forward context there. The uniform verify batch runs as a FULL graph: the recipe resolves FULL_AND_PIECEWISE, and the GDN and sparse-MLA builders are UNIFORM_BATCH. V2 captures a FULL graph by running the whole forward inside `torch.cuda.graph` (`cudagraph_utils.py:367`), so the indexer op is recorded, and replay reads the metadata addresses of capture time (`model_runner.py:1637`). A clone is gone by then. The persistent row has the same address at capture (`get_dummy_slot_mappings`) and at every step (`compute_slot_mappings`).
+  - **Maps the real tokens only**, the first `query_start_loc_cpu[num_reqs]`, a host value (no sync). CUDA-graph padding past them keeps the slot kernel's -1 and stashes nothing. v11 on V1 maps padding into the null block. The V2 speculators' padding rows can hold stale block ids, because only the target's gather zeroes them.
+  - **Reads the switch** from `kpool_compress.py` when it is built, next to the ring size.
+- **Why R ≥ k + kpool − 1.**
+  - Row r overwrites the slot of position r − R.
+  - A later step reads only the committed positions of the open pool. The lowest of those is ⌊P'/4⌋·4 ≥ P − (kpool − 2), reached when a = 0 and P % 4 = 2. The last row is P + k. So no readable slot is overwritten when P − (kpool − 2) + R > P + k.
+  - A completion inside the step reads the three positions just before it. For any R ≥ kpool those are still the latest writes to their slots.
+  - Rejected rows stash at positions ≥ P'. The next step rewrites those positions in order before any completion reads them.
+  - The CPU test shows the bound is exact: R = k + kpool − 1 is lossless, and one slot less is not.
+- **Why a power of two.** The scheduler block size is the LCM of every KV group's block size, and that includes the tail group (`kv_cache_utils.py:639`). A power of two ≤ 128 divides every block size the kpool indexer accepts (a multiple of index_kpool · 32), so the LCM stays at 2304. `get_kv_cache_spec` asserts that R divides `--block-size`.
+- **Memory.** Nothing is allocated. v11 already pads the tail page to 76,032 bytes. The 16-slot ring uses 8 KB of it (v11 uses 2 KB). KV accounting charges the tail one whole block per request either way, so the KV pool size does not change. The V2 tail block table narrows from `cdiv(max_model_len, 4)` to `cdiv(max_model_len, 16)` columns.
+- **Edited files.** `models/glm5next/nvidia/ops/kpool_compress.py`, `models/glm5next/nvidia/attention.py` and `v1/attention/backends/mla/indexer.py`. No other v13 patch edits the first two. `patch_v13_misc.py` and `patch_v13_verify.py` also edit `indexer.py`, at disjoint anchors. The CPU test checks that the three give the same file in either order.
+
+### Why this design
+
+- **(c) Snapshot and restore the committed pre-step slots: not enough.** Committed rows of the current step are overwritten too. With P = 8 and a = 1, rows 8 and 9 are committed and rows 12 and 13 overwrite them. To restore them after the step you need somewhere to keep them, which is the extra storage (a) adds, plus a restore kernel per layer after acceptance.
+- **(b) Stash the accepted rows after rejection sampling: more machinery.** The rows' K and gate only exist during the forward, one set per layer. So (b) needs a buffer per layer and a hook after acceptance in the speculators. The in-step completions would also have to read the batch instead of the ring.
+- **(a) An enlarged ring: neither.** The ring stays addressed by position, as in v11. Nothing is keyed by step, and nothing runs after acceptance.
+  - It holds for any acceptance pattern, by the bound above.
+  - It works the same in both runners.
+  - It covers prefill chunks: the seed writes the last kpool tokens, and a chunk of ≤ 1 + k tokens runs through the decode kernel.
+  - It covers the MTP layer's own indexer. Its draft prefill reuses the target's attention metadata, so it writes the verify rows' positions: the same pattern. The later single-token passes, when they run the indexer at all (`skip_topk` skips it), write at most k − 1 positions past the bonus token, which stays inside the same bound.
+  - No kernel is added and no shape changes. The slot mapping adds a few small eager ops to the metadata build and no host sync.
+- **Positions derived in the builder**, rather than passed by `MambaHybridModelState.prepare_attn`. The builder then maps every caller that brings no positions. The V2 speculators are such callers: they build the MTP layer's decode-step metadata without positions. With the published checkpoints those steps skip the indexer (`index_share_for_mtp_iteration`), but without that flag their stashes would otherwise go to block 0 while the draft prefill's go to the request's own block. The change also stays in the file that owns the slot mapping.
+- **The persistent row**, rather than a buffer owned by the builder. The row is already the one address that capture and every step share, for the target and for the MTP draft prefill graph, which is captured through the target's builders.
+- **Adaptive verify.** The two switches compose. With this switch the V2 builder runs adaptive verify's tail mask for the first time, so masked rows get tail slot −1 and stash nothing. With both on, k' = m and baseline k = 7 both leave exact state. The CPU test applies every v13 patch in Dockerfile order and simulates the combination.
+
+### Proof: v11's own kernels under the Triton CPU interpreter
+
+`test_v13_kpool_tail.py` builds the simulation from v11's source:
+
+- the K-pool update, pool-compress and seed kernels, and the prefill insert helper;
+- the tail builder and its slot mapping, v11's and patched, each without and with adaptive verify;
+- a shared indexer tensor with the tail view carved exactly as `_reshape_attention_kv_cache` carves it. The padded page holds the requests' pool pages and tail blocks in one buffer.
+
+The tail slots are built as the serve builds them:
+
+- The generic slot kernel fills the tail group's persistent slot-mapping row.
+- The builder then runs on the V2 runner's metadata (no positions) or on V1's (positions).
+- Batches are in the runner's order: decodes first, then prefills.
+- A uniform verify batch runs as a FULL graph, padded by one request. Its kernel reads the persistent row, as a replay does, not the tensor the builder returns.
+
+Each trial runs its prompts, then verify steps with random acceptance (every a in 0..k occurs). A prompt takes the prefill path, or the decode path when it has ≤ 1 + k tokens. In the chunked scenario, request 1's prompt arrives in two chunks next to request 0's verify steps: a prefill-path chunk that ends pool-aligned, as the mamba-align split ends them, then a chunk of either path. The reference is v11 non-speculative decoding with positions on a contiguous tail, where v11's seed is right, running each prompt chunk in a forward of its own. Stale ring contents are random, so reading a slot nobody wrote shows up as a differing pool.
+
+| Scenario (trials × verify steps) | fix on V2 (served): pools differ | fix on V2: readable ring slots differ | fix on V1: pools differ | v11 as served (V2) | v11 on V1, contiguous tail (overwrite only) | v11 non-speculative, real layout (seed only) |
+|---|---|---|---|---|---|---|
+| DFlash2 k=7, c=1 (10 × 5) | 0/66 | 0/13 | 0/66 | 18/66 | 18/66 | 2/66 |
+| DFlash2 k=7, c=2 (10 × 5) | 0/109 | 0/23 | 0/109 | 53/109 | 36/109 | 8/109 |
+| MTP k=4, c=2 (10 × 5) | 0/104 | 0/40 | 0/104 | 53/104 | 22/104 | 11/104 |
+| k=7, c=2 + adaptive verify (10 × 5) | 0/95 | 0/33 | 0/95 | 50/95 | 17/95 | 9/95 |
+| k=5, c=4, the four-way rollback (5 × 5) | 0/102 | 0/27 | 0/102 | 52/102 | 34/102 | 10/102 |
+| k=7, c=2, chunked prompt next to verify (10 × 4) | 0/154 | 0/37 | 0/154 | 41/154 | 30/154 | 8/154 |
+
+- On both runners the fix leaves every readable ring slot equal and writes no byte outside the requests' own blocks. Every tail build (30-70 per run) returns the persistent row itself.
+- v11 as served writes 28-57 KB per scenario into blocks no request owns. The shared ring accounts for the part in block 0. The seed accounts for the 8-36 KB past it.
+- With the switch off, the patched source leaves the whole shared tensor byte-identical to v11 as served.
+- k = 5 at c = 4 has R = 8 = k + kpool − 1, exactly the bound.
+- The test fails under each of these mutations of the fix (k = 7, c = 2, V2, 105 committed pools):
+  - the stash still at `pos % kpool`: 65 pools differ;
+  - completions reading `pos % kpool`: 62 pools differ;
+  - the decode block id taken by kpool: 5 pools and 32 ring slots differ, and 161 KB land in foreign blocks;
+  - the seed with v11's contiguous strides: 5 pools differ;
+  - the seed block id taken by kpool: 5 pools differ, and 34 KB land in foreign blocks;
+  - a ring one slot below the bound: 6 pools differ;
+  - V2 left on the generic slots: 12 pools and 29 ring slots differ, and 72 KB land in foreign blocks;
+  - the slots in a clone: the FULL replay reads the generic row, so the same 12 pools differ, and 0 of 60 builds are in place;
+  - V2 positions off by one request: 5 pools differ;
+  - CUDA-graph padding mapped: 5 KB land in the null block.
+- It also checks:
+  - every anchor occurs once in v11, a rerun is a no-op, and drift refuses (kernels and indexer);
+  - `py_compile` and the Dockerfile chain (misc, fp8, census, verify, this patch) apply and rerun clean, and the three `indexer.py` patches commute;
+  - the ring-size helper;
+  - `get_kv_cache_spec` off gives v11's arguments; on gives 16, 8 or 4 slots, the log line and the block-size assert;
+  - the builder on one mixed batch (verify rows, a mid-prompt chunk, a decode and padding), which needs torch only. Off, it returns what v11's returns on both runners' metadata. On, it writes `own_block · R + pos % R` for the real tokens in place, leaves -1 on the padding, and derives the same positions V1 hands it. With adaptive verify it masks rows on V2.
+
+### Cost
+
+- Graphs: no allocation or launch added. The update kernel does the same loads and stores, taking `% 16` of a constexpr where v11 takes `% 4`. The seed kernel does the same stores, at the right address.
+- Metadata: on V2 the tail build now runs the slot mapping, about 13 small eager torch ops outside the graphs, with no host sync. It runs once per target step. SPEC=mtp also runs it once per draft decode step (k − 1 per step). DFlash2's drafter has no tail layer. The fast gate's ABAB includes this cost.
+- Triton JIT: the patched kernels change their cache keys even with the switch off, so the first v13 boot compiles both kpool kernels once, during warmup and before capture. For boot-aware comparisons, compare warm boots.
+
+### Risks
+
+- **Output changes above 2048 tokens.** Pool keys now match non-speculative decoding, and at c ≥ 2 they no longer mix requests. Long-context greedy text can therefore differ from v11. Judge the change by the quality gates, not by byte equality.
+- **Block size.** R must divide `--block-size`, and the spec asserts it. The 512·R-byte ring must also fit the tail page, which is padded to the indexer page (block_size/4 · 132 bytes). The recipe's 2304 fits R ≤ 148. `--block-size 128` (a 4,224-byte page) cannot hold R = 16, and the boot then stops on the page-size assert in `AttentionSpec.page_size_bytes`.
+- **Both ranks.** The switch changes the tail KV spec, so set it on both ranks, which `EXTRA_ENV` does. Otherwise the ranks disagree on the tail spec.
+- **The in-place write** assumes that every call hands the builder the tail group's own slot-mapping row. Both runners' target builds and the V2 speculators do. V1's EAGLE proposer builds every draft group from one metadata object, but it cannot host GLM-5-Next's MTP layer: that layer's MLA and tail sit in different KV groups, and its `validate_same_kv_cache_group` asserts they share one (read from the v11 source, not run).
+- **PD connectors** transfer the tail block by its unpadded page, now 8 KB instead of 2 KB. The recipe does not use PD.
+- **Stale docstrings.** v11's docstrings (the seed kernel, `KpoolTailSpec`, `Glm5NextTailCache`, `KpoolTailManager`) and adaptive verify's module docstring still describe a kpool-slot ring addressed `pos % kpool`.
+- **No GPU run yet.** Everything above comes from the v11 source and the CPU test.
+
+### GPU validation (exclusive TP=2 slot, one switch per boot)
+
+Follow AGENTS.md. Keep receipts in `evidence/iter-kpool-tail/` with `trail.tsv` and `decision.tsv` rows. `L` means both ranks' engine logs.
+
+1. **Build and gate.** Build v13 on the head and copy it with `docker save glm53-sm121-v13 | ssh spark2 docker load`. Boot with nothing set. `L | grep -c GLM53_KPOOL_TAIL_FIX` must print 0 on both ranks, and the P3.0 checks must pass.
+2. **Boot with the switch.** `IMAGE=glm53-sm121-v13 EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1" ./run.sh`
+   - Both ranks log `GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)`.
+   - The KV pool size (372,877 tokens on the E0 pin) and `free -h` MemAvailable at ready match the off boot.
+3. **Short context, where no pool is ranked.** This must equal off within the A/A band. Check count-200 lossless and the thinking-off smoke, then run `python3 quality/tier0.py compare --ref nvidia-v11-k7`, which must PASS.
+4. **Long context.**
+   - **Needles.** Run `python3 quality/tier0.py compare --ref nvidia-v11-k7 --long`. It covers 8k, 32k and 128k, and each length must find 2 of 3 depths.
+   - **Decode against prefill, on decode-built pools.** This probe targets the fixed state directly.
+     - Use unique-salt fillers of 32k and of 128k tokens. Generate 2,000 greedy tokens with thinking off, `logprobs: true` and `return_token_ids: true`. The V2 rejection sampler returns the target's raw logprobs.
+     - Run it twice: once alone (c = 1), and once as two concurrent streams with different fillers (c = 2). At c = 1 v11's V2 ring is only misplaced; at c = 2 it is shared by both streams, so c = 2 is where the fix changes most.
+     - Send each prompt plus its generated ids to `/v1/completions` with `prompt_logprobs: 0` and `max_tokens: 1`, and with a new `cache_salt`. Require `usage.prompt_tokens_details.cached_tokens == 0`. Otherwise the prefill side reuses cached blocks whose pool keys decode built.
+     - The prefill path compresses pools straight from the batch and never reads the ring. In the off build, though, v11's seed still writes 2 KB per chunk at byte b·2048 of each indexer tensor, and that page can be one of the probe request's own. So the off build's prefill side is not a clean reference. Compare the two builds' |Δ|, not |Δ| against zero.
+     - Per generated token, Δ = decode logprob − prefill logprob. Report the mean and p99 of |Δ| after the first 64 tokens.
+     - Run the same probe at a 1,500-token context, where no pool is ranked, for the numerical floor. Run it with the switch off on the same day.
+     - Expected: with the switch on, |Δ| at 32k and 128k is at the floor at c = 1 and at c = 2. With it off, it may sit above, most likely at c = 2.
+   - **FULL graphs against eager.** Boot again with the switch and `ENFORCE_EAGER=1`, and repeat the c = 2 probe at 32k. |Δ| must sit at the same floor as in the default FULL_AND_PIECEWISE boot. If the tail slots reached a FULL graph at a stale address, only the graph boot would sit above the floor.
+   - **Long-context speed.** Run `python3 bench_decode.py --cells E` and compare acceptance and step_ms with E0 (32k: 2.327 at 111.5 ms; 128k: 2.822 at 112.7 ms).
+5. **Speed.** Run the ruler v2 fast gate, `python3 bench_decode.py --cells A,B,H`, ABAB against off. step_ms must stay within noise (E0: A 115.3 ms, B 120.0 ms, H 161.1 ms). This includes the tail build's eager ops.
+6. **Keep or revert.** Keep the switch only if 3 and 5 pass and 4 is no worse than off. If it is kept, record a new Tier 0 reference with it on (`python3 quality/tier0.py record --name nvidia-v13-kpooltail`), so later lanes compare against the fixed state.
+7. **With adaptive verify.** Boot both switches on the setting its sweep chose and repeat 3 to 5. This is the first boot in which adaptive verify's tail mask runs on V2.
+8. **Optional, MTP rollback.** Boot `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp` with the switch. It must log `8 slots (index_kpool=4, k=4)`, and count-200 must stay lossless. MTP acceptance at c = 2 should not drop against off: the MTP layer's own ring is now per request as well.

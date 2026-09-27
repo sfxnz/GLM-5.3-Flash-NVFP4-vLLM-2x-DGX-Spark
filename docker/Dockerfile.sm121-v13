@@ -32,6 +32,11 @@ COPY patch_v13_verify.py /tmp/patch_v13_verify.py
 RUN python3 /tmp/patch_v13_verify.py "$VLLM_ROOT" \
     && rm /tmp/patch_v13_verify.py
 
+# Tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX; README-v13.md).
+COPY patch_v13_kpool_tail.py /tmp/patch_v13_kpool_tail.py
+RUN python3 /tmp/patch_v13_kpool_tail.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_kpool_tail.py
+
 # Byte-compile exactly the files the patch layers wrote or created.
 RUN find "$VLLM_ROOT" -name '*.py' -newer /tmp/v13.stamp -print0 \
         | xargs -0 -r python3 -m compileall -q \
