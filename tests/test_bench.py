@@ -30,6 +30,7 @@ K_SPEC = 7          # draft slots the fake server reports
 ACC = 3             # tokens per verify step the fake server emits
 STEP_S = 0.002      # fake verify step
 NATURAL = 40        # natural length when min_tokens is not sent
+BOOT_ID_TEXT = "1.79051205311e+09"  # evidence/iter-nvidia-linear-marlin/metrics-before.txt
 
 
 class FakeServer:
@@ -177,6 +178,8 @@ class FakeServer:
             f"vllm:request_prefill_time_seconds_sum{{{lab}}} {c['prefill_sum']}",
             f"vllm:request_prefill_time_seconds_count{{{lab}}} {c['prefill_count']}.0",
             "vllm:num_requests_running 0.0",
+            # prometheus_client's process collector, as the serve prints it
+            f"process_start_time_seconds {BOOT_ID_TEXT}",
         ]
         lines += [f'vllm:spec_decode_num_accepted_tokens_per_pos_total{{{lab},position="{i}"}} {v}.0'
                   for i, v in enumerate(per_pos)]
@@ -205,8 +208,12 @@ class TestMetrics(unittest.TestCase):
             'vllm:inter_token_latency_seconds_sum{engine="0"} 1.5',
             'vllm:inter_token_latency_seconds_count{engine="0"} 15.0',
             'vllm:inter_token_latency_seconds_bucket{engine="0",le="+Inf"} 15.0',
+            "# TYPE process_start_time_seconds gauge",
+            f"process_start_time_seconds {BOOT_ID_TEXT}",
         ])
         m = bd.parse_metrics(text)
+        self.assertEqual(m["boot_id"], 1790512053.11)
+        self.assertNotIn("boot_id", bd.parse_metrics(text.replace("process_start", "other_start")))
         self.assertEqual(m["drafts"], 15.0)
         self.assertEqual(m["accepted"], 21.0)
         self.assertEqual(m["per_pos"], {0: 12.0, 1: 4.0})
@@ -331,6 +338,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(rep["ruler_version"], "v2")
         self.assertEqual(rep["model"], "fake/GLM")
+        self.assertEqual(rep["boot_id"], float(BOOT_ID_TEXT))
         self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "bench.txt")))
         groups = {s["group"]: s for s in rep["summary"]}
         self.assertEqual(sorted(groups), sorted(
