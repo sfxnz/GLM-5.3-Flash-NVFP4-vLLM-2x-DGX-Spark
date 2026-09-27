@@ -12,13 +12,13 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 - Exclusive GPUs. Do not start this while another `--gpus all` serve is up.
 - Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `enp1s0f1np1` / `rocep1s0f1`.
 - Keep `chat_template.jinja`. The stock HF template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. `thinking` is an alias of `enable_thinking` (the `glm45` parser's rule). The only allowed difference from the Hub copy in `tests/data/` is the generation prompt; `tests/test_chat_template.py` enforces it.
-- Leave vision on. `LANGUAGE_MODEL_ONLY=1` is refused unless `FORCE_UNSAFE_VISION=1`. Cap is `--limit-mm-per-prompt '{"image":4,"video":1}'`. Do not skip MM profiling into a max-size dummy.
+- Leave vision on. `LANGUAGE_MODEL_ONLY=1` is refused unless `FORCE_UNSAFE_VISION=1`. Cap is `--limit-mm-per-prompt '{"image":4,"video":1}'`. Do not skip MM profiling. Vision was already on in every LibertAI measurement; the cap is new.
 - Published decode score is prose only. Do not score decode from structured, code, or other cells.
 - Do not turn on InstantTensor. That loader killed TP=2 ranks here.
 - Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block.
 - `run.sh` already calls `maybe_drop_caches`. It no-ops without passwordless sudo.
 
-Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. Leave `--async-scheduling` off. Leave `VLLM_USE_BREAKABLE_CUDAGRAPH` on auto.
+Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. Async scheduling is already auto-on for DFlash; do not pass `--no-async-scheduling`. Leave `VLLM_USE_BREAKABLE_CUDAGRAPH` on auto.
 
 ## Refuse-guards (`run.sh`)
 

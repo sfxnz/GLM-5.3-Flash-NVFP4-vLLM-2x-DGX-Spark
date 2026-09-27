@@ -68,7 +68,7 @@ SPEC="${SPEC:-dflash2}"
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
 SNAPSHOT_IN_CONTAINER="${SNAPSHOT_IN_CONTAINER:-${HF_HOME_IN_CONTAINER}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
-# L.A.I.L VL cap. A max-size image+video dummy OOMs UMA; this is not that dummy.
+# Per-request MM cap. MM profiling still runs (one max-size video item, 32242-token encoder budget).
 if [[ "$LANGUAGE_MODEL_ONLY" == "0" && -z "${LIMIT_MM_PER_PROMPT:-}" ]]; then
   LIMIT_MM_PER_PROMPT='{"image":4,"video":1}'
 fi
@@ -109,10 +109,10 @@ if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
     COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,8,16,24]}'
   fi
 fi
-# fp8 hybrid pool is ~400k tokens on the 4.14 GiB pin. Native 1,048,576 does not
+# fp8 hybrid pool is 372,877 tokens (1.14x at 327,680) on the 4.14 GiB pin at DFlash2-7. Native 1,048,576 does not
 # fit. Packed NVFP4 KV is a different image/backend, not MAX_MODEL_LEN on this pin.
 if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
-  echo "fp8 KV pin (~400k tokens, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
+  echo "fp8 KV pin (372,877 tokens at DFlash2-7, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
   exit 1
 fi
 # 327680 needs more than the displayed 3.62 GiB (3886945403 still estimates
