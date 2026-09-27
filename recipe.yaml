@@ -50,6 +50,7 @@ serve:
     MAX_NUM_BATCHED_TOKENS: ""
     FORCE_UNSAFE_CTX: 0
     FORCE_UNSAFE_MOE: 0
+    FORCE_UNSAFE_LINEAR: 0
     FORCE_UNSAFE_VISION: 0
     LANGUAGE_MODEL_ONLY: 0
     VLLM_USE_BREAKABLE_CUDAGRAPH: ""
@@ -59,6 +60,7 @@ serve:
     HF_CACHE: $HOME/.cache/huggingface
     SNAPSHOT_REV: *revision
     MOE_BACKEND: marlin
+    LINEAR_BACKEND: marlin
     REASONING_PARSER: glm45
     DRAFT_MODEL: incoai/GLM-5.3-Flash-DFlash2
     SPEC: dflash2
@@ -73,7 +75,8 @@ readme:
     - "`--max-num-seqs`": "{MAX_NUM_SEQS}"
     - "`--kv-cache-dtype`": "`{KV_CACHE_DTYPE}`"
     - "`--kv-cache-memory`": "`{KV_CACHE_MEMORY}` (4.14 GiB)"
-    - "`--moe-backend`": "`{MOE_BACKEND}` (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
+    - "`--moe-backend`": "`{MOE_BACKEND}`, routed experts only (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
+    - "`--linear-backend`": "`{LINEAR_BACKEND}`, dense quantized linears (the nvidia pack's layer 0-2 MLP is NVFP4; `run.sh` refuses other values, whose NVFP4 GEMMs JIT on sm_121)"
     - Checkpoint: "`{SNAPSHOT_REV}` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back)"
     - Vision: "on (`LANGUAGE_MODEL_ONLY={LANGUAGE_MODEL_ONLY}`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`)"
     - "`--block-size`": "{BLOCK_SIZE}"

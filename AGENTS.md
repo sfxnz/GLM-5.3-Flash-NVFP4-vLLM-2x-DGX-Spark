@@ -24,6 +24,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 - `--max-model-len` above 327680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Native context is 1,048,576. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. 1M on 2× Spark needs a packed `nvfp4_ds_mla` lane (different image/backend), not this pin.
 - Any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. `flashinfer_cutlass` OOM'd spark2 during JIT after 90.67 GiB weights. Stay on Marlin until an SM121 W4A4 MoE path exists that does not JIT-OOM.
+- Any `LINEAR_BACKEND` other than `marlin` unless `FORCE_UNSAFE_LINEAR=1`. `--moe-backend` covers routed experts only; the nvidia pack's layer 0-2 dense MLP is NVFP4, and auto selection picks a FlashInfer FP4 GEMM that JIT-compiles on sm_121 during the first profile forward.
 - `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`.
 - KV pin at or below `3886945403` (3.62 GiB) cannot hold 327680. Tony's 3.0 GiB pin is a 262144-ctx budget.
 
