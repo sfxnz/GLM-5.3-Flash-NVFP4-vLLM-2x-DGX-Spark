@@ -172,8 +172,8 @@ def main() -> int:
     if "FORCE_UNSAFE_CTX" not in run_sh or "cannot hold --max-model-len" not in run_sh:
         failures.append("run.sh no longer refuses a 1M window on the fp8 pin")
     tpl = (REPO / "chat_template.jinja").read_text() if (REPO / "chat_template.jinja").exists() else ""
-    if "enable_thinking | default(true)" not in tpl:
-        failures.append("chat_template.jinja no longer gates <think> on enable_thinking")
+    if "(_thinking is none and _enable_thinking is none) or _thinking or _enable_thinking" not in tpl:
+        failures.append("chat_template.jinja no longer gates <think> on enable_thinking / thinking (glm45 parser rule)")
     if "{{- '<think></think>' -}}" not in tpl:
         failures.append("chat_template.jinja thinking-off path no longer closes an empty think block")
     if "$NUM_SPECULATIVE_TOKENS" not in run_sh:

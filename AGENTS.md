@@ -11,7 +11,7 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 - Read unified memory with `free -h`. Never `nvidia-smi` VRAM.
 - Exclusive GPUs. Do not start this while another `--gpus all` serve is up.
 - Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `enp1s0f1np1` / `rocep1s0f1`.
-- Keep `chat_template.jinja`. The stock HF template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`.
+- Keep `chat_template.jinja`. The stock HF template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. `thinking` is an alias of `enable_thinking` (the `glm45` parser's rule). The only allowed difference from the Hub copy in `tests/data/` is the generation prompt; `tests/test_chat_template.py` enforces it.
 - Leave vision on. `LANGUAGE_MODEL_ONLY=1` is refused unless `FORCE_UNSAFE_VISION=1`. Cap is `--limit-mm-per-prompt '{"image":4,"video":1}'`. Do not skip MM profiling into a max-size dummy.
 - Published decode score is prose only. Do not score decode from structured, code, or other cells.
 - Do not turn on InstantTensor. That loader killed TP=2 ranks here.

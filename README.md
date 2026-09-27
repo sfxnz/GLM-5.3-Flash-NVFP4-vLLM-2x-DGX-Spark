@@ -148,7 +148,7 @@ Stop both ranks from the head:
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + 8/16 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
-| Chat template | `chat_template.jinja` (honors `enable_thinking`) |
+| Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
@@ -159,7 +159,7 @@ The official NVIDIA pack is W4A4 on experts and dense MLP. `--moe-backend` cover
 
 Native `max_position_embeddings` is 1,048,576. This pin yields a ~400k-token fp8 hybrid pool (1.22× at 327,680). A 1M request needs ~8.2 GiB of this `fp8_e4m3` hybrid layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Official NVIDIA KV is still `kv_fp8_cast`. Packed `nvfp4_ds_mla` is the published 2× GB10 path that actually needles 1M. It is a different occupancy lane (different attention backend and image), and it measured ~22 tok/s prose versus 28 here. This recipe does not advertise a 1M window on the fp8 pin.
 
-`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. Thinking off now seeds an empty `<think></think>` so a Hermes-style tool follow-up does not prefix `</think>` onto `content`. Do not swap in the Hub template.
+`chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. Thinking off now seeds an empty `<think></think>` so a Hermes-style tool follow-up does not prefix `</think>` onto `content`. Do not swap in the Hub template. `thinking` is an alias with the same rule as vLLM's `glm45` reasoning parser: thinking is on when both kwargs are unset, otherwise when either is true. Before this, `{"thinking": true}` against the server default `enable_thinking: false` rendered `<think></think>` while the parser waited for `</think>`, so the whole answer landed in `reasoning` and `content` came back empty. `python3 -m unittest discover -s tests` checks the kwarg matrix and that the template differs from the Hub copy in `tests/data/` only in the generation prompt.
 
 Vision is on by default. The pack is `Glm5NextForConditionalGeneration` with `vision_config` and `processor_config.json`. `run.sh` passes `--limit-mm-per-prompt '{"image":4,"video":1}'` and refuses `LANGUAGE_MODEL_ONLY=1` unless `FORCE_UNSAFE_VISION=1`. `python3 smoke_vision.py` posts an OpenAI `image_url`. Do not skip MM profiling into a max-size image+video dummy; that OOMs GB10 UMA.
 
