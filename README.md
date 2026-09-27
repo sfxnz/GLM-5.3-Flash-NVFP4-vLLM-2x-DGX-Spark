@@ -150,6 +150,7 @@ Stop both ranks from the head:
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
+| Shard warmer | `WARM_SHARDS=1`: head only, `kit/shard_warm.py` prefetches one weight shard ahead (`all` = both nodes, `0` = off) |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
@@ -201,6 +202,14 @@ ls ~/projects/data/glm53-jit-cache/                                # one directo
 sudo rm -rf ~/projects/data/glm53-jit-cache/<id>                   # one image
 docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v11 -rf /c/<id>   # no sudo
 ```
+
+## Shard warmer
+
+On 2026-09-27 the head loaded weights in 770 s and the worker in 262 s. The cause on spark1 is diagnosed as a copy path driven by UVM page faults, made worse by low, fragmented free memory. `WARM_SHARDS=1` (the default) starts `kit/shard_warm.py` in the background on the head right after `docker run`. It needs no root. It follows `docker logs -f` for vLLM's `Loading safetensors checkpoint shards: … n/N` lines. Each time one appears, it calls `posix_fadvise(WILLNEED)` on the next shard only, in vLLM's natural-sort order. Extra page cache therefore stays at one shard (8.33 GiB at most on this pack). It exits at `Loading weights took` or when the container stops.
+
+It logs each shard it advises, and how long the call took, to `JIT_CACHE_DIR/logs/shard_warm-<host>-<UTC>.log`.
+
+`WARM_SHARDS=all` also starts it on the worker; the head copies it to `spark2:/tmp/glm53-shard_warm.py` next to `run.sh`. vLLM prints the progress lines on global rank 0 only, so on the worker the warmer currently just logs that there was nothing to follow. `WARM_SHARDS=0` turns it off. The effect on load time is not measured yet.
 
 ## Repeat the decode bench
 

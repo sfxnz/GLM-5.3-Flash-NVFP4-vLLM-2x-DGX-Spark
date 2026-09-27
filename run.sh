@@ -69,6 +69,10 @@ SPEC="${SPEC:-dflash2}"
 # JIT builds. JIT_CACHE=0 gives every boot an empty cache, as before.
 JIT_CACHE="${JIT_CACHE:-1}"
 JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
+# kit/shard_warm.py prefetches the next weight shard (WILLNEED, one shard
+# ahead) while rank 0 loads. 1 = head only (spark1 loads ~3x slower than
+# spark2), all = both nodes, 0 = off. Logs go to JIT_CACHE_DIR/logs/.
+WARM_SHARDS="${WARM_SHARDS:-1}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -149,6 +153,10 @@ if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
 fi
 if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
   echo "JIT_CACHE=$JIT_CACHE: want exactly 0 or 1." >&2
+  exit 1
+fi
+if [[ "$WARM_SHARDS" != 0 && "$WARM_SHARDS" != 1 && "$WARM_SHARDS" != all ]]; then
+  echo "WARM_SHARDS=$WARM_SHARDS: want 0, 1 (head only) or all." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
@@ -293,6 +301,22 @@ ensure_weights() {
     echo "Draft snapshot $DRAFT_SNAPSHOT missing and no hf CLI on PATH." >&2
     exit 1
   fi
+}
+
+start_shard_warmer() {
+  local rank="$1" warmer="$SCRIPT_DIR/kit/shard_warm.py"
+  [[ "$WARM_SHARDS" == all || ("$WARM_SHARDS" == 1 && "$rank" == 0) ]] || return 0
+  # The worker runs a copy of this script from /tmp; the head copies the warmer next to it.
+  [[ -f "$warmer" ]] || warmer=/tmp/glm53-shard_warm.py
+  if [[ ! -f "$warmer" || ! -d "$SNAPSHOT" ]]; then
+    log "Shard warmer skipped: need $warmer and $SNAPSHOT"
+    return 0
+  fi
+  local warm_log
+  warm_log="$JIT_CACHE_DIR/logs/shard_warm-$(host_short)-$(date -u +%Y%m%dT%H%M%SZ).log"
+  mkdir -p "${warm_log%/*}"
+  nohup python3 "$warmer" "$CONTAINER_NAME" "$SNAPSHOT" --log "$warm_log" </dev/null >/dev/null 2>&1 &
+  log "Shard warmer pid $! -> $warm_log"
 }
 
 stop_local() {
@@ -441,6 +465,7 @@ start_local() {
     --served-model-name "$SERVED_NAME" \
     --trust-remote-code \
     $EXTRA_ARGS
+  start_shard_warmer "$rank"
 }
 
 wait_ready() {
@@ -476,7 +501,7 @@ FORWARD_ENVS=(
   FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL SPEC JIT_CACHE JIT_CACHE_DIR
+  DRAFT_MODEL SPEC JIT_CACHE JIT_CACHE_DIR WARM_SHARDS
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -519,6 +544,7 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
   # The real key is each node's own image ID; validate-only does not call docker.
   set_jit_args "$JIT_CACHE_DIR/<image-id>"
   printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"
+  printf '==> warm_shards=%s log_dir=%s\n' "$WARM_SHARDS" "$JIT_CACHE_DIR/logs"
   printf '==> worker command: %s' "$(worker_command)"
   echo
   if [[ "$ORCHESTRATE" == auto && "$(detect_role)" == head ]] && worker_ssh_ok; then
@@ -535,6 +561,7 @@ if [[ "$ORCHESTRATE" == "auto" && "$ROLE" == "head" ]]; then
     check_image_parity
     log "Starting worker on $WORKER_HOST first"
     scp -q "$0" "${WORKER_HOST}:/tmp/glm53-run.sh"
+    scp -q "$SCRIPT_DIR/kit/shard_warm.py" "${WORKER_HOST}:/tmp/glm53-shard_warm.py"
     ssh "$WORKER_HOST" "$(worker_command)"
     log "Worker container started. Waiting 25s for NCCL listen, then starting head"
     sleep 25
