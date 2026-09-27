@@ -227,6 +227,15 @@ class Tier1RunTests(unittest.TestCase):
             self.assertNotIn("chat_template_kwargs", calls[0])
             with self.assertRaises(SystemExit):  # a different config refuses to append
                 tier1.main(argv + ["--reasoning-effort", "low"])
+            with self.assertRaises(SystemExit):  # another served model refuses to append
+                tier1.main(argv + ["--model", "other-model"])
+            saved_ids, tier1.IDS_FILE = tier1.IDS_FILE, Path(self.tmp.name) / "resampled_ids.json"
+            tier1.IDS_FILE.write_text('{"seed": 1}\n')
+            try:
+                with self.assertRaises(SystemExit):  # a resampled id set refuses to append
+                    tier1.main(argv)
+            finally:
+                tier1.IDS_FILE = saved_ids
         finally:
             s.close()
 

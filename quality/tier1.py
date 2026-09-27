@@ -341,7 +341,8 @@ def run(args) -> int:
     if args.out.exists():
         old = jsonl(args.out)
         old_meta = next((r["meta"] for r in old if "meta" in r), None)
-        if old_meta and {k: old_meta.get(k) for k in cfg} != cfg:
+        keep = [*cfg, "model", "ids_sha256"]
+        if old_meta and {k: old_meta.get(k) for k in keep} != {k: meta["meta"][k] for k in keep}:
             raise SystemExit(f"{args.out} was written with a different config {old_meta}; use another --out")
         done = {(r["task"], str(r["id"])) for r in old if "task" in r and "error" not in r}
     else:
