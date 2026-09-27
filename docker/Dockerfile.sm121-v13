@@ -27,6 +27,11 @@ COPY patch_v13_determinism.py /tmp/patch_v13_determinism.py
 RUN python3 /tmp/patch_v13_determinism.py "$VLLM_ROOT" \
     && rm /tmp/patch_v13_determinism.py
 
+# Fixed-shape adaptive verification (GLM53_ADAPTIVE_VERIFY; README-v13.md).
+COPY patch_v13_verify.py /tmp/patch_v13_verify.py
+RUN python3 /tmp/patch_v13_verify.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v13_verify.py
+
 # Byte-compile exactly the files the patch layers wrote or created.
 RUN find "$VLLM_ROOT" -name '*.py' -newer /tmp/v13.stamp -print0 \
         | xargs -0 -r python3 -m compileall -q \
