@@ -150,6 +150,40 @@ class Forwarding(RunShCase):
         self.assertEqual(head.stdout, worker.stdout)
 
 
+class JitCache(RunShCase):
+    ENVS = ("FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", "VLLM_CACHE_ROOT=/jit-cache/vllm",
+            "DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm", "TRITON_CACHE_DIR=/jit-cache/triton",
+            "TILELANG_CACHE_DIR=/jit-cache/tilelang")
+
+    def jit_line(self, stdout):
+        m = re.search(r"^==> jit_cache=(\S+) args: (.*)$", stdout, re.M)
+        self.assertTrue(m, stdout)
+        return m.group(1), m.group(2)
+
+    def test_default_mounts_one_dir_per_image(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        flag, args = self.jit_line(proc.stdout)
+        self.assertEqual(flag, "1")
+        self.assertIn(f"-v {self.home}/projects/data/glm53-jit-cache/<image-id>:/jit-cache", args)
+        for env in self.ENVS:
+            self.assertIn(f"-e {env}", args)
+
+    def test_jit_cache_0_drops_mount_and_env(self):
+        proc = self.run_sh(JIT_CACHE="0")
+        self.assertAccepted(proc)
+        self.assertEqual(self.jit_line(proc.stdout), ("0", ""))
+        self.assertNotIn("/jit-cache", proc.stdout.split("==> worker command:")[0])
+
+    def test_jit_cache_must_be_0_or_1(self):
+        self.assertRefused(self.run_sh(JIT_CACHE="yes"), "JIT_CACHE=yes: want exactly 0 or 1")
+
+    def test_worker_gets_jit_cache_settings(self):
+        words = shell_words(worker_command(self.run_sh(JIT_CACHE="0", JIT_CACHE_DIR="/d/jit cache").stdout))
+        self.assertIn("JIT_CACHE=0", words)
+        self.assertIn("JIT_CACHE_DIR=/d/jit cache", words)
+
+
 class ImageParity(RunShCase):
     def stub(self, name, body):
         path = self.home / "bin" / name

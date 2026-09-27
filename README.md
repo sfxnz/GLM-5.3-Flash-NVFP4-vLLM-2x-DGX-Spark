@@ -149,6 +149,7 @@ Stop both ranks from the head:
 | CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
+| JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
@@ -180,6 +181,26 @@ export MAX_NUM_SEQS=2
 Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`.
 
 `EXTRA_ENV` adds container env on both ranks as space-separated `NAME=VALUE` pairs, for example `EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'`. Names must match `^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$` or be `MAX_JOBS`; names containing `TOKEN`, `KEY` or `SECRET` are refused. `EXTRA_ARGS` adds `vllm serve` flags on both ranks. The head forwards both, and every other setting, to the worker from one `FORWARD_ENVS` list; `VALIDATE_ONLY=1 ./run.sh` prints the exact worker command.
+
+## JIT and compile cache
+
+With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` at `/jit-cache`. `JIT_CACHE_DIR` defaults to `~/projects/data/glm53-jit-cache`, and `<image id>` is the first 12 hex digits of that node's own `docker image inspect -f '{{.Id}}' glm53-sm121-v11`. `run.sh` points each engine's cache variable into the mount:
+
+- `FLASHINFER_WORKSPACE_BASE`
+- `VLLM_CACHE_ROOT`, which covers torch.compile, the FlashInfer autotune file and DeepGEMM
+- `DG_JIT_CACHE_DIR`
+- `TRITON_CACHE_DIR`
+- `TILELANG_CACHE_DIR`
+
+The first boot on an image still compiles everything. That covers FlashInfer topk during PROFILE; FlashInfer batch_mla, batch_prefill, xqa and sampling during KV_READY; and DeepGEMM and TileLang mHC. Later boots should load those kernels from disk instead of running nvcc and ptxas; on 2026-09-27 the compilers together peaked at 3.5–3.9 GiB during PROFILE. The skipped compile time and memory are not measured yet. A new image gets a new directory, so it never reuses kernels built by an older one. `JIT_CACHE=0` gives every boot an empty cache, as before. The worker gets the same settings from the head and keys its directory by its own image ID.
+
+The container runs as root, so the cached files are root-owned. To clear a cache, stop the serve, then run this on each node:
+
+```bash
+ls ~/projects/data/glm53-jit-cache/                                # one directory per image ID
+sudo rm -rf ~/projects/data/glm53-jit-cache/<id>                   # one image
+docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v11 -rf /c/<id>   # no sudo
+```
 
 ## Repeat the decode bench
 
