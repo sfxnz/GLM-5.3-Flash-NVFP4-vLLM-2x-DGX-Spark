@@ -1,0 +1,18 @@
+A = evidence/e6-prefill/g1
+B = evidence/e6-prefill/g2
+== head
+args: identical (56 words)
+env: 52 vs 50 entries; only in A: ['GLM53_WQ_DEQUANT_GROUPS=kda_in', 'GLM53_WQ_DEQUANT_MIN_M=512']; only in B: []
+GLM53_* A: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft', 'GLM53_WQ_DEQUANT_GROUPS=kda_in', 'GLM53_WQ_DEQUANT_MIN_M=512']
+GLM53_* B: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* equal: False (count 5)
+mounts: DIFF A=['/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache', '/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-nvidia/chat_template.jinja:/chat_template.jinja'] B=['/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-nvidia/chat_template.jinja:/chat_template.jinja', '/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache']
+image: identical sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9
+== worker
+args: identical (51 words)
+env: 50 vs 48 entries; only in A: ['GLM53_WQ_DEQUANT_GROUPS=kda_in', 'GLM53_WQ_DEQUANT_MIN_M=512']; only in B: []
+GLM53_* A: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft', 'GLM53_WQ_DEQUANT_GROUPS=kda_in', 'GLM53_WQ_DEQUANT_MIN_M=512']
+GLM53_* B: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* equal: False (count 5)
+mounts: DIFF A=['/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache', '/home/sfxnz/.cache/huggingface:/cache/huggingface'] B=['/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache']
+image: identical sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9

@@ -1,0 +1,43 @@
+                                F1          G1
+dNLL                     -0.000461   -0.000865
+top1_agree                0.981426    0.981513
+KL top20                 6.625e-03   6.657e-03
+greedy hazard             0.013548    0.016346
+greedy diverged/20              16          17
+greedy first_div med            53          55
+chat dNLL                 +0.00131    -0.00104
+chat top1                   0.9711      0.9720
+chat KL                  8.405e-03   8.211e-03
+code dNLL                 -0.00063    -0.00075
+code top1                   0.9905      0.9917
+code KL                  4.482e-03   4.530e-03
+math dNLL                 -0.00008    -0.00065
+math top1                   0.9787      0.9765
+math KL                  8.819e-03   9.563e-03
+multilingual dNLL         -0.00015    -0.00049
+multilingual top1           0.9647      0.9652
+multilingual KL          8.937e-03   8.499e-03
+prose dNLL                -0.00097    -0.00119
+prose top1                  0.9891      0.9890
+prose KL                 5.347e-03   5.441e-03
+count                          200         200
+kwargs                          12          12
+utf8 sq_err                      9           9
+tools json_valid              1.00        1.00
+tools args_ok                 0.96        0.96
+vision                          12          13
+needle 8k                        3           3
+needle 32k                       3           3
+nll.delta                     PASS        PASS
+nll.top1_stage                PASS        PASS
+nll.kl_stage                  FAIL        FAIL
+greedy.hazard                 PASS        PASS
+kwargs.core                   PASS        PASS
+kwargs.thinking_alias         PASS        PASS
+count                         PASS        PASS
+utf8                          FAIL        FAIL
+vision                        FAIL        PASS
+needle                        PASS        PASS
+tools.json_valid              PASS        PASS
+F1: stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 8/11 criteria; failed nll.kl_stage, utf8, vision
+G1: stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.kl_stage, utf8

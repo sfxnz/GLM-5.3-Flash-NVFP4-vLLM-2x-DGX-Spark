@@ -1,0 +1,29 @@
+start 2026-09-28T12:02:37Z git 2a5f22481d386b7d872b67893546278caae92424 image glm53-sm121-v11 sha256:88173725a4485c8d4145212f328d00428c31e7b6caa78fa655940489ea14132a: evidence/e6-prefill/tools/dq_mismatch.py
+test_int_matches_reference (docker.test_v13_fp8.DequantTest.test_int_matches_reference)
+INT8 g128 (the recipe default), INT8 g64 and INT4, with and without N padding. ... test_int_matches_reference int8 g128 300x512 {'elements': 153600, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_int_matches_reference int8 g64 300x512 {'elements': 153600, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_int_matches_reference int4 g128 300x512 {'elements': 153600, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_int_matches_reference int8 g128 128x384 {'elements': 49152, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_int_matches_reference int8 g64 128x384 {'elements': 49152, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_int_matches_reference int4 g128 128x384 {'elements': 49152, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+ok
+test_fp8_matches_reference (docker.test_v13_fp8.DequantTest.test_fp8_matches_reference)
+Per-channel FP8; K = 80 makes Marlin pad K to 128. ... test_fp8_matches_reference fp8 gNone 300x512 {'elements': 153600, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_fp8_matches_reference fp8 gNone 192x80 {'elements': 15360, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+ok
+test_nvfp4_matches_reference (docker.test_v13_fp8.DequantTest.test_nvfp4_matches_reference) ... test_nvfp4_matches_reference nvfp4 gNone 300x512 {'elements': 153600, 'bit_mismatch': 5441, 'sign_of_zero': 5441, 'ref_minus0_kernel_plus0': 5441, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+ok
+test_every_code_matches_reference (docker.test_v13_fp8.DequantTest.test_every_code_matches_reference)
+Random packed values cover every INT byte and nibble, every finite ... test_every_code_matches_reference int8 g128 320x256 {'elements': 81920, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_every_code_matches_reference int4 g64 320x256 {'elements': 81920, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_every_code_matches_reference fp8 gNone 320x256 {'elements': 81920, 'bit_mismatch': 298, 'sign_of_zero': 298, 'ref_minus0_kernel_plus0': 298, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_every_code_matches_reference nvfp4 gNone 320x256 {'elements': 81920, 'bit_mismatch': 5100, 'sign_of_zero': 5100, 'ref_minus0_kernel_plus0': 5100, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+test_every_code_matches_reference nvfp4 gNone 64x128 {'elements': 8192, 'bit_mismatch': 0, 'sign_of_zero': 0, 'ref_minus0_kernel_plus0': 0, 'kernel_minus0_ref_plus0': 0, 'nan': 0, 'value_diff': 0}
+ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 1.221s
+
+OK
+SUMMARY bit mismatches 10839: sign-of-zero 10839, value/NaN 0; tests OK (value-equal check)
+rc=0 end 2026-09-28T12:02:40Z
