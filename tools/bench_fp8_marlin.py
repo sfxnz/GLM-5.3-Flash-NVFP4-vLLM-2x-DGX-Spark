@@ -41,7 +41,9 @@ weight differs from the patch's reference dequant in BF16 (a layout check
 against the real gptq_marlin_repack). It ends with the count-weighted total
 of one prefill chunk per rank (kda_in, kda_o, mla, shared and the drafter's
 fc, the layers a chunk runs at full M): BF16, Marlin, dequant alone and
-dequant + F.linear.
+dequant + F.linear. The total covers the benched groups only, so --groups
+kda_in gives the chunk for GLM53_WQ_DEQUANT_GROUPS=kda_in (the default): the
+groups left out keep Marlin in both columns.
 
   docker run ... glm53-sm121-v13 tools/bench_fp8_marlin.py --dequant --json dq.json
 """
@@ -459,7 +461,8 @@ def bench(gemms: list[dict], args) -> int:
     if args.dequant:
         chunk = [r for r in rows
                  if r["group"] in ("kda_in", "kda_o", "mla", "shared") or r["gemm"] == "fc"]
-        print("\none prefill chunk per rank (kda_in, kda_o, mla, shared, draft fc), ms:")
+        names = dict.fromkeys("draft fc" if r["gemm"] == "fc" else r["group"] for r in chunk)
+        print(f"\none prefill chunk per rank ({', '.join(names)}), ms:")
         for M in args.m:
             sel = [r for r in chunk if r["M"] == M]
             if not sel:
