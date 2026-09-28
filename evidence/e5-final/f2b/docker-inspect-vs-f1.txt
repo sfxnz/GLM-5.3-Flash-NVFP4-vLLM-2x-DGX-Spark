@@ -1,0 +1,18 @@
+A = evidence/e5-final/f1
+B = evidence/e5-final/f2b
+== head
+args: identical (56 words)
+env: 50 vs 50 entries; only in A: []; only in B: []
+GLM53_* A: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* B: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* equal: True (count 5)
+mounts: DIFF A=['/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-nvidia/chat_template.jinja:/chat_template.jinja', '/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f:/jit-cache'] B=['/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-nvidia/chat_template.jinja:/chat_template.jinja', '/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f:/jit-cache', '/home/sfxnz/.cache/huggingface:/cache/huggingface']
+image: identical sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+== worker
+args: identical (51 words)
+env: 48 vs 48 entries; only in A: []; only in B: []
+GLM53_* A: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* B: ['GLM53_ADAPTIVE_VERIFY=1', 'GLM53_ADAPTIVE_VERIFY_TAU=0.3', 'GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head', 'GLM53_KPOOL_TAIL_FIX=1', 'GLM53_NVFP4_W4A16=draft']
+GLM53_* equal: True (count 5)
+mounts: identical
+image: identical sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3

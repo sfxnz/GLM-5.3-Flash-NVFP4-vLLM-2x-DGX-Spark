@@ -1,0 +1,54 @@
+4 steps {'execute_context_1(1152)_generation_0(0)': 3, 'execute_context_1(1267)_generation_0(0)': 1}
+wall 1001.646 ms (sd 55.931), busy 989.528, idle 12.118, bucket sum 989.54
+
+bucket              ms/step      %  launches
+nccl                 82.753    8.3        91
+routed_moe          349.400   34.9       210
+linear_marlin       221.277   22.1       273
+mhc                  71.981    7.2       275
+kda                  75.870    7.6       374
+mla_indexer         106.570   10.6       130
+bf16_gemm            23.963    2.4       240
+other                47.448    4.7      1280
+lm_head_logits        1.534    0.2         7
+sampler_rejection     0.054    0.0         7
+drafter               8.690    0.9     343.2
+
+bf16_gemm by signature (module guessed from launches/step)
+     ms n/step module           kernel [grid]
+  3.171   63.0 ?                nvjet_sm121_tst_mma_64x128x64_4_64x32x64_tmaAB_bz_TNNN [40, 2, 1]
+  2.987   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [144, 1, 32]
+  2.821   51.0 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_12 [72, 4, 1]
+  2.434   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [72, 1, 32]
+  1.947   8.25 ?                nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN [48, 2, 1]
+  1.685   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_25 [72, 2, 1]
+  1.675  19.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_12 [80, 4, 1]
+  1.671   21.0 ?                nvjet_sm121_tst_mma_64x96x64_4_16x96x64_tmaAB_bz_TNNN [40, 2, 1]
+  1.108   2.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [160, 1, 32]
+  0.871   2.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [80, 1, 32]
+  0.812   2.75 ?                nvjet_sm121_tst_mma_128x144x64_2_32x72x64_tmaAB_bz_TNNN [128, 2, 1]
+  0.760   8.25 ?                nvjet_sm121_tst_mma_32x128x64_4_16x64x64_tmaAB_bz_TNNN [32, 2, 1]
+  0.744   8.25 ?                nvjet_sm121_tst_mma_96x64x64_4_48x32x64_tmaAB_bz_TNNN [144, 1, 1]
+  0.521   8.25 ?                void cutlass::Kernel2<cutlass_80_simt_sgemm_32x128_8x5_nn_align1>(cutl [9, 1, 10]
+  0.256   2.75 ?                nvjet_sm121_tst_mma_96x64x64_4_48x32x64_tmaAB_bz_TNNN [160, 1, 1]
+  0.232   2.75 ?                nvjet_sm121_tst_mma_64x64x64_6_16x64x64_tmaAB_bz_TNNN [16, 3, 1]
+  0.216   2.75 ?                void cutlass::Kernel2<cutlass_80_simt_sgemm_32x128_8x5_nn_align1>(cutl [10, 1, 9]
+  0.037   8.25 ?                void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, f [1, 72, 1]
+  0.015   2.75 ?                void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, f [1, 80, 1]
+
+top 'other' kernels (refine TARGET_BUCKETS with these)
+ 18.217 void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:
+ 10.435 void vllm::act_and_mul_kernel<c10::BFloat16, __nv_bfloat162, &(c10::BFloat16 vllm::silu_ke
+  3.584 void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctor_add<c10::BFloat1
+  2.912 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>, std::arr
+  2.533 Memcpy DtoD (Device -> Device)
+  1.653 void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Tenso
+  1.326 void at::native::reduce_kernel<128, 4, at::native::ReduceOp<c10::BFloat16, at::native::Mea
+  0.993 void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native:
+  0.964 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, std::array
+  0.958 _convert_req_index_to_global_index_kernel
+  0.704 _gather_initial_states_kernel
+  0.608 _expand_pools_and_append_tail_kernel
+  0.471 _scatter_states_kernel
+  0.331 void at::native::vectorized_gather_kernel<16, long>(char*, char*, long*, int, long, long, 
+  0.290 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<c10::BFloat16>, 

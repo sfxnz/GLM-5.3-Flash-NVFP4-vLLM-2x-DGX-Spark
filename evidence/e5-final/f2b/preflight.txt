@@ -1,0 +1,51 @@
+== 2026-09-28T10:25:59Z preflight; env for run.sh: 
+git 44507fe3a7deddefe952df6622e886a41d35c56f opt/nvidia-perf-quality
+?? evidence/e5-final/f2b/
+?? evidence/e5-final/microbench-largem.console.txt
+?? evidence/e5-final/microbench-largem/
+?? evidence/e5-final/microbench-pad-n/
+?? evidence/e5-final/microbench-split-n/
+?? evidence/e5-final/tools/bench_pad_n.py
+?? evidence/e5-final/tools/pad_bench.sh
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 6 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 8 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       6.1Gi       106Gi       328Ki        10Gi       115Gi
+Swap:           15Gi       3.9Gi        12Gi
+== spark1 image glm53-sm121-v13
+sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+== spark1 JIT cache
+total 24
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:57 .
+drwxrwxr-x 13 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 27 18:15 033847011721
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 01:52 56c6084f422c
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:58 c9729cc0738f
+drwxr-xr-x  2 sfxnz sfxnz 4096 Sep 27 19:13 logs
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+12K	/home/sfxnz/projects/data/glm53-jit-cache/logs
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.8Gi       109Gi       232Ki       9.4Gi       116Gi
+Swap:           15Gi       1.7Gi        14Gi
+== spark2 image glm53-sm121-v13
+sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+== spark2 JIT cache
+total 20
+drwxrwxr-x 5 sfxnz sfxnz 4096 Sep 28 05:57 .
+drwxrwxr-x 5 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 27 18:14 033847011721
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 28 01:51 56c6084f422c
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 28 05:57 c9729cc0738f
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+== spark2 GPU compute apps (process list, not memory)

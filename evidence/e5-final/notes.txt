@@ -1,7 +1,8 @@
-E5 final measurement of the recipe defaults (plain ./run.sh, HEAD 44205da). PARTIAL: the session was paused by the
-lead after F1 and the F2 boot. Done: steps 1, 2 (all of it), 3 (F2 booted to ready, captured, stopped; its two fast
-gates and the F-vs-E0 / F-vs-E4b two-boot compares did not run). Not run: 4 (F3 census + profile), 5 (F4), the
-trail/decision rows for F3/F4.
+E5 final measurement of the recipe defaults (plain ./run.sh, HEAD 44205da). COMPLETE (2026-09-28, second session at
+HEAD 44507fe): F1; the large-M GEMM microbench (prefill anomaly); F2 rerun (f2b/: fast gate x2, cell E x2, cell T);
+two-boot compares F1+F2 vs E0 and vs E4b; F3 census + torch-profiler boot (verify-step buckets, one prefill-chunk
+profile, census report + masked rows); F4 skipped by its memory gate; both nodes clean. The first session's paused F2
+boot (f2/) stays as a boot-only record.
 
 stop E4b  stop-e4b*.txt/log: SERVING watcher 3755873 killed, ./stop.sh rc=0, both nodes clean (conduit only),
           MemAvailable 115 / 117 GiB.
@@ -69,20 +70,137 @@ F2 (f2/)  validate-only.txt identical to F1's. Same plain ./run.sh under uma_wat
           docker-inspect-vs-f1.txt: Args and env identical on both ranks, GLM53_* identical (5); worker mount order
           differs (same two mounts). MemAvailable min GiB spark1 / spark2: LOAD 14.44 / 15.38, PROFILE 13.66 / 13.86,
           KV_READY 7.22 / 12.62, SERVING (40 s) 7.01 / 12.66; after ready 7.1 / 12 GiB.
-          Stopped at ready by the pause (stop-f2*.txt/log): no fast gate ran.
+          Stopped at ready by the pause (stop-f2*.txt/log): no fast gate ran. Superseded by the F2 rerun (f2b/).
 
-F4 gate   needs MemAvailable after ready >= 9 GiB on spark1 and >= 11 on spark2 on F1 and F2. F1 9.9 / 13 passes,
-          F2 7.1 / 12 fails on spark1, so F4 would be skipped on this data.
+MICROBENCH (microbench-largem/, microbench-m1152/, microbench-pad-n/, microbench-split-n/), no serve up, spark1,
+          glm53-sm121-v13 c9729cc0738f. tools/bench_fp8_marlin.py takes an M list, so no wrapper was needed for the main
+          run: evidence/e4-tools/microbench.sh DIR --m 1,256,1024,2048 --gate-m 0 (all groups; --gate-m 0 makes the
+          ratio gates info-only; every fro-err check PASS), then --m 1152 for the five target groups. Table:
+          tools/largem_table.py (microbench-largem/table.txt).
+  chunk   The serve's prefill chunks are 1152 tokens, not 2048: the F3 prefill profile's steps read
+          execute_context_1(1152) (last chunk 1267). max_num_batched_tokens = max_num_scheduled_tokens = 2048 (log
+          warning). 10 x 1152 + 1267 = 12,787 prompt tokens exactly. Mechanism not traced: likely the scheduler's
+          mamba block-aligned split (the worker sets the attention block size to 4608 = 4 x 1152 for the hybrid
+          layout). So the check is per prefill token (per-token GEMM cost is flat from M=1024 to 2048), and M=1152 is
+          the real GEMM shape.
+  per GEMM ms, one rank (bf16 / int8 / fp8 / nvfp4, int8/bf16) at M=1152 [M=2048]:
+          kda_in 12576x4096   1.273 / 4.579 / 4.537 / 2.544  3.60x  [2.395 / 8.117 / 7.983 / 4.452  3.39x]
+          kda_o   4096x4096   0.458 / 0.555 / 0.503 / 0.491  1.21x  [0.799 / 0.988  1.24x]
+          mla q_b 8192x1536   0.361 / 0.490  1.36x; mla o 4096x8192 1.132 / 1.088  0.96x (cuBLAS picks a slow tile at
+                              1152; 1.23x at 2048)
+          shared gate_up 2048x4096 0.221 / 0.276 1.25x; down 4096x1024 0.131 / 0.167 1.27x
+          lm_head 77440x4096  8.196 / 26.202  3.20x (but prefill never runs it at large M, below)
+          At M=256 INT8 is already 1.73x BF16 on kda_in, <= 1.09x elsewhere; at M <= 32 INT8 is ~0.5x (E4).
+  chunk   per 1152-token chunk, count-weighted (shared x42, mla x11, kda_o x34, kda_in x34): BF16 90.05 ms, INT8
+          210.54 ms (+120.49; kda_in alone +112.41). lm_head: vLLM computes logits only at logits_indices (last row
+          of the chunk, model_runner.sample: hidden_states[logits_indices]); the DFlash2 drafter's query block reads the
+          shared lm_head at M=8. INT8 is faster there: -2.39 ms (M=1) -1.35 ms (M=8, E4). Net +116.8 ms per 1152-token
+          chunk = +101.3 us per prefill token (M=1024 +99.6, M=2048 +102.6).
+  measured F (F1 bench-1, F2 bench-E1, bench-E2) 1186.7 / 1183.0 tok/s at 32k / 128k = 842.7 / 845.3 us/token;
+          E0 1331 / 1329 = 751.3 / 752.4; E3a (BF16 target, NVFP4 draft) 1355 / 1353 = 738.0 / 739.1.
+          F - E0 +91.4 / +92.9 us/token (-10.8% / -11.0%); F - E3a +104.7 / +106.2 us/token (-12.4% / -12.6%).
+  verdict The INT8 W8A16 Marlin GEMMs account for the whole prefill loss: predicted +101 us/token vs +105 measured
+          against E3a (same image family and drafter, BF16 target) and +92 against E0. In the F3 prefill profile
+          linear_marlin is 221 ms of a 1002 ms chunk (22%); the microbench's INT8 sum at M=1152 (210.5 ms) plus the
+          NVFP4 dense layers 0-2 matches it. kda_in is 93% of the loss.
+  cause   (inferred from the byte arithmetic, not from a kernel trace) Marlin re-streams the weight from DRAM once per
+          64-row M block when it does not fit in L2: kda_in INT8 ~52 MB x 32 blocks at M=2048 = 1.67 GB,
+          7.6 ms at ~220 GB/s (measured 8.1); lm_head 318 MB x 32 = 10.2 GB = 46 ms (measured 46.5). Weights that fit
+          in L2 re-read from L2: microbench-split-n/ (random weights, K=4096, per GEMM at M=2048): N 3136 0.98 ms,
+          4096 0.98, 6272 2.76, 8192 3.29, 12576 8.1; padding N to a multiple of 128/256 does not help
+          (microbench-pad-n/: 12544-12800 all 7.5-7.7 ms). Four N-slices of kda_in would cost ~3.9 ms vs 8.1 (still
+          1.6x BF16's 2.4).
+  fix idea (not done; docker/ is out of scope): M-dependent dispatch in patch_v13_fp8's apply(): Marlin INT8 for
+          small M (verify/decode), and for M >= ~256 either N-sliced Marlin calls or dequantize to BF16 + cuBLAS
+          (kda_in, estimated: ~0.7 ms dequant + 2.4 ms GEMM vs 8.1). Would recover ~100 us/token (the 11% prefill loss) without
+          touching decode.
 
-Final state (09:22Z): watcher killed, ./stop.sh rc=0; spark1 docker ps: conduit (up) and the old exited dsv41-exl3-nfs
-container (not ours); spark2 no containers; MemAvailable 116 / 117 GiB. No census or profiler dirs were created.
+F2 (f2b/) rerun: plain ./run.sh via evidence/e5-final/tools/launch.sh .. evidence/e1-tools/boot.sh (preflight: 0
+          GLM53_* in the shell, no sudo -n). run.sh 10:26:01Z -> ready 10:41:47Z (15.8 min); head load 786.4 s,
+          worker 270.7 s, init engine 34.1 s; KV pool 372,877. docker-inspect-vs-f1.txt: Args and env identical on
+          both ranks, GLM53_* identical (5), image identical; head mount order differs (same three mounts). Both
+          ranks log the four GLM53 lines. MemAvailable min GiB spark1 / spark2: LOAD 14.36 / 15.36, PROFILE 13.39 /
+          14.01, KV_READY 7.30 / 12.68, SERVING 6.89 / 13.08 (cell E1); after ready 7.21 / 13.12 GiB. Swap flat.
+          post_ready_f2b.sh: count-200 200/200 stop, thinking-off "PING" (no CoT); memguard 3.0 GiB never fired.
+          cell     tok/s b1 [b2]    acc_len        step_ms       per_pos (b1)
+          A        30.13 [29.95]    2.216 [2.209]  73.2 [73.4]   .623 .312 .141 .068 .028 .013 .004
+          B        47.29 [45.45]    4.202 [4.050]  88.2 [88.1]   .829 .669 .532 .408 .301 .226 .171
+          J@c1     84.89 [85.49]    8.000          93.8 [93.1]
+          J@c2     71.39 [67.59]    8.000 [7.891]  111.5 [117.1] b2 wave 1 58.91 (acc 7.673, 130.1 ms), like F1's
+          H        20.31 [20.72]    2.151 [2.178]  105.8 [105.2] agg 38.9 [39.8]
+          K@c1/c2  29.68 / 19.99 [27.87 / 21.19]
+          T        34.49            2.607          75.2          .660 .390 .220 .134 .084 .055 .030
+          E recheck (TTFT s, server prefill tok/s at 32k / 128k): E1 27.36 / 109.46 s, 1199 / 1194; E2 28.02 / 112.27 s,
+          1168 / 1164 (F1: 27.48 / 109.71 s, 1193 / 1191). Decode E1 33.49 / 34.73, E2 31.77 / 35.67 tok/s. The
+          prefill loss reproduces on the second boot (three panels 1164-1199 vs E0 1329-1331 / E3a 1353-1355).
 
-Resume (next session): boot F2 again (plain ./run.sh via evidence/e5-final/tools/launch.sh ... evidence/e1-tools/boot.sh
-DIR), run evidence/e5-final/tools/post_ready_f2.sh (fast gate x2 + cell E), then kit/compare.py F1+F2 vs E0 and vs
-E4b; then F3 with evidence/e5-final/tools/f3_cfg.sh DIR RUN boot and post_ready_f3.sh DIR PROF_OUT, then
-tools/step_buckets.py and tools/census_report.py + evidence/e5-final/tools/census_masked.py (adaptive-verify masked
-rows). F4 only if the F2 rerun's after-ready MemAvailable clears the gate.
+COMPARE   kit/compare.py, boot = unit.
+  vs E0   compare-f12-vs-e0.txt (E0 1 boot x 2 panels, F 2 boots x 2 panels; single-boot rule on E0's side, needs the
+          whole CI past +-4%): A +51.8% [+50.6,+53.0], B +33.5% [+30.5,+36.6], J@c1 +23.6%, J@c2 +23.8% [+18.9,+28.7],
+          H +49.0% [+44.6,+53.3], K@c1 +50.2%, K@c2 +35.9%: all KEEP. step_ms A -36.5%; acc_len A -3.3% (paired
+          bootstrap [-6.4,-0.6]: adaptive verify trims drafts). E cells (compare-f12-E-vs-e0.txt, F1 + F2 E1/E2 vs E0):
+          decode E@32k +88.5%, E@128k +36.2% (single panel on E0; E0's 32k acceptance was low), prefill -11% (above).
+  vs E4b  compare-f12-vs-e4b.txt (E4b 1 boot): A -1.0% [-1.7,-0.3], B -1.1%, J@c1 +1.2%, J@c2 -3.3% [-6.3,-0.3],
+          H -0.9%, K@c1 -2.8%, K@c2 -4.4% [-17.5,+8.6]; T (compare-f12-T-vs-e4b.txt) -2.3%, acc -1.7% [-6.2,+2.9]: all
+          INCONCLUSIVE(single-boot), i.e. inside the +-4% cross-boot band. The published defaults reproduce E4b; no
+          regression on two boots.
 
-tools/   launch.sh (detached runner), post_ready_f1.sh, post_ready_f2.sh, skill_probes.sh, inspect_diff.py,
-         lossless_repeat.py; prepared but not run: f3_cfg.sh, post_ready_f3.sh, prof_step.py (torch-profiler capture per
-         prompt kind: prose, code, structured 1..1000, distinct prose c=2), census_masked.py.
+F3 (f3/)  census + torch-profiler boot: tools/f3_cfg.sh f3 census-e5f3-20260928 validate|boot (validate-only.txt: only
+          GLM53_EXPERT_CENSUS and --profiler-config added to the defaults; delay 8, 30 steps). run.sh 11:03:34Z ->
+          ready 11:18:45Z; head load 744.3 s, worker 268.1 s, init engine 35.2 s. Both ranks log "GLM53_EXPERT_CENSUS:
+          recording 42 MoE layers x top-8 for real steps 0..1999" and, after census-filler-1, "recorded steps
+          0..1999". MemAvailable after ready 7.14 / 13.41 GiB; SERVING min 5.84 / 12.52 (prof-code). Count-200 PASS
+          after the census window (lossless). Filler A 30.21 tok/s, step 73.9 ms (census on; not a perf number).
+  profile post_ready_f3.sh as prepared: prof_step.py prose / code / structured (c=1) / prose2 (c=2), traces in
+          ~/projects/data/glm53-prof/e5-f3/<kind>/rank{0,1}. Then tools/prof_prefill.py (new; bench_decode.long_prompt,
+          unique salt, 11000 words = 12,787 tokens, 11 chunks; TTFT 11.06 s): the delay-8 window caught 4 prefill
+          chunks (3 x 1152 + 1267) and 14 decode steps. step_buckets.py per trace (tools/buckets_all.sh, --only
+          '_context_1\(' for prefill) -> f3/buckets/<kind>-rank{0,1}.{txt,json}; buckets_summary.py ->
+          f3/buckets/summary-rank0.txt. Rank 0 ms per step (rank 1 within ~0.5 ms):
+                          prose c1  code c1  struct c1  prose c2  prefill chunk
+          wall              79.36    84.81     97.89    106.58    1001.65
+          routed_moe        33.57    40.14     50.56     54.68     349.40 (35%)
+          linear_marlin     18.58    18.53     18.86     20.08     221.28 (22%)
+          bf16_gemm          6.30     6.26      6.47      6.35      23.96
+          drafter            5.24     4.92      5.31      5.40       8.69
+          nccl               3.81     3.87      4.74      5.46      82.75
+          kda                2.33     2.30      2.41      5.53      75.87
+          mhc                2.04     2.01      2.14      2.64      71.98
+          other              2.08     2.06      2.20      2.23      47.45
+          lm_head_logits     1.64     1.64      1.67      1.80       1.53
+          mla_indexer        0.74     0.75      0.88      0.73     106.57 (11%)
+          idle               5.50     4.77      5.19      4.27      12.12
+          PROTO-4: bucket sum + idle = wall within 3% (prose 81.9 vs 79.4); profiled wall 79.4 ms is +8% over the
+          non-profiled A step (73.2 ms, F2), outside the 5% target (census D2H sync + profiler). Verify steps run 8
+          rows (generation_1(8)): adaptive verify masks rows inside the graph, it does not shrink it. The "shared_expert
+          x2" label on an 84/step cuBLAS signature is step_buckets' count heuristic; the shared experts are INT8 Marlin.
+  census  tools/census_report.py on ~/projects/data/glm53-census/census-e5f3-20260928 (both ranks copied there; the HF
+          cache dir is root-owned) -> f3/census/census-report.txt, census.json. 2000 steps (verify 1982, prefill 15,
+          mixed 1, decode 2), 2213 verify blocks; rank0 vs rank1 routing identical: True; prefix n=1 = 8.00.
+          Prefix curve distinct/layer n=2..8: 13.5 17.7 20.8 22.8 24.1 24.8 25.3 (independent D(8) 58.1).
+          Per verify step: 8.93 rows, 1.12 reqs, 2.88 tokens; distinct/layer 27.8 (independent 63.5); routed MoE
+          8.28 GB/rank/step = 36.0 ms at 230 GB/s. SD-1 oracle (keep nsampled rows): 3.04 GB = 13.2 ms/step (36.7%).
+          census_masked.py with f3/census/classes.json -> census-masked.txt/json: masked draft rows 48.8% overall
+          (prose 52.4%, prose c=2 53.9%, code 29.7%, structured 0.3%); masking is always a suffix (2213/2213) and
+          accepted <= m (2213/2213); width m histogram {1:344 2:427 3:406 4:370 5:240 6:144 7:282}. Distinct/layer per
+          step: c=1 prose 24.1 (D(8) 58.1, D(live 4.33) 32.8), code 32.6, structured 39.4, c=2 prose 43.6 (D(16)
+          104.5). The census bytes match the profile: prose c=1 24.1 x 42 x 7.08 MB = 7.17 GB, 31.2 ms at 230 GB/s vs
+          routed_moe 33.6 ms; structured 50.9 vs 50.6 ms.
+          uid map: two short c=2 requests (uids 0, 1: 6 and 4 sampled, steps 0-5) come before the first client POST
+          (the head log shows one POST before them), so the census uids run 2 later than post_ready_f3.sh's comment:
+          prose warm 2, prose 3, code warm 4, code 5, structured warm 6, structured 7, prose2 warm 8, prose2 9-10,
+          filler A warm 11, A/00-A/04 12-16 (window closes in A/04). classes.json follows the real map.
+
+F4 gate   needs MemAvailable after ready >= 9 GiB on spark1 and >= 11 on spark2. F2 rerun 7.21 / 13.12 GiB (first F2
+          boot 7.1 / 12, F3 7.14 / 13.41, F1 9.9 / 13): spark1 fails. F4 (4 seqs, +1.5 GiB KV) SKIPPED.
+
+Final state (11:28Z): stop-f2b / stop-f3 (stop_serve.sh: watcher killed, ./stop.sh rc=0). spark1 docker ps: conduit (up)
+          and the old exited dsv41-exl3-nfs container (not ours); spark2 no containers; no watcher, bench or boot
+          process left; MemAvailable 116 / 117 GiB (free -h). Profile traces stay in both nodes'
+          ~/.cache/huggingface/glm53-prof (root-owned, ~6.5 MB each; copies in ~/projects/data/glm53-prof/e5-f3).
+
+tools/   launch.sh (detached runner), post_ready_f1.sh, post_ready_f2.sh, post_ready_f2b.sh (F2 rerun: fast gate x2,
+         E x2, T), skill_probes.sh, inspect_diff.py, lossless_repeat.py, f3_cfg.sh, post_ready_f3.sh, prof_step.py,
+         prof_prefill.py (prefill-chunk capture), buckets_all.sh, buckets_summary.py, census_masked.py,
+         largem_table.py (large-M table + per-token arithmetic), bench_pad_n.py + pad_bench.sh (kda_in-like GEMM at
+         chosen N, random weights, through bench_fp8_marlin.bench()).
