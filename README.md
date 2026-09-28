@@ -10,7 +10,7 @@ Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the 
 
 Published decode is prose only. Do not score decode from structured, code, or other cells. The table is ruler v2 (`bench_decode.py`) on the current defaults (see Defaults). c=1 is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off. c=2 is cell H: the same prompts as two distinct streams; its TTFT includes prefix-cache hits, so it is not comparable to A's. Each value is the mean of three boots of plain `./run.sh` on 2026-09-28 (F1, F2b, G2), with each boot's two panels averaged first. Step ms and acceptance length are per verify step.
 
-E0, the nvidia pack on `glm53-sm121-v11` without the v13 knobs, measured A 19.73 and H 13.87 tok/s per stream. `kit/compare.py` puts the three boots at A +52.3% [+51.0, +53.6] and H +49.2% [+45.2, +53.2] ([`evidence/e6-prefill/compare-f12g2-vs-e0.txt`](evidence/e6-prefill/compare-f12g2-vs-e0.txt)).
+E0, the nvidia pack on `glm53-sm121-v11` without the v13 knobs, measured A 19.73 and H 13.87 tok/s per stream (one boot, two panels averaged). `kit/compare.py` puts the three boots at A +52.3% [+51.0, +53.6] and H +49.2% [+45.2, +53.2] ([`evidence/e6-prefill/compare-f12g2-vs-e0.txt`](evidence/e6-prefill/compare-f12g2-vs-e0.txt)).
 
 A request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`). Cell G (A's prompts sampled that way) ran 28.44 / 28.46 tok/s on F1 / G2. Quality on that path is unmeasured. Prose is the low-acceptance regime. Structured (cell J, count 1→200) measures occupancy and acceptance only.
 
