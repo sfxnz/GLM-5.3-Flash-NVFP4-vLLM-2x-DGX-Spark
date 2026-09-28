@@ -36,8 +36,9 @@ import urllib.request
 KIB_PER_GIB = 1024 * 1024
 PHASES = ["LOAD", "PROFILE", "KV_READY", "SERVING"]
 FLOOR_GIB = {"LOAD": 10.0, "PROFILE": 8.0, "KV_READY": 3.0, "SERVING": 2.0}
-SLOPE_DROP_GIB = 0.75  # PROFILE: two consecutive samples each dropping this much...
-SLOPE_BELOW_GIB = 14.0  # ...while below this level
+SLOPE_RUN = 3  # PROFILE: this many consecutive samples...
+SLOPE_DROP_GIB = 0.5  # ...each dropping this much...
+SLOPE_BELOW_GIB = 12.0  # ...while below this level (a normal ~1.8 GiB profile step can span 2 samples)
 STALE_S = 5.0  # PROFILE/KV_READY: a silent sampler this long counts as a hang
 SERVING_ROW_S = 5.0  # SERVING: write a row this often (or on a new minimum); every sample is still checked
 LOADED = "Model loading took"
@@ -173,9 +174,9 @@ class Watch:
             elif phase == "PROFILE" and prev is not None:
                 fast = prev[1] - avail >= SLOPE_DROP_GIB and avail < SLOPE_BELOW_GIB
                 self.fast[node] = self.fast.get(node, 0) + 1 if fast else 0
-                if self.fast[node] >= 2:
-                    reason = (f"{node} PROFILE slope: {prev[1]:.2f} -> {avail:.2f} GiB, second consecutive "
-                              f"drop >= {SLOPE_DROP_GIB} GiB below {SLOPE_BELOW_GIB:.0f} GiB")
+                if self.fast[node] >= SLOPE_RUN:
+                    reason = (f"{node} PROFILE slope: {prev[1]:.2f} -> {avail:.2f} GiB, {self.fast[node]} consecutive "
+                              f"drops >= {SLOPE_DROP_GIB} GiB below {SLOPE_BELOW_GIB:.0f} GiB")
         if reason:
             self.kill(reason, f"{utc()} node={node} phase={phase} memavail_gib={avail:.3f} swap_used_gib={swap:.3f}")
 

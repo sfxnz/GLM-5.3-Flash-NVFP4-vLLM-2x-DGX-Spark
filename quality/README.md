@@ -182,7 +182,8 @@ is too tight for that comparison.
 
 ## Determinism
 
-Source read of the v11 tree (paths under `vllm/`). Nothing here is measured yet.
+Source read of the v11 tree (paths under `vllm/`). E3a measured the fix for
+the confirmed source below; see Result (E3a).
 
 **Confirmed source: the sparse-MLA index compaction races.**
 
@@ -233,32 +234,34 @@ KDA backend and the Marlin MoE have no batch-invariant path.
 (`config/model.py:1908-1936, 2311-2332`). Near logits of 16-32 the bf16
 spacing is 0.125, so near-ties are common and ULP-level noise flips top-1.
 
-### Switches
+### Result (E3a)
 
-| Switch | Effect | Cost |
+`GLM53_DETERMINISTIC_MLA_INDEX=1`, a v13 patch now removed, gave each
+compacted row one Triton program, so the slot prefix followed the input column
+order, and sorted the kpool pools per row before expansion. E3a served it on
+both ranks: the Triton cache held only the deterministic kernel variant (16
+warps, no atomic). The within-boot A/A (`tier0.py record`, nll and greedy,
+`evidence/e3a-kpool-det/notes.txt`) did not move:
+
+| Within-boot A/A | E0 (v11, no switch) | E3a (switch on) |
 |---|---|---|
-| `EXTRA_ENV='GLM53_DETERMINISTIC_MLA_INDEX=1'` (v13 image) | One Triton program per compacted row, padded to 4096 lanes with masked loads, so the slot prefix is the input column order. The kpool pools are sorted per row before expansion, so the index list is ascending. No host sync, no new shapes, and the MLA kernel is unchanged. | Per MLA layer and step, one 4096-lane program per row instead of 17 128-lane tiles, plus one `torch.sort` of `[rows, 512]` int32. Estimated at most ~0.2 ms per ~116 ms verify step (11 MLA layers). Not measured. |
-| `LOGITS_FP32=1` (run.sh, v13 image) | `--hf-overrides '{"text_config":{"head_dtype":"float32"}}'`: the lm_head GEMM writes fp32 logits from bf16 inputs (`logits_processor.py:149-164`) for the target and the DFlash2 drafter, which shares the target's lm_head | Same GEMM. The logits buffers double: ~10 MB per verify step, and 634 MB instead of 317 MB per 1024-row `prompt_logprobs` chunk, so watch `free -h` during Tier 0. |
+| nll \|dNLL\| | 6.27e-4 | 6.37e-4 |
+| nll top-1 agreement | 98.447% | 98.424% |
+| nll KL top-20 | 5.137e-3 | 5.137e-3 |
+| greedy diverged | 14/20 | 14/20 |
+| greedy hazard | 0.0096 | 0.0102 |
 
-[docker/README-v13.md](../docker/README-v13.md) has the GPU checks for both.
-
-The nested key is required. The language model's `ModelConfig` is a copy
-built from `text_config` (`models/glm5next/nvidia/model.py:1099-1105`), so a
-flat `{"head_dtype": ...}` would reach only the drafter.
-`Glm5NextConfig` mirrors `text_config` keys to the top level
-(`transformers_utils/configs/glm5_next.py:375-389`), and the drafter builds its
-`LogitsProcessor` under the target's top-level `ModelConfig`
-(`v1/worker/gpu/spec_decode/dflash/utils.py:23-42`), so both get fp32. v11
-rejects the override on this checkpoint: `_apply_head` requires an
-`UnquantizedEmbeddingMethod` lm_head (`logits_processor.py:144`), and ModelOpt
-gives the excluded lm_head `UnquantizedLinearMethod`
-(`model_executor/layers/quantization/modelopt.py:185-187`). The v13 patch lifts
-that check, and `run.sh` refuses `LOGITS_FP32=1` on `glm53-sm121-v11`.
+The patch served and changed nothing measurable, so it was removed. The
+dominant noise is elsewhere. Prefill A/A swings of 5-15 nats recur at fixed
+positions even in single-chunk prefill, where neither top-k nor the kpool ring
+runs (prefill repeat, `evidence/e3b-av-tau0.1/notes.txt`). The likely
+mechanism is a small run-to-run difference flipping a discrete choice such as
+MoE top-8 routing (inferred, not traced).
 
 ### Staged A/A experiment
 
-One knob per boot, all on the v13 image (with no switch set it serves like
-v11). Record each stage under `evidence/<run>/`.
+Both boots on the v13 image with no switch set (it serves like v11). Record
+them under `evidence/<run>/`.
 
 Tier 0's nll corpus is 1999-2000 tokens, or 2001-2002 with `[gMASK]<sop>`.
 Each document is therefore one prefill chunk of at most 2048 rows on the
@@ -281,11 +284,11 @@ divergence at 200 tokens (S at 148).
 | Stage | Boot | Run | Question |
 |---|---|---|---|
 | 0 | v13, no switch | S and L twice, then the same on a second boot | Does within-boot noise sit in decode and the L tail (race), or also in S prefill (another source)? How much does the second boot add (autotune, JIT)? |
-| 1 | `LOGITS_FP32=1` | S and L twice | Does the A/A top-1 disagreement change once logits skip bf16 rounding (0.125 steps near 16-32)? |
-| 2 | `GLM53_DETERMINISTIC_MLA_INDEX=1` | S and L twice, then Tier 0 A/A (`record` + `compare`) | Within-boot greedy divergence (e0: 14/20) and top-1 disagreement (e0: 1.55%) should drop sharply. What remains comes from top-k selection ties at the threshold, which sorting does not fix, or from a source outside attention. |
 
-If Stage 0 shows S prefill as noisy as L, the in-order-tiles assumption is
-wrong or another source dominates. Stage 2 then tells the two apart.
+E3a already answers the first question in part: the index fix changed
+nothing, and single-chunk prefill swings at fixed positions. So a source
+outside the index compaction dominates, and Stage 0 now only sizes S against L
+and the second boot.
 
 ## Tests
 
