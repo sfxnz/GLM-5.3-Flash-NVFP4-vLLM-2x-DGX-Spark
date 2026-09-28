@@ -769,7 +769,7 @@ class QuantizerTest(unittest.TestCase):
     def test_real_checkpoint_int_error(self):
         """Relative Frobenius error, first REAL_ROWS rows of one tensor per group.
         Measured 2026-09-28 on 09b04e5: INT8 g128 0.0066-0.0073 (FP8 per-channel
-        0.024-0.029), INT4 g128 amax 0.120-0.135, clip search 0.103-0.118 (NVFP4
+        0.024-0.029), INT4 g128 amax 0.120-0.137, clip search 0.104-0.119 (NVFP4
         0.083-0.086): uniform INT4 does not beat NVFP4."""
         headers = read_headers(CKPT)
         for group, name in REAL_TENSORS.items():
