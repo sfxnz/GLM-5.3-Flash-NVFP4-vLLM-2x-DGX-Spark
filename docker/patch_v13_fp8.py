@@ -277,7 +277,6 @@ def quantize_int(
 
 def dequantize_int(qweight: torch.Tensor, scale: torch.Tensor, bits: int) -> torch.Tensor:
     """(N, K) fp32 weights from quantize_int's (qweight, scale)."""
-    pack = 32 // bits
     shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qweight.device)
     u = (qweight.unsqueeze(1) >> shifts.view(1, -1, 1)) & (2**bits - 1)
     q = u.flatten(0, 1) - 2 ** (bits - 1)
