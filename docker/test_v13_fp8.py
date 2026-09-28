@@ -2,7 +2,8 @@
 
 Runs against a copy of the vLLM python tree shipped in glm53-sm121-v11, taken
 from $GLM53_V11_SRC (a directory holding vllm/). Skips when that is absent.
-The pure-torch quantizer tests run only when torch is importable.
+The pure-torch quantizer tests run only when torch is importable, and the
+GLM53_WQ_DEQUANT_MIN_M tests also need triton (they use its CPU interpreter).
 
     GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v
 """
@@ -10,14 +11,18 @@ The pure-torch quantizer tests run only when torch is importable.
 import ast
 import hashlib
 import importlib.util
+import logging
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 PATCH = HERE / "patch_v13_fp8.py"
@@ -33,6 +38,10 @@ try:
     import torch
 except ImportError:
     torch = None
+try:
+    import triton
+except ImportError:
+    triton = None
 
 
 def run_patch(root: Path) -> subprocess.CompletedProcess:
@@ -811,6 +820,328 @@ class QuantizerTest(unittest.TestCase):
             self.assertTrue(torch.equal(a[1].view(torch.uint8), b[1].view(torch.uint8)))
         with self.assertRaises(ValueError):
             self.m.quantize_nvfp4(torch.zeros(4, 24, dtype=torch.bfloat16))
+
+
+def positive_bf16(shape, gen):
+    """Positive BF16 scales spread over 2^-20 .. 2^4."""
+    e = torch.randint(-20, 4, shape, generator=gen).float()
+    return (torch.exp2(e) * (1 + torch.rand(shape, generator=gen))).to(torch.bfloat16)
+
+
+@unittest.skipUnless(SRC.is_dir(), "set GLM53_V11_SRC to the v11 vLLM source")
+@unittest.skipIf(torch is None or np is None or triton is None, "needs torch, numpy, triton")
+class DequantTest(unittest.TestCase):
+    """GLM53_WQ_DEQUANT_MIN_M. The Triton dequant runs in the CPU interpreter
+    on Marlin tensors that v11's Python references build: marlin_weights is
+    what vLLM's own repack test holds gptq_marlin_repack to, and the scale
+    steps are the functions prepare_*_for_marlin call. Every element must be
+    the BF16 rounding of the patch's reference dequant, bit for bit."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name) / "vllm"
+        (root / MODULE).parent.mkdir(parents=True)
+        for rel in TOUCHED[1:]:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(SRC / rel, root / rel)
+        proc = run_patch(root)
+        assert proc.returncode == 0, proc.stderr
+        with mock.patch.dict(os.environ, {"TRITON_INTERPRET": "1"}):
+            cls.m = load_module(root)
+        quiet = types.SimpleNamespace(warning_once=lambda *a, **k: None)
+        v = {"np": np, "torch": torch, "math": math, "logger": quiet, "GPTQ_MARLIN_TILE": 16}
+        utils = "model_executor/layers/quantization/utils/"
+        for rel, names in (
+            ("utils/math_utils.py", {"round_up"}),
+            (utils + "quant_utils.py", {"get_pack_factor"}),
+            (utils + "marlin_utils.py", {"get_scale_perms", "marlin_permute_scales",
+                                         "marlin_padded_nk", "marlin_pad_qweight",
+                                         "marlin_pad_scales"}),
+            (utils + "marlin_utils_test.py", {"marlin_permute_weights", "marlin_weights",
+                                              "get_weight_perm"}),
+            (utils + "marlin_utils_fp8.py", {"fp8_fused_exponent_bias_into_scales",
+                                             "pack_fp8_to_int32"}),
+            (utils + "marlin_utils_fp4.py", {"_nvfp4_compute_scale_factor",
+                                             "nvfp4_marlin_process_scales",
+                                             "nvfp4_marlin_process_global_scale"}),
+        ):
+            v11_functions(rel, names, v)
+        cls.v = v
+        cls.perms = mock.patch.object(
+            cls.m, "_marlin_perms", lambda: (v["get_weight_perm"], v["get_scale_perms"]()))
+        cls.perms.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.perms.stop()
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.m._WORKSPACE = None
+
+    def repack(self, gptq, n, k, pn, pk, bits):
+        """gptq_marlin_repack on CPU: marlin_weights of the padded, unpacked GPTQ matrix."""
+        qw = self.v["marlin_pad_qweight"](gptq, n, k, pn, pk)
+        shifts = torch.arange(0, 32, bits, dtype=torch.int32)
+        q = ((qw.unsqueeze(1) >> shifts.view(1, -1, 1)) & (2**bits - 1)).flatten(0, 1)
+        return self.v["marlin_weights"](q, pk, pn, bits, self.v["get_weight_perm"](bits))
+
+    def layer(self, mode, parts, n, k, gs=None):
+        """A swapped layer, built with the steps of the patch's swap functions."""
+        v, layer = self.v, torch.nn.Module()
+        layer.output_size_per_partition, layer.input_size_per_partition = n, k
+        if mode in ("int8", "int4"):
+            qweight, scale = parts
+            pn, pk = v["marlin_padded_nk"](n, k, gs)
+            layer.weight = self.repack(qweight, n, k, pn, pk, self.m.INT_BITS[mode])
+            s = v["marlin_pad_scales"](scale, n, k, pn, pk, gs)
+            layer.weight_scale = v["marlin_permute_scales"](s, pk, pn, gs)
+        elif mode == "fp8":  # prepare_fp8_layer_for_marlin(size_k_first=False)
+            q, scale = parts
+            pn, pk = v["marlin_padded_nk"](n, k, -1)
+            gptq = v["pack_fp8_to_int32"](q, False).T.contiguous()
+            layer.weight = self.repack(gptq, n, k, pn, pk, 8)
+            s = v["marlin_pad_scales"](scale.view(1, n), n, k, pn, pk, -1)
+            s = v["marlin_permute_scales"](s, pk, pn, -1)
+            layer.weight_scale = v["fp8_fused_exponent_bias_into_scales"](s)
+        else:  # prepare_fp4_layer_for_marlin, params_dtype BF16
+            packed, scale, g = parts
+            pn, pk = v["marlin_padded_nk"](n, k, 16)
+            layer.weight = self.repack(packed.view(torch.int32).T.contiguous(), n, k, pn, pk, 4)
+            s = v["marlin_pad_scales"](scale.T.contiguous().to(torch.bfloat16), n, k, pn, pk, 16)
+            s = v["marlin_permute_scales"](s, pk, pn, 16)
+            layer.weight_scale, sf = v["nvfp4_marlin_process_scales"](s, a_dtype=torch.bfloat16)
+            glob = v["nvfp4_marlin_process_global_scale"](g.float(), torch.bfloat16)
+            layer.weight_global_scale = glob / sf
+        return layer
+
+    def check(self, mode, parts, ref, n, k, gs=None):
+        layer = self.layer(mode, parts, n, k, gs)
+        out = torch.empty(n, k, dtype=torch.bfloat16)
+        self.m.dequantize_marlin(layer, self.m.dequant_spec(layer, mode, gs), out)
+        bad = out.view(torch.int16) != ref.to(torch.bfloat16).view(torch.int16)
+        self.assertFalse(bad.any(), f"{mode} g{gs} {n}x{k}: {int(bad.sum())} elements differ")
+        return layer
+
+    def test_tables_invert_the_permutations(self):
+        v = self.v
+        for bits in (8, 4):
+            perm = v["get_weight_perm"](bits)
+            tile, _ = self.m.marlin_dequant_tables(perm, list(range(64)))
+            j, kk = torch.arange(64), torch.arange(16).unsqueeze(1)
+            self.assertTrue(torch.equal(perm[tile.long()], j // 16 * 256 + kk * 16 + j % 16))
+        scale_perm, single = v["get_scale_perms"]()
+        for sp, nvfp4 in ((scale_perm, False), (single, False), (scale_perm, True)):
+            _, scol = self.m.marlin_dequant_tables(v["get_weight_perm"](8), sp, nvfp4)
+            cols = torch.arange(len(sp))
+            permuted = cols[sp]  # marlin_permute_scales on one chunk
+            if nvfp4:
+                permuted = permuted.view(-1, 4)[:, [0, 2, 1, 3]].flatten()
+            self.assertTrue(torch.equal(permuted[scol.long()], cols))
+
+    def test_int_matches_reference(self):
+        """INT8 g128 (the recipe default), INT8 g64 and INT4, with and without N padding."""
+        for n, k in ((300, 512), (128, 384)):
+            w = torch.from_numpy(synthetic_weight(n, k, seed=n)).to(torch.bfloat16)
+            for mode, gs in (("int8", 128), ("int8", 64), ("int4", 128)):
+                bits = self.m.INT_BITS[mode]
+                parts = self.m.quantize_int(w, bits, gs, self.m.INT_CLIP_RATIOS[mode])
+                self.check(mode, parts, self.m.dequantize_int(*parts, bits), n, k, gs)
+
+    def test_fp8_matches_reference(self):
+        """Per-channel FP8; K = 80 makes Marlin pad K to 128."""
+        for n, k in ((300, 512), (192, 80)):
+            w = torch.from_numpy(synthetic_weight(n, k, seed=k)).to(torch.bfloat16)
+            q, s = self.m.quantize_per_channel(w)
+            self.check("fp8", (q, s), self.m.dequantize_per_channel(q, s), n, k)
+
+    def test_nvfp4_matches_reference(self):
+        w = torch.from_numpy(synthetic_weight()).to(torch.bfloat16)
+        parts = self.m.quantize_nvfp4(w)
+        self.check("nvfp4", parts, self.m.dequantize_nvfp4(*parts), 300, 512)
+
+    def test_every_code_matches_reference(self):
+        """Random packed values cover every INT byte and nibble, every finite
+        e4m3 code (subnormals and -0 too), and every E2M1 nibble with block
+        scales small enough that Marlin rescales them (sf > 1). A crafted
+        NVFP4 block pins the fp32 rounding order."""
+        gen = torch.Generator().manual_seed(7)
+        n, k = 320, 256
+        for mode, gs in (("int8", 128), ("int4", 64)):
+            bits = self.m.INT_BITS[mode]
+            qweight = torch.randint(-(2**31), 2**31, (k * bits // 32, n), generator=gen)
+            qweight = qweight.to(torch.int32)
+            scale = positive_bf16((k // gs, n), gen)
+            ref = self.m.dequantize_int(qweight, scale, bits)
+            self.check(mode, (qweight, scale), ref, n, k, gs)
+        codes = torch.randint(0, 256, (n, k), generator=gen, dtype=torch.int32)
+        codes = torch.where((codes & 0x7F) == 0x7F, codes - 1, codes).to(torch.uint8)  # no NaN
+        q, s = codes.view(torch.float8_e4m3fn), positive_bf16((n,), gen)
+        self.check("fp8", (q, s), self.m.dequantize_per_channel(q, s), n, k)
+        packed = torch.randint(0, 256, (n, k // 2), generator=gen, dtype=torch.int32)
+        packed = packed.to(torch.uint8)
+        bcodes = torch.randint(8, 0x5F, (n, k // 16), generator=gen, dtype=torch.int32)
+        bscale = bcodes.to(torch.uint8).view(torch.float8_e4m3fn)
+        g = torch.tensor(3.1e-4)
+        ref = self.m.dequantize_nvfp4(packed, bscale, g)
+        layer = self.check("nvfp4", (packed, bscale, g), ref, n, k)
+        self.assertLess(float(layer.weight_global_scale), float(g) * 2.0**119)  # sf > 1
+        # Rounding order: find a block scale and global scale for which
+        # 3 * (bs * g) and (3 * bs) * g round to different BF16 values; the
+        # kernel must follow dequantize_nvfp4's order.
+        bs = torch.arange(8, 0x7F, dtype=torch.int32).to(torch.uint8)
+        bsf = bs.view(torch.float8_e4m3fn).float()
+        gscales = torch.rand(4096, generator=gen) * 1e-3 + 1e-4
+        a = (3.0 * (bsf * gscales[:, None])).bfloat16()
+        b = ((3.0 * bsf) * gscales[:, None]).bfloat16()
+        i, j = torch.nonzero(a != b)[0].tolist()
+        packed = torch.full((64, 64), 0x55, dtype=torch.uint8)  # E2M1 code 5 = 3.0
+        bscale = bs[j].repeat(64, 8).view(torch.float8_e4m3fn)
+        g = gscales[i].clone()
+        ref = self.m.dequantize_nvfp4(packed, bscale, g)
+        self.assertTrue((ref.bfloat16() == a[i, j]).all() and (ref.bfloat16() != b[i, j]).all())
+        self.check("nvfp4", (packed, bscale, g), ref, 64, 128)
+
+    def test_apply_switches_at_min_m(self):
+        m, F = self.m, torch.nn.functional
+        w = torch.from_numpy(synthetic_weight(128, 256)).to(torch.bfloat16)
+        parts = m.quantize_int(w, 8, 128)
+        ref = m.dequantize_int(*parts, 8).to(torch.bfloat16)
+        layer = self.layer("int8", parts, 128, 256, 128)
+        inner = layer.quant_method = mock.Mock()
+        self.assertEqual(m.install_marlin_dequant([(layer, "int8")], 4, 128), 128 * 256 * 2)
+        gen = torch.Generator().manual_seed(1)
+        x3 = torch.randn(3, 256, generator=gen).to(torch.bfloat16)
+        self.assertIs(layer.quant_method.apply(layer, x3), inner.apply.return_value)
+        inner.apply.assert_called_once_with(layer, x3, None)
+        x4 = torch.randn(2, 2, 256, generator=gen).to(torch.bfloat16)  # 4 rows
+        bias = torch.randn(128, generator=gen).to(torch.bfloat16)
+        self.assertTrue(torch.equal(layer.quant_method.apply(layer, x4), F.linear(x4, ref)))
+        self.assertTrue(torch.equal(layer.quant_method.apply(layer, x4, bias),
+                                    F.linear(x4, ref, bias)))
+        self.assertEqual(inner.apply.call_count, 1)
+        with mock.patch.object(torch.compiler, "is_compiling", return_value=True):
+            layer.quant_method.apply(layer, x4)
+        self.assertEqual(inner.apply.call_count, 2)
+
+    def test_one_workspace_sized_for_the_largest_layer(self):
+        m = self.m
+        layers, refs = [], []
+        for n, k in ((128, 256), (192, 512), (256, 512)):
+            parts = m.quantize_int(torch.from_numpy(synthetic_weight(n, k)).bfloat16(), 8, 128)
+            layers.append(self.layer("int8", parts, n, k, 128))
+            layers[-1].quant_method = mock.Mock()
+            refs.append(m.dequantize_int(*parts, 8).to(torch.bfloat16))
+        small, big, bigger = layers
+        self.assertEqual(m.install_marlin_dequant([(small, "int8"), (big, "int8")], 64, 128),
+                         192 * 512 * 2)
+        ws = m._WORKSPACE
+        for layer, ref in zip(layers[:2], refs):
+            w = m.dequantize_marlin(layer, layer.quant_method._spec)
+            self.assertEqual(w.data_ptr(), ws.data_ptr())
+            self.assertTrue(torch.equal(w, ref))
+        # A later model (the drafter) grows it once; a smaller one keeps it.
+        m.install_marlin_dequant([(small, "int8")], 64, 128)
+        self.assertIs(m._WORKSPACE, ws)
+        m.install_marlin_dequant([(bigger, "int8")], 64, 128)
+        self.assertEqual(m._WORKSPACE.numel(), 256 * 512)
+
+    def test_env_gates_the_wrapper_and_skips_lm_head(self):
+        """apply_glm53_fp8_w8a16 on a fake target: unset leaves every Marlin
+        method as it was; set wraps all but the LM head, and the workspace
+        ignores the (larger) LM head; a bad value fails before any swap."""
+        m, nn = self.m, torch.nn
+        plain = type("UnquantizedLinearMethod", (), {})
+        fakes = {name: types.ModuleType(name) for name in (
+            "vllm", "vllm.logger", "vllm.model_executor", "vllm.model_executor.layers",
+            "vllm.model_executor.layers.linear",
+            "vllm.model_executor.layers.vocab_parallel_embedding")}
+        fakes["vllm.logger"].init_logger = logging.getLogger
+        linear_mod = fakes["vllm.model_executor.layers.linear"]
+        linear_mod.LinearBase, linear_mod.UnquantizedLinearMethod = nn.Linear, plain
+        vocab_mod = fakes["vllm.model_executor.layers.vocab_parallel_embedding"]
+        vocab_mod.UnquantizedEmbeddingMethod = plain
+
+        def linear(n, k, cls=nn.Module):
+            layer = cls()
+            layer.weight = torch.randn(n, k).to(torch.bfloat16)
+            layer.quant_method = plain()
+            return layer
+
+        def model():
+            kda = type("Glm5NextLinearAttention", (nn.Module,), {})()
+            kda.in_proj_qkvbfg_a, kda.o_proj = linear(192, 256), linear(128, 128)
+            target = type("Glm5NextForConditionalGeneration", (nn.Module,), {})()
+            target.layers = nn.ModuleList([kda])
+            target.lm_head = linear(512, 128, type("ParallelLMHead", (nn.Module,), {}))
+            return target, [kda.in_proj_qkvbfg_a, kda.o_proj], target.lm_head
+
+        def swap(layer, mode, gs):  # quantize_layer_to_marlin_int, built on CPU
+            n, k = layer.weight.shape
+            built = self.layer(mode, m.quantize_int(layer.weight, 8, gs), n, k, gs)
+            layer.weight, layer.weight_scale = built.weight, built.weight_scale
+            layer.output_size_per_partition, layer.input_size_per_partition = n, k
+            layer.quant_method = ("marlin", n)
+
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GLM53_")}
+        groups = {"GLM53_INT8_W8A16": "kda_in,kda_o,lm_head"}
+
+        def run(extra):
+            target, kda, head = model()
+            with mock.patch.dict(sys.modules, fakes), \
+                    mock.patch.dict(os.environ, {**clean, **groups, **extra}, clear=True), \
+                    mock.patch.object(m, "quantize_layer_to_marlin_int", swap), \
+                    mock.patch.object(torch.cuda, "memory_reserved", return_value=0):
+                m.apply_glm53_fp8_w8a16(target, torch.device("cuda"))
+            return kda, head
+
+        kda, head = run({})
+        self.assertEqual([layer.quant_method for layer in kda + [head]],
+                         [("marlin", 192), ("marlin", 128), ("marlin", 512)])
+        self.assertIsNone(m._WORKSPACE)
+        kda, head = run({"GLM53_WQ_DEQUANT_MIN_M": " 256 "})
+        for layer in kda:
+            self.assertIsInstance(layer.quant_method, m.MarlinDequantMethod)
+            self.assertEqual(layer.quant_method._min_m, 256)
+            self.assertEqual(layer.quant_method._inner,
+                             ("marlin", layer.output_size_per_partition))
+        self.assertEqual(head.quant_method, ("marlin", 512))
+        self.assertEqual(m._WORKSPACE.numel(), 192 * 256)  # LM head: 512 * 128
+        for bad in ("0", "-4", "1e3", "abc"):
+            with self.assertRaisesRegex(ValueError, "GLM53_WQ_DEQUANT_MIN_M"):
+                run({"GLM53_WQ_DEQUANT_MIN_M": bad})
+
+    def test_v11_runs_large_m_eagerly(self):
+        """Why a Python branch on the row count is safe in v11. GLM-5.3 auto-
+        enables breakable CUDA graphs, which turns torch.compile off for the
+        target and the drafter. A batch above the largest capture size (16 in
+        run.sh) dispatches to NONE and runs eagerly; smaller ones replay at a
+        padded capture size, mixed or not. DFlash projects the context through
+        fc outside the drafter's graph. The shared experts' aux stream (<= 256
+        rows) is ordered against the main stream both ways."""
+        cfg = (SRC / "config/vllm.py").read_text()
+        auto = cfg[cfg.index("# For model classes don't carry @support_torch_compile"):]
+        auto = auto[: auto.index("breakable_cudagraph_enabled = ")]
+        self.assertIn('"Glm5NextForConditionalGeneration",', auto)
+        self.assertIn('os.environ["VLLM_USE_BREAKABLE_CUDAGRAPH"] = "1"', auto)
+        self.assertIn("if breakable_cudagraph_enabled:\n"
+                      "            self.compilation_config.mode = CompilationMode.NONE", cfg)
+        disp = (SRC / "v1/cudagraph_dispatcher.py").read_text()
+        self.assertIn("or num_tokens > max_size", disp)
+        self.assertIn("num_tokens_padded = self._bs_to_padded_graph_size[num_tokens]", disp)
+        brk = (SRC / "compilation/breakable_cudagraph.py").read_text()
+        self.assertIn("if cudagraph_runtime_mode == CUDAGraphMode.NONE:\n"
+                      "            return self.runnable(*args, **kwargs)", brk)
+        runner = (SRC / "v1/worker/gpu_model_runner.py").read_text()
+        self.assertIn("drafter.model = BreakableCUDAGraphWrapper(", runner)
+        dflash = (SRC / "model_executor/models/qwen3_dflash.py").read_text()
+        self.assertIn("result = self.model.fc(hidden_states)", dflash)
+        shared = (SRC / "model_executor/layers/fused_moe/runner/shared_experts.py").read_text()
+        for needle in ("<= envs.VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD",
+                       "self._stream.wait_stream(current_stream())",
+                       "current_stream().wait_stream(self._stream)"):
+            self.assertIn(needle, shared)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,10 @@ model_loader.utils.process_weights_after_loading, once per loaded model
 Stays BF16 by construction: indexer, router gate, mHC, embeddings, kv_b
 (absorbed into the MLA BMMs), fused_qkv_a, KDA f_b/g_b/conv, vision tower.
 
+GLM53_WQ_DEQUANT_MIN_M=<rows> (unset = off) sends every swapped layer but the
+LM head through dequantize-then-cuBLAS when its input has at least that many
+rows (long prefill chunks), instead of the Marlin GEMM, which is slower there.
+
 Usage: python3 patch_v13_fp8.py [VLLM_ROOT]
 (default /usr/local/lib/python3.12/dist-packages/vllm). Exact-substring
 anchors; refuses on drift before writing anything; re-running is a no-op.
@@ -72,17 +76,37 @@ squared error wins. Values are stored with bias 128 / 8 (uint8b128, uint4b8)
 in GPTQ layout, then go through the same pad, gptq_marlin_repack and
 marlin_permute_scales steps as vLLM's MarlinLinearKernel. A layer whose K is
 not a multiple of the group size stays BF16.
+
+GLM53_WQ_DEQUANT_MIN_M (a positive integer; unset or empty = off: nothing is
+wrapped and no workspace is allocated): every swapped layer except the LM head
+gets a MarlinDequantMethod. An input of at least that many rows (a long prefill
+chunk, which runs eagerly) dequantizes the packed weight into one BF16
+workspace shared by the whole process and runs F.linear (cuBLAS). Smaller
+inputs keep the Marlin GEMM; decode and verify steps are captured at 16 rows
+or fewer. Each workspace element is the BF16 rounding of the exact fp32
+q * scale, the value dequantize_per_channel, dequantize_nvfp4 and
+dequantize_int give. For INT groups it is also the BF16 product Marlin forms
+in registers. The workspace is sized for the largest such layer when its model
+is swapped, so the drafter's swap may grow it once.
 """
 
 import os
+from typing import NamedTuple
 
 import torch
+
+try:
+    import triton
+    import triton.language as tl
+except ImportError:  # the CPU quantizer tests run without triton
+    triton = None
 
 ENV = "GLM53_FP8_W8A16"
 ENV_NVFP4 = "GLM53_NVFP4_W4A16"
 ENV_INT8 = "GLM53_INT8_W8A16"
 ENV_INT4 = "GLM53_INT4_W4A16"
 ENV_INT_GROUP = "GLM53_INT_GROUP_SIZE"
+ENV_DEQUANT_MIN_M = "GLM53_WQ_DEQUANT_MIN_M"
 MODE_ENVS = {"fp8": ENV, "nvfp4": ENV_NVFP4, "int8": ENV_INT8, "int4": ENV_INT4}
 INT_BITS = {"int8": 8, "int4": 4}
 INT_GROUP_SIZES = (64, 128)
@@ -136,6 +160,16 @@ def int_group_size(environ=os.environ) -> int:
     value = environ.get(ENV_INT_GROUP, "").strip() or "128"
     if value not in {str(g) for g in INT_GROUP_SIZES}:
         raise ValueError(f"{ENV_INT_GROUP}={value!r}; valid: {INT_GROUP_SIZES}")
+    return int(value)
+
+
+def dequant_min_m(environ=os.environ) -> int | None:
+    """GLM53_WQ_DEQUANT_MIN_M as a positive int, or None when unset or empty."""
+    value = environ.get(ENV_DEQUANT_MIN_M, "").strip()
+    if not value:
+        return None
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(f"{ENV_DEQUANT_MIN_M}={value!r}; want a positive integer")
     return int(value)
 
 
@@ -284,6 +318,177 @@ def dequantize_int(qweight: torch.Tensor, scale: torch.Tensor, bits: int) -> tor
     return (q.float() * scale.float().repeat_interleave(group, 0)).T
 
 
+# GLM53_WQ_DEQUANT_MIN_M: BF16 weights straight from the Marlin layout.
+DQ_FORMATS = {"int8": 0, "int4": 1, "fp8": 2, "nvfp4": 3}
+_DQ_TABLES: dict = {}
+_WORKSPACE = None  # the shared BF16 workspace (1-D)
+
+
+def marlin_dequant_tables(weight_perm, scale_perm, nvfp4: bool = False):
+    """int32 (tile, scol) tables that undo Marlin's weight and scale permutations.
+
+    gptq_marlin_repack stores 16 rows of K per row, 16 x 16 tiles side by side,
+    and permutes every 1024 elements (64 columns) by weight_perm (vLLM's
+    get_weight_perm, which its repack test checks against). tile[k % 16, n % 64]
+    is where element (k, n) lands inside its chunk. marlin_permute_scales
+    permutes every len(scale_perm) scale columns; scol[n % len] is where
+    column n lands. nvfp4_marlin_process_scales then swaps columns 1 and 2 of
+    every 4.
+    """
+    perm = torch.as_tensor(weight_perm, dtype=torch.long).flatten()
+    inv = torch.empty_like(perm)
+    inv[perm] = torch.arange(perm.numel())
+    j = torch.arange(64)
+    tile = inv[(j // 16 * 256 + j % 16).unsqueeze(0) + 16 * torch.arange(16).unsqueeze(1)]
+    sp = torch.as_tensor(scale_perm, dtype=torch.long)
+    scol = torch.empty_like(sp)
+    scol[sp] = torch.arange(sp.numel())
+    if nvfp4:
+        scol ^= ((scol ^ (scol >> 1)) & 1) * 3
+    return tile.to(torch.int32), scol.to(torch.int32)
+
+
+if triton is not None:
+
+    @triton.jit
+    def _marlin_dequant_kernel(
+        q_ptr,  # repacked weight as bytes
+        s_ptr,  # scales: BF16 bits as int16 (INT, FP8) or S0E5M3 codes (NVFP4)
+        tile_ptr,
+        scol_ptr,
+        out_ptr,  # BF16 bits as int16, (N, K) row-major
+        N,
+        K,
+        row_elems,
+        s_stride,
+        gscale,
+        FMT: tl.constexpr,  # DQ_FORMATS
+        GROUP: tl.constexpr,  # K elements per scale row; 0 = per channel
+        SCHUNK: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        n = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)[:, None]
+        k = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)[None, :]
+        mask = (n < N) & (k < K)
+        e = (k // 16) * row_elems + (n // 64) * 1024 + tl.load(tile_ptr + (k % 16) * 64 + n % 64)
+        if FMT == 0 or FMT == 2:
+            q = tl.load(q_ptr + e, mask=mask, other=0).to(tl.int32)
+        else:
+            q = (tl.load(q_ptr + e // 2, mask=mask, other=0).to(tl.int32) >> ((e % 2) * 4)) & 15
+        col = (n // SCHUNK) * SCHUNK + tl.load(scol_ptr + n % SCHUNK)
+        if GROUP > 0:
+            s = tl.load(s_ptr + (k // GROUP) * s_stride + col, mask=mask, other=0).to(tl.int32)
+        else:
+            s = tl.load(s_ptr + col, mask=n < N, other=0).to(tl.int32)
+        # Every product below is exact in fp32, except NVFP4's, which rounds
+        # in dequantize_nvfp4's order: e2m1 * (block scale * global scale).
+        if FMT == 3:
+            # S0E5M3 code of block scale * sf * 2^7 -> fp32 block scale * sf.
+            bs = ((((s >> 3) + 105) << 23) | ((s & 7) << 20)).to(tl.float32, bitcast=True)
+            bs = tl.where(s == 0, 0.0, bs)
+            m = q & 7
+            mag = tl.where(
+                m < 2,
+                (m & 1).to(tl.float32) * 0.5,
+                ((((m >> 1) + 126) << 23) | ((m & 1) << 22)).to(tl.float32, bitcast=True),
+            )
+            w = mag * (bs * gscale)  # gscale = global scale / sf
+            w = tl.where(q >= 8, -w, w)
+        elif FMT == 2:
+            m = q & 0x7F
+            mag = tl.where(
+                m < 8,
+                (m & 7).to(tl.float32) * 0.001953125,  # e4m3 subnormal: m * 2^-9
+                ((m << 20) + (120 << 23)).to(tl.float32, bitcast=True),
+            )
+            # Marlin's scale carries 2^120 (fp8_fused_exponent_bias_into_scales).
+            w = mag * ((s << 16) - (120 << 23)).to(tl.float32, bitcast=True)
+            w = tl.where(q >= 128, -w, w)
+        else:
+            if FMT == 0:
+                q = q - 128
+            else:
+                q = q - 8
+            w = q.to(tl.float32) * (s << 16).to(tl.float32, bitcast=True)
+        # fp32 -> BF16, round to nearest even (the CPU interpreter's cast truncates).
+        b = w.to(tl.int32, bitcast=True)
+        b = (b + 0x7FFF + ((b >> 16) & 1)) >> 16
+        tl.store(out_ptr + n * K + k, b.to(tl.int16), mask=mask)
+
+
+class DequantSpec(NamedTuple):
+    fmt: int
+    bits: int
+    group: int
+    gscale: float
+    tile: torch.Tensor
+    scol: torch.Tensor
+
+
+def _marlin_perms():
+    from vllm.model_executor.layers.quantization.utils.marlin_utils import get_scale_perms
+    from vllm.model_executor.layers.quantization.utils.marlin_utils_test import (
+        get_weight_perm,
+    )
+
+    return get_weight_perm, get_scale_perms()
+
+
+def dequant_spec(layer: torch.nn.Module, mode: str, group_size: int | None) -> DequantSpec:
+    """Kernel arguments for one swapped layer; tables are cached per mode and device."""
+    dev = layer.weight.device
+    bits = 4 if mode in ("int4", "nvfp4") else 8
+    if (mode, dev) not in _DQ_TABLES:
+        get_weight_perm, (scale_perm, scale_perm_single) = _marlin_perms()
+        tables = marlin_dequant_tables(
+            get_weight_perm(bits), scale_perm_single if mode == "fp8" else scale_perm,
+            mode == "nvfp4")
+        _DQ_TABLES[mode, dev] = tuple(t.to(dev) for t in tables)
+    group = group_size if mode in INT_BITS else 16 if mode == "nvfp4" else 0
+    # Marlin's global scale is global * 2^119 / sf (nvfp4_marlin_process_global_scale).
+    gscale = float(layer.weight_global_scale) * 2.0**-119 if mode == "nvfp4" else 0.0
+    return DequantSpec(DQ_FORMATS[mode], bits, group, gscale, *_DQ_TABLES[mode, dev])
+
+
+def ensure_workspace(numel: int, device: torch.device) -> torch.Tensor:
+    """The shared BF16 workspace, grown (never shrunk) to at least numel elements."""
+    global _WORKSPACE
+    if _WORKSPACE is None or _WORKSPACE.numel() < numel:
+        _WORKSPACE = None  # free the old one first
+        _WORKSPACE = torch.empty(numel, dtype=torch.bfloat16, device=device)
+    return _WORKSPACE
+
+
+def dequantize_marlin(
+    layer: torch.nn.Module, spec: DequantSpec, out: torch.Tensor | None = None
+) -> torch.Tensor:
+    """(N, K) BF16 weight of a swapped layer, read from its Marlin tensors and
+    written into out (default: the front of the shared workspace)."""
+    n, k = layer.output_size_per_partition, layer.input_size_per_partition
+    if out is None:
+        out = _WORKSPACE[: n * k].view(n, k)
+    w, s = layer.weight, layer.weight_scale
+    _marlin_dequant_kernel[(triton.cdiv(n, 64), triton.cdiv(k, 64))](
+        w.view(torch.uint8),
+        s.view(torch.uint8 if spec.fmt == DQ_FORMATS["nvfp4"] else torch.int16),
+        spec.tile,
+        spec.scol,
+        out.view(torch.int16),
+        n,
+        k,
+        w.shape[1] * 32 // spec.bits,
+        s.shape[1],
+        spec.gscale,
+        FMT=spec.fmt,
+        GROUP=spec.group,
+        SCHUNK=spec.scol.numel(),
+        BLOCK_N=64,
+        BLOCK_K=64,
+    )
+    return out
+
+
 class Fp8MarlinW8A16Method:
     """Replacement quant_method: Marlin FP8 weight-only GEMM, BF16 activations.
 
@@ -349,6 +554,37 @@ class IntMarlinA16Method(Fp8MarlinW8A16Method):
             bias=None,
         )
         return out if bias is None else out + bias
+
+
+class MarlinDequantMethod:
+    """GLM53_WQ_DEQUANT_MIN_M wrapper around a swapped layer's Marlin method.
+
+    An input of at least min_m rows dequantizes the weight into the shared
+    workspace and runs F.linear. Smaller inputs keep the Marlin GEMM, and so
+    does anything torch.compile traces, so a compiled graph never branches on
+    a symbolic row count. Captured decode and verify steps have fixed row
+    counts of 16 or fewer, so the branch is constant per graph.
+    """
+
+    def __init__(self, inner, min_m: int, spec: DequantSpec) -> None:
+        self._inner, self._min_m, self._spec = inner, min_m, spec
+
+    def apply(self, layer, x: torch.Tensor, bias: torch.Tensor | None = None):
+        if torch.compiler.is_compiling() or x.numel() < self._min_m * x.shape[-1]:
+            return self._inner.apply(layer, x, bias)
+        return torch.nn.functional.linear(x, dequantize_marlin(layer, self._spec), bias)
+
+
+def install_marlin_dequant(layers, min_m: int, group_size: int | None) -> int:
+    """Wrap each (layer, mode) in MarlinDequantMethod and grow the shared
+    workspace to the largest layer. Returns the workspace size in bytes."""
+    numel = 0
+    for layer, mode in layers:
+        spec = dequant_spec(layer, mode, group_size)
+        layer.quant_method = MarlinDequantMethod(layer.quant_method, min_m, spec)
+        numel = max(numel, layer.output_size_per_partition * layer.input_size_per_partition)
+    ws = ensure_workspace(numel, layers[0][0].weight.device)
+    return ws.numel() * ws.element_size()
 
 
 def _set_partition_sizes(layer: torch.nn.Module) -> None:
@@ -485,6 +721,7 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
 
     logger = init_logger(__name__)
     modes = selected_modes()
+    min_m = dequant_min_m()
     groups = list(modes)
     model_name = type(model).__name__
     kind, sites = _collect_sites(model, groups, LinearBase)
@@ -516,7 +753,7 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
         "int4": lambda layer: quantize_layer_to_marlin_int(layer, "int4", gsize),
     }
     stats: dict[str, list[int]] = {}
-    skipped = []
+    skipped, swapped = [], []
     for group, name, layer in sites:
         mode = modes[group]
         w = layer.weight
@@ -534,12 +771,20 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
         del w  # the swap below must drop the last reference to the BF16 weight
         swap[mode](layer)
         _compact(layer)
+        swapped.append((group, layer))
         st = stats.setdefault(group, [0, 0, 0])
         st[0] += 1
         st[1] += bf16_bytes
         for attr in ("weight", "weight_scale", "weight_global_scale"):
             p = getattr(layer, attr, None)
             st[2] += 0 if p is None else p.numel() * p.element_size()
+    # The LM head only sees sampled rows (max_num_seqs * (k + 1) at most).
+    big = [(layer, modes[g]) for g, layer in swapped if g != "lm_head"] if min_m else []
+    if big:
+        ws_bytes = install_marlin_dequant(big, min_m, gsize)
+        logger.info("%s=%d: %s %d layers dequantize at M >= %d; shared BF16 "
+                    "workspace %.1f MiB", ENV_DEQUANT_MIN_M, min_m, model_name,
+                    len(big), min_m, ws_bytes / 2**20)
     torch.cuda.empty_cache()
     logger.info(
         "%s: %s %s; torch reserved %.2f -> %.2f GiB",

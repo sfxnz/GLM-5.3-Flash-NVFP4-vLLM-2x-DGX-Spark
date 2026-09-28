@@ -588,3 +588,68 @@ E2 logged `torch reserved 88.96 -> 87.44 GiB` for 3.42 GiB of freed target weigh
 8. **Memory fix alone.** Any FP8 or NVFP4 boot on the rebuilt image checks `_compact`: E2a's settings should log a target drop of about 2.2 GiB instead of 1.52.
 9. **INT4.** Worth a boot only for `draft`, which cannot change served output. It saves 27 MiB per step over NVFP4 (about 0.1 ms), which is below boot noise. Do not use it for target groups.
 10. **Record** each boot in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`, as E2 did.
+
+### Large-M prefill: dequantize to BF16, then cuBLAS (`GLM53_WQ_DEQUANT_MIN_M`)
+
+E5 F1 ran the recipe defaults (INT8 target groups, NVFP4 drafter). Decode gained 23-51%, but cell E prefill fell to 1193 / 1191 tok/s at 32k / 128k, against E0's 1331 / 1329 (-10% / -12%). TTFT at 128k went from 98.4 s to 109.7 s. At 2048-token chunks that is +178 ms per chunk (2048/1193 - 2048/1331 s). The suspect is Marlin at prefill M: at 256-2048 rows the weight-only GEMM is compute-bound and slower than cuBLAS BF16. The GPU microbench below confirms or refutes that.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_WQ_DEQUANT_MIN_M=<rows>` | unset | A swapped layer whose input has at least `<rows>` rows dequantizes its weight into a shared BF16 workspace and runs `F.linear` (cuBLAS) instead of the Marlin GEMM. Smaller inputs keep Marlin. Anything but a positive integer fails the boot. |
+
+- **Setting it.** No recipe knob yet: `EXTRA_ENV='GLM53_WQ_DEQUANT_MIN_M=1024'`. It only acts on layers that a group variable swapped, and it needs v13 rebuilt from this branch.
+- **Off.** Unset or empty wraps nothing, allocates nothing and compiles no kernel. The serve runs exactly the F1 kernels.
+- **Which layers.** Every swapped layer except the LM head, whose input is the sampled rows only (at most `MAX_NUM_SEQS` x 8 = 16 at the defaults). In a prefill chunk, `kda_in`, `kda_o`, `mla`, `shared` and the drafter's `fc` run at full M. `fc` projects the context in `combine_hidden_states`, outside the drafter's graph. The drafter's other layers only ever see its query tokens (16 or fewer).
+- **Dequant.** One Triton kernel reads the Marlin tensors in place and writes the (N, K) BF16 weight. It inverts `gptq_marlin_repack`'s 1024-element permutation (`get_weight_perm`) and `marlin_permute_scales`, plus the NVFP4 scale swap and the S0E5M3 code. No second copy of any packed weight is kept.
+- **Exact.** Each element is the fp32 q x scale rounded once to BF16 (nearest even):
+  - INT8 / INT4: bit-equal to `dequantize_int`, and to the BF16 product that Marlin forms in registers, because grouped scales are applied in BF16 before the MMA.
+  - FP8: bit-equal to `dequantize_per_channel`. The 2^120 that `fp8_fused_exponent_bias_into_scales` folds into Marlin's scale cancels exactly.
+  - NVFP4: bit-equal to `dequantize_nvfp4`, in its fp32 order e2m1 x (block scale x global scale). Marlin applies the global scale to its accumulator instead, so NVFP4 outputs differ from Marlin by rounding only.
+  - Outputs differ from Marlin's by accumulation order only, like any other GEMM.
+- **TP and layer semantics.** `apply` returns the same per-rank (M, N) shard as Marlin, and the layer's own forward still does the all-reduce (row-parallel) or keeps the shard (column-parallel). `bias` goes to `F.linear` (swapped layers have none).
+- **Workspace.** One BF16 tensor per process, allocated at swap time and sized for the largest wrapped layer. Target only: `kda_in` 12576 x 4096 is 98.2 MiB. With the drafter swapped, `fc` 4096 x 20480 is 160.0 MiB: the drafter's swap frees the target's workspace and allocates the larger one. Each rank logs `GLM53_WQ_DEQUANT_MIN_M=<m>: <model> <n> layers dequantize at M >= <m>; shared BF16 workspace <x> MiB`, and `torch reserved` includes it. MemAvailable after ready should drop by about 160 MiB on both ranks (F1 spark1 9.9 GiB, F2 7.1 GiB; the F4 gate needs 9 GiB on spark1).
+- **Reuse is stream-ordered.** Layers use the workspace one after another. The one swapped layer that runs on a second stream is the shared expert, on the MoE aux stream at 256 rows or fewer (`VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD`). The aux stream waits for the main stream before it starts, and the main stream waits for it right after the launch. No other swapped layer runs in between.
+
+**CUDA graphs and compile (v11 facts; `test_v11_runs_large_m_eagerly` pins them).**
+
+- `config/vllm.py` auto-enables `VLLM_USE_BREAKABLE_CUDAGRAPH=1` for `Glm5Next*` (`run.sh` leaves it unset), and then sets the compilation mode to NONE. So neither the target nor the drafter is `torch.compile`d, and `gpu_model_runner` wraps both in `BreakableCUDAGraphWrapper`.
+- `run.sh` captures 1, 2, 4, 8 and 16 tokens. `CudagraphDispatcher.dispatch` returns NONE for more than 16 tokens, and the wrapper then runs the model eagerly. Every prefill chunk above 16 tokens, mixed with decode or not, is eager, and the branch sees its real M.
+- 16 tokens or fewer, mixed batches included, pad to the next capture size and replay: the FULL key if one exists, else the relaxed PIECEWISE key. Breakable capture builds the same artifact for both. The linears see the padded size at capture and at replay, so the branch is constant per graph. With a threshold above 16, captured steps always run Marlin. A threshold of 16 or less would capture the dequant path into decode graphs, which is correct but slow.
+- With `VLLM_USE_BREAKABLE_CUDAGRAPH=0` the drafter is compiled. The wrapper takes the Marlin path whenever `torch.compiler.is_compiling()`, so a compiled graph never branches on a symbolic row count, and the variable stays out of the compile-cache key.
+
+**Cost model (one 2048-token chunk, per rank).**
+
+| Layers at full M | Params per rank | Dequant traffic (read packed + write BF16) | at 230 GB/s |
+|---|---|---|---|
+| `kda_in` 34 x 12576 x 4096 | 1.751e9 | | |
+| `kda_o` 34 x 4096 x 4096 | 0.570e9 | | |
+| `mla` 11 x (8192 x 1536 + 4096 x 8192) | 0.508e9 | | |
+| `shared` 42 x (2048 x 4096 + 4096 x 1024) | 0.528e9 | | |
+| target, INT8 g128 (1 + 2/128 + 2 = 3.02 B/param) | 3.358e9 | 10.13 GB | 44.0 ms |
+| drafter `fc`, NVFP4 (0.5 + 1/16 + 2 = 2.56 B/param) | 0.084e9 | 0.21 GB | 0.9 ms |
+| total | 3.44e9 | 10.34 GB | 45 ms (50 ms at 205 GB/s) |
+
+- `F.linear` then reads the BF16 workspace, which is the same weight traffic as E0's BF16 GEMM. Against E0, the path costs only the dequant pass, D ≈ 45-50 ms per chunk. The LM head (read twice per step) and the drafter's small-M layers are not in the chunk.
+- **Pays off iff G > D**, where G is the count-weighted Marlin - cuBLAS gap at the chunk's M. The chunk saves G - D. If all of the observed 178 ms is G, the path recovers about 130 ms: about 1585 ms per chunk, or about 1290 tok/s (97% of E0). If G is under about 50 ms, the slowdown is not Marlin, and the path makes prefill slower.
+- **Threshold.** The dequant cost is fixed per call, and the gap grows with M. While both GEMMs are compute-bound, t_dq / t_cuBLAS ≈ 3.02 F / (2 M BW), whatever the layer's shape, where F is cuBLAS's achieved BF16 FLOP/s. With Marlin at r times cuBLAS, the break-even is M* ≈ 3.02 F / (2 BW (r - 1)): at F = 100 TFLOP/s and BW = 230 GB/s, M* ≈ 660 for r = 2 and ≈ 1300 for r = 1.5. At M = 256 the path is unlikely to win: it moves at least 5 B/param (dequant plus the BF16 read), and Marlin moves about 1 B/param near its compute limit. Full chunks are 2048 tokens minus the 16 or fewer decode tokens mixed in, so any threshold up to 2032 catches them. Take the smallest M at which the bench's chunk line shows a saving; 1024 is the likely value.
+- **Overheads.** Each chunk adds 175 Triton launches (174 target layers and the drafter's `fc`). An eager prefill chunk is GPU-bound at about 1.5 s, so the launches overlap the GPU work.
+
+**GPU validation (exclusive TP = 2 slot).**
+
+1. Build v13 from this branch on the head, then `docker save glm53-sm121-v13 | ssh spark2 docker load`.
+2. Microbench, with no serve up:
+
+   ```bash
+   docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \
+     -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
+     glm53-sm121-v13 tools/bench_fp8_marlin.py --dequant \
+     --groups kda_in,kda_o,mla,shared,draft --json evidence/<run>/dq-bench.json
+   ```
+
+   - PASS needs every dequantized weight to equal its reference dequant in BF16. This is the layout check against the real `gptq_marlin_repack`, which the CPU tests can only check against vLLM's Python reference. A Triton compile error here means the kernel does not build on sm_121, so stop there.
+   - Read the `one prefill chunk per rank` lines. `int8: dq` should be about 44 ms (about 230 GB/s). `saves` at M = 2048 is G - D for the target groups. Boot only if it is clearly positive, about 50 ms or more. Pick the threshold as described above.
+3. Boot the recipe defaults with `EXTRA_ENV='GLM53_WQ_DEQUANT_MIN_M=<M>'`. Both ranks log the dequant line twice: the target with 174 layers and 98.2 MiB, then the drafter with 32 layers and 160.0 MiB. Log `free -h` at ready: spark1 must keep 9 GiB or more for F4.
+4. Cell E at 32k and 128k. Prefill tok/s should move from F1's 1193 / 1191 toward E0's 1331 / 1329, with a ceiling of about E0 minus the dequant pass (about 1290). TTFT at 128k should fall from 109.7 s.
+5. Decode fast gate (`bench_decode.py` fast gate twice, `kit/compare.py` against F1). It must be unchanged within the cross-boot band, because captured steps never take the path.
+6. Tier 0, `quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8`, judged against the F1 / E4 cross-boot limits. The layers compute the same product with the same weights, so only prefill reduction-order noise may move it. Count-200 must stay lossless, the thinking-off smoke must pass, and needle 8k / 32k must pass.
+7. Keep it only if cell E beats noise and nothing else regresses. Otherwise leave it unset. Record the result in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`.

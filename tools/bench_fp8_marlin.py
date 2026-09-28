@@ -32,6 +32,18 @@ quantization noise). INT8 must run in at most --max-ratio-int8 (1.1) of the
 FP8 time at each --gate-m, and INT8 and INT4 outputs stay within
 --max-fro-err-int of a BF16 GEMM on their own dequantized weights; the INT4
 time is reported against NVFP4. Exit status 0 = pass, 1 = fail.
+
+--dequant (GLM53_WQ_DEQUANT_MIN_M) also times, per format, the large-M path:
+the Triton dequant of the Marlin tensors into the shared BF16 workspace, and
+dequant + F.linear, at M = 256, 1024, 2048 unless --m says otherwise. It skips
+the LM head, which the serve keeps on Marlin. It fails if any dequantized
+weight differs from the patch's reference dequant in BF16 (a layout check
+against the real gptq_marlin_repack). It ends with the count-weighted total
+of one prefill chunk per rank (kda_in, kda_o, mla, shared and the drafter's
+fc, the layers a chunk runs at full M): BF16, Marlin, dequant alone and
+dequant + F.linear.
+
+  docker run ... glm53-sm121-v13 tools/bench_fp8_marlin.py --dequant --json dq.json
 """
 
 import argparse
@@ -238,6 +250,14 @@ def bench(gemms: list[dict], args) -> int:
             ints = dict(INT_BITS)
         except ImportError as e:
             print(f"INT path unavailable ({e}); skipping those columns")
+    if args.dequant:  # no fallback: an image without the path cannot run this option
+        from vllm.model_executor.layers.quantization.glm53_fp8_w8a16 import (
+            dequant_spec,
+            dequantize_marlin,
+            dequantize_per_channel,
+            ensure_workspace,
+            quantize_per_channel,
+        )
 
     dev = torch.device("cuda", torch.cuda.current_device())
     torch.manual_seed(0)
@@ -312,6 +332,22 @@ def bench(gemms: list[dict], args) -> int:
             lay4 = fp4_layers[0]
             fp4_bytes = sum(p.numel() * p.element_size() for p in
                             (lay4.weight, lay4.weight_scale, lay4.weight_global_scale))
+        dq_sets = {}  # mode -> [(layer, spec)] for the large-M path
+        if args.dequant and m["group"] != "lm_head":  # the serve keeps the LM head on Marlin
+            ensure_workspace(n * k, dev)
+            refs = {"fp8": (fp8_layers, dequantize_per_channel(*quantize_per_channel(w))),
+                    "nvfp4": (fp4_layers, w4ref),
+                    **{mode: (lays, int_refs[mode]) for mode, lays in int_layers.items()}}
+            for mode, (lays, ref) in refs.items():
+                if not lays:
+                    continue
+                pairs = [(lay, dequant_spec(lay, mode, args.int_group_size)) for lay in lays]
+                bad = int((dequantize_marlin(*pairs[0]) != ref.to(torch.bfloat16)).sum())
+                if bad:
+                    ok = False
+                    print(f"FAIL {m['group']}/{m['name']}: {mode} dequant differs from its "
+                          f"reference in {bad} elements (layout/kernel error)")
+                dq_sets[mode] = pairs
         for M in args.m:
             x = torch.randn(M, k, device=dev).to(torch.bfloat16)
             ref_y = F.linear(x, w).float()
@@ -353,6 +389,12 @@ def bench(gemms: list[dict], args) -> int:
                     ok = False
                     print(f"FAIL {m['group']}/{m['name']} M={M}: {mode} fro_rel_err {froi:.3f} "
                           f"vs dequantized weights > {args.max_fro_err_int} (layout/kernel error)")
+            dq_txt = ""
+            for mode, pairs in dq_sets.items():
+                tdq = time_ms(lambda: [dequantize_marlin(*p) for p in pairs]) / copies
+                tdl = time_ms(lambda: [F.linear(x, dequantize_marlin(*p)) for p in pairs]) / copies
+                row.update({f"{mode}_dq_us": tdq * 1e3, f"{mode}_dql_us": tdl * 1e3})
+                dq_txt += f" {mode} dq {tdq * 1e3:.1f}us dq+linear {tdl * 1e3:.1f}us"
             rows.append(row)
             nv = "" if t4 is None else (
                 f" nvfp4 {t4 * 1e3:8.1f}us {row['nvfp4_gbs']:6.1f}GB/s ratio {t4 / t16:.3f}"
@@ -360,8 +402,8 @@ def bench(gemms: list[dict], args) -> int:
             print(f"{m['group']:8} {m['name']:18} {n:>6}x{k:<6} M={M:<3} "
                   f"bf16 {t16 * 1e3:8.1f}us {row['bf16_gbs']:6.1f}GB/s  "
                   f"fp8 {t8 * 1e3:8.1f}us {row['fp8_gbs']:6.1f}GB/s  ratio {t8 / t16:.3f}"
-                  f"  err max_abs {max_abs:.2e} max_rel {max_rel:.2e} fro {fro:.2e}{nv}{ints_txt}",
-                  flush=True)
+                  f"  err max_abs {max_abs:.2e} max_rel {max_rel:.2e} fro {fro:.2e}{nv}{ints_txt}"
+                  f"{dq_txt}", flush=True)
             if fro > args.max_fro_err:
                 ok = False
                 print(f"FAIL {m['group']}/{m['name']} M={M}: fro_rel_err {fro:.3f} "
@@ -370,7 +412,7 @@ def bench(gemms: list[dict], args) -> int:
                 ok = False
                 print(f"FAIL {m['group']}/{m['name']} M={M}: NVFP4 fro_rel_err {fro4:.3f} "
                       f"vs dequantized weights > {args.max_fro_err_nvfp4} (layout/kernel error)")
-        del bf16_ws, fp8_layers, fp4_layers, w4ref, w, int_layers, int_refs
+        del bf16_ws, fp8_layers, fp4_layers, w4ref, w, int_layers, int_refs, dq_sets
         torch.cuda.empty_cache()
 
     print("\ncount-weighted per step (one rank):")
@@ -414,6 +456,22 @@ def bench(gemms: list[dict], args) -> int:
                 for mode, t in ti.items())
             print(f"  {g:8} M={M:<3} bf16 {t16 / 1e3:7.2f} ms  fp8 {t8 / 1e3:7.2f} ms  "
                   f"ratio {t8 / t16:.3f}  saves {(t16 - t8) / 1e3:6.2f} ms/step  {verdict}{nv}{it}")
+    if args.dequant:
+        chunk = [r for r in rows
+                 if r["group"] in ("kda_in", "kda_o", "mla", "shared") or r["gemm"] == "fc"]
+        print("\none prefill chunk per rank (kda_in, kda_o, mla, shared, draft fc), ms:")
+        for M in args.m:
+            sel = [r for r in chunk if r["M"] == M]
+            if not sel:
+                continue
+            line = f"  M={M:<5} bf16 {sum(r['bf16_us'] * r['count'] for r in sel) / 1e3:7.1f}"
+            for mode in ("fp8", "nvfp4", *ints):
+                if all(f"{mode}_dql_us" in r for r in sel):
+                    t = {x: sum(r[mode + x] * r["count"] for r in sel) / 1e3
+                         for x in ("_us", "_dq_us", "_dql_us")}
+                    line += (f"  {mode}: marlin {t['_us']:7.1f} dq {t['_dq_us']:6.1f} "
+                             f"dq+linear {t['_dql_us']:7.1f} saves {t['_us'] - t['_dql_us']:+7.1f}")
+            print(line)
     if args.json:
         Path(args.json).write_text(json.dumps(dict(
             rows=rows, summary=summary, passed=ok, max_ratio=args.max_ratio,
@@ -423,7 +481,8 @@ def bench(gemms: list[dict], args) -> int:
           f"NVFP4/FP8 <= {args.max_ratio_nvfp4} and INT8/FP8 <= {args.max_ratio_int8} "
           f"at M in {args.gate_m} for every group, fro_rel_err <= {args.max_fro_err} "
           f"(FP8 vs BF16), <= {args.max_fro_err_nvfp4} (NVFP4) and <= {args.max_fro_err_int} "
-          f"(INT8/INT4 g{args.int_group_size}) vs their dequantized weights")
+          f"(INT8/INT4 g{args.int_group_size}) vs their dequantized weights"
+          + (", and every --dequant weight equal to its reference" if args.dequant else ""))
     return 0 if ok else 1
 
 
@@ -438,7 +497,8 @@ def main() -> int:
     p.add_argument("--tp", type=int, default=2)
     p.add_argument("--rank", type=int, default=0)
     p.add_argument("--groups", type=lambda s: s.split(","), default=list(GROUPS))
-    p.add_argument("--m", type=ints, default=[1, 8, 16, 32], help="GEMM rows to time")
+    p.add_argument("--m", type=ints, help="GEMM rows to time (default 1,8,16,32; "
+                   "256,1024,2048 with --dequant)")
     p.add_argument("--gate-m", type=ints, default=[8, 16], help="rows the pass rule uses")
     p.add_argument("--iters", type=int, default=50, help="graph replays per timing")
     p.add_argument("--rotate-mb", type=int, default=256,
@@ -457,9 +517,13 @@ def main() -> int:
                    help="INT8/FP8 time ratio the pass rule allows")
     p.add_argument("--max-fro-err-int", type=float, default=0.02,
                    help="INT output vs BF16 GEMM on the dequantized INT weights")
+    p.add_argument("--dequant", action="store_true",
+                   help="also time the GLM53_WQ_DEQUANT_MIN_M dequant + F.linear path")
     p.add_argument("--report-bytes", action="store_true", help="CPU only: bytes table")
     p.add_argument("--json", help="write rows and summary here")
     args = p.parse_args()
+    if args.m is None:
+        args.m = [256, 1024, 2048] if args.dequant else [1, 8, 16, 32]
     bad = set(args.groups) - set(GROUPS)
     if bad:
         p.error(f"unknown groups {sorted(bad)}")

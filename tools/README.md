@@ -7,7 +7,7 @@ Measurement tools for the kernel campaign (PLAN section 5: "Expert census boot" 
 | `census_report.py` | CPU, numpy | Reads `GLM53_EXPERT_CENSUS` files and reports distinct experts per verify step, duplicates, per-position overlap, routed-MoE bytes per rank per step, and the SD-1 tail-masking saving |
 | `nsys_step.sh` | head node, against a running serve | Records about 30 steady-state verify steps on both ranks with the image's torch profiler |
 | `step_buckets.py` | CPU, ijson | Turns one rank's trace into a kernel-time table per verify step |
-| `bench_fp8_marlin.py` | GPU (FP8 lane); `--report-bytes` on CPU | BF16 vs Marlin FP8, NVFP4, INT8 and INT4 GEMM bench, documented in its docstring |
+| `bench_fp8_marlin.py` | GPU (FP8 lane); `--report-bytes` on CPU | BF16 vs Marlin FP8, NVFP4, INT8 and INT4 GEMM bench, and (`--dequant`) the `GLM53_WQ_DEQUANT_MIN_M` dequant + cuBLAS path at prefill M, documented in its docstring |
 
 CPU tests for the first three live in `docker/test_v13_census.py`:
 
