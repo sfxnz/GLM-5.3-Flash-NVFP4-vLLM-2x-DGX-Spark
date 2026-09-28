@@ -435,6 +435,24 @@ def quantize_layer_to_marlin_int(layer: torch.nn.Module, mode: str, group_size: 
     layer.quant_method = IntMarlinA16Method(apply_gptq_marlin_linear, wtype)
 
 
+def _compact(layer: torch.nn.Module) -> None:
+    """Copy a swapped layer's new tensors to the lowest free addresses.
+
+    vLLM loads under max_split_size_mb:20, and run.sh sets
+    expandable_segments:True, which maps memory in 20 MiB pages. The freed
+    BF16 blocks are "oversized" for the new tensors, so each packed weight
+    lands on freshly mapped pages among the swap's transients and keeps two
+    partly used pages once those are unmapped. After empty_cache the only
+    mapped free memory is page remainders: a copy either fills one or starts
+    right after the last live block, so consecutive layers share pages.
+    """
+    torch.cuda.empty_cache()
+    for attr in ("weight", "weight_scale", "weight_global_scale"):
+        p = getattr(layer, attr, None)
+        if p is not None:
+            p.data = p.data.clone()
+
+
 def _collect_sites(model, groups, linear_base):
     """Return (kind, [(group, name, layer)]); kind is target, draft or None."""
     mro = {c.__name__ for c in type(model).__mro__}
@@ -516,6 +534,7 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
         bf16_bytes = w.numel() * w.element_size()
         del w  # the swap below must drop the last reference to the BF16 weight
         swap[mode](layer)
+        _compact(layer)
         st = stats.setdefault(group, [0, 0, 0])
         st[0] += 1
         st[1] += bf16_bytes

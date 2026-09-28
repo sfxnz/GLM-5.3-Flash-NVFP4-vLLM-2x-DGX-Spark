@@ -747,6 +747,23 @@ class QuantizerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.m.quantize_int(torch.zeros(4, 192, dtype=torch.bfloat16), 8, 128)
 
+    def test_compact_reallocates_after_empty_cache(self):
+        from unittest import mock
+
+        layer = torch.nn.Module()
+        layer.weight = torch.nn.Parameter(torch.arange(12, dtype=torch.int32), requires_grad=False)
+        layer.weight_scale = torch.nn.Parameter(torch.ones(3), requires_grad=False)
+        param, ptrs = layer.weight, [layer.weight.data_ptr(), layer.weight_scale.data_ptr()]
+        calls = []
+        with mock.patch.object(torch.cuda, "empty_cache",
+                               side_effect=lambda: calls.append(layer.weight.data_ptr())):
+            self.m._compact(layer)
+        self.assertEqual(calls, [ptrs[0]])  # emptied before the copies
+        self.assertIs(layer.weight, param)
+        self.assertNotEqual(layer.weight.data_ptr(), ptrs[0])
+        self.assertNotEqual(layer.weight_scale.data_ptr(), ptrs[1])
+        self.assertTrue(torch.equal(layer.weight, torch.arange(12, dtype=torch.int32)))
+
     @unittest.skipIf(np is None, "numpy not importable")
     @unittest.skipUnless(CKPT.is_dir(), f"checkpoint not at {CKPT}")
     def test_real_checkpoint_int_error(self):
