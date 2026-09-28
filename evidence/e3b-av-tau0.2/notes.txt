@@ -1,0 +1,60 @@
+E3b tau 0.2: adaptive verify at the more aggressive threshold; everything else as E3b tau 0.1 (../e3b-av-tau0.1/).
+Why 0.2 and not 0.05: at tau 0.1 per-position acceptance did not drop at any position on A, B, H or T, so no
+accepted drafts were being cut; a lower tau could only verify more rows. 0.2 cuts more.
+  serve   IMAGE=glm53-sm121-v13 (56c6084f422c) EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft GLM53_KPOOL_TAIL_FIX=1
+          GLM53_DETERMINISTIC_MLA_INDEX=1 GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=0.2'. VALIDATE_ONLY first,
+          image parity OK; args/image parity OK on the served containers.
+boot  run.sh 03:39:36Z -> ready 03:54:44Z (15.1 min). KV pool 372,877. No Traceback or ERROR on either rank.
+
+GLM53_ lines (glm53-lines.txt), both ranks:
+  GLM53_ADAPTIVE_VERIFY: tau=0.2 max=7 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers
+  GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7); GLM53_DETERMINISTIC_MLA_INDEX; GLM53_NVFP4_W4A16
+
+MemAvailable GiB (spark1 / spark2): LOAD 14.46 / 15.52, PROFILE 11.17 / 12.11, KV_READY 4.97 / 10.70,
+  SERVING min 4.19 / 10.16 through Tier 0 (memory-by-phase.txt). Client memguard never fired.
+
+checks: count-200 200/200 (stop), thinking-off "PING" (probe-count.console.txt).
+
+ruler v2 fast gate x2 + T; kit/compare.py vs E3a (compare-vs-e3a.txt) and vs tau 0.1 (compare-vs-tau0.1.txt)
+  cell   E3a tok/s  tau0.1 tok/s  tau0.2 b1/b2 tok/s  step_ms E3a / 0.1 / 0.2     acc_len E3a / 0.1 / 0.2
+  A      20.02      21.56         23.11 / 22.90       110.8 / 103.1 / 96.3       2.220 / 2.228 / 2.223
+  B      35.18      37.30         36.38 / 37.71       116.2 / 114.0 / 110.6      4.109 / 4.282 / 4.135
+  J@c1   71.58      71.40         71.30 / 71.70       111.2 / 111.5 / 111.3      8.000
+  J@c2   59.71      61.05         60.80 / 61.04       133.4 / 130.4 / 130.7      7.974 / 8.000 / 8.000
+  H      14.18      15.52         17.21 / 16.83       156.8 / 143.5 / 131.8      2.225 / 2.226 / 2.240
+  T      25.40      26.47         27.97               108.7 / 101.9 / 96.6       2.762 / 2.706 / 2.712
+  vs E3a: A +14.9% [+13.5,+16.3] KEEP (step -13.0%), H +20.0% [+16.7,+23.4] KEEP (step -16.0%), K@c2 +16.3% KEEP,
+    B +5.3% [+1.6,+9.0] (step -4.8%, acc +0.6%), J flat, T +10.1% (step -11.1%, acc -1.8%).
+  vs tau 0.1: A +6.7% [+4.4,+9.0] KEEP, H +9.7% [+6.6,+12.7] KEEP, B -0.7% [-4.2,+2.8] (step -3.0%, acc -3.4%,
+    paired [-6.2,-0.5]; tau 0.1's B acceptance was the high draw, E3a 4.109 vs tau0.2 4.135).
+  per_pos p1..p7
+    A  b1 .628 .315 .151 .070 .030 .011 .006   b2 .642 .313 .145 .065 .021 .009 .004   (E3a b1 .613 .332 .157 .059 .023 .008 .004)
+    B  b1 .820 .648 .475 .364 .285 .214 .149   b2 .834 .656 .536 .410 .307 .237 .168   (E3a b1 .822 .654 .494 .388 .298 .217 .163)
+    H  b1 .632 .342 .169 .075 .031 .012 .004   b2 .619 .317 .150 .070 .031 .012 .005   (E3a b1 .639 .337 .158 .073 .026 .008 .003)
+    T     .682 .405 .242 .149 .096 .061 .037                                           (E3a    .693 .439 .258 .149 .099 .065 .042)
+  Reading: prose keeps its acceptance at every position and step_ms falls another 7 ms (A 96.3 ms, H 131.8 ms). Code
+  keeps most of its width: B b1 lost 4-9% at positions 3-7 against E3a, b2 did not, and B's mean acceptance equals
+  E3a's. T (thinking) lost 6-8% at positions 2-3 (acceptance -1.8%). Against E3a no cell regresses.
+
+Tier 0 (tier0.json), compare vs nvidia-v11-k7, 04:14:15Z..04:22:18Z
+                     E3a          tau0.1       tau0.2       cross-boot A/A (E1a)   limit
+  dNLL               +0.000182    -0.000695    -0.000339    -0.000120              0.005 PASS
+  top-1              0.984318     0.984269     0.984021     0.983264               >= 0.979469 PASS
+  KL top-20          5.270e-3     5.145e-3     5.172e-3     5.864e-3
+  greedy hazard      0.014760     0.010769     0.010728     0.016716               <= 0.019178 PASS (14/20 diverged)
+  count 200, kwargs 12/12, tools json 1.00 (args_ok 0.96), needle 3/3 + 3/3
+  utf8 FAIL (40 rows, 5 wrong squares, 5 wrong cubes, finish length); vision 12/13 (video 3186).
+  tool verdict: FAIL 8/10 on utf8 + video, the same two probes and the same video answer as E2e and E0's compare.
+  utf8 texts x3 (utf8-texts.json): run 0 PASS with 0 errors of any kind; run 1 numeral column copies n^3, 3 wrong
+    squares; run 2 8 wrong squares. Flaky as on the reference boot.
+  Lossless probe (probe-lossless.txt): not target top-1 under teacher forcing utf8 2/221, greedy16 5/96, greedy0 4/84;
+    every miss is a near-tie (gap 0-0.9 nats, one exact tie). E0 without adaptive verify: 7/600, 4/107, 2/101.
+  Judged: nll and greedy at the A/A; count-200 PASS. Lossless within A/A, as adaptive verify should be.
+
+Verdict: best config of E3 and the serve left up. A +14.9%, H +20.0%, T +10.1%, B +5.3% over E3a (single boot each,
+A/H clear the +-4% band), prose acceptance unchanged, Tier 0 judged pass, count-200 pass. The sweep stops here: two
+adaptive boots (0.1, 0.2) as instructed. Next candidate would be 0.3, where code acceptance is the thing to watch.
+
+Serve left up: containers glm53-flash-nvfp4 on spark1 and spark2 (started 03:39:36Z). Boot watcher 3072991 stopped at
+04:26:00Z (boot-watcher-stopped.txt); a setsid SERVING watcher (2 GiB floor) runs as pid 3197287, logs in
+~/projects/data/glm53-serving-watch/20260928-e3b-av-tau0.2/.

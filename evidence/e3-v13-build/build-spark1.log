@@ -1,0 +1,93 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.sm121-v13
+#1 transferring dockerfile: 1.94kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/glm53-sm121-v11:latest
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [ 1/14] FROM docker.io/library/glm53-sm121-v11:latest
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 46.96kB done
+#5 DONE 0.0s
+
+#6 [ 2/14] COPY patch_v13_misc.py /tmp/patch_v13_misc.py
+#6 DONE 0.1s
+
+#7 [ 3/14] RUN touch /tmp/v13.stamp     && python3 /tmp/patch_v13_misc.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_misc.py
+#7 0.447 models/glm5next/nvidia/model.py: 3/3 edits to apply
+#7 0.447 v1/attention/backends/mla/indexer.py: 2/2 edits to apply
+#7 0.447 model_executor/warmup/kernel_warmup.py: 1/1 edits to apply
+#7 0.447 third_party/flash_linear_attention/ops/fused_recurrent.py: 4/4 edits to apply
+#7 0.447 third_party/flash_linear_attention/ops/kda.py: 6/6 edits to apply
+#7 0.447 model_executor/model_loader/ep_weight_filter.py: 2/2 edits to apply
+#7 0.447 v1/core/kv_cache_coordinator.py: 4/4 edits to apply
+#7 0.447 model_executor/warmup/glm5next_mhc_warmup.py: new file
+#7 0.447 v13 misc patches applied (8 files written)
+#7 DONE 0.5s
+
+#8 [ 4/14] COPY patch_v13_fp8.py /tmp/patch_v13_fp8.py
+#8 DONE 0.1s
+
+#9 [ 5/14] RUN python3 /tmp/patch_v13_fp8.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_fp8.py
+#9 0.216 patch_v13_fp8: 3 file(s) written under /usr/local/lib/python3.12/dist-packages/vllm
+#9 DONE 0.2s
+
+#10 [ 6/14] COPY patch_v13_census.py /tmp/patch_v13_census.py
+#10 DONE 0.1s
+
+#11 [ 7/14] RUN python3 /tmp/patch_v13_census.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_census.py
+#11 0.224 v1/worker/gpu/model_runner.py: 4/4 edits to apply
+#11 0.224 v1/worker/gpu/glm53_expert_census.py: new file
+#11 0.224 v13 census patch applied (2 files written)
+#11 DONE 0.2s
+
+#12 [ 8/14] COPY patch_v13_determinism.py /tmp/patch_v13_determinism.py
+#12 DONE 0.2s
+
+#13 [ 9/14] RUN python3 /tmp/patch_v13_determinism.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_determinism.py
+#13 0.241 v1/attention/backends/mla/sparse_utils.py: 5/5 edits to apply
+#13 0.241 model_executor/layers/sparse_attn_indexer_kpool.py: 3/3 edits to apply
+#13 0.241 model_executor/layers/logits_processor.py: 1/1 edits to apply
+#13 0.241 v13 determinism patches applied (3 files written)
+#13 DONE 0.3s
+
+#14 [10/14] COPY patch_v13_verify.py /tmp/patch_v13_verify.py
+#14 DONE 0.1s
+
+#15 [11/14] RUN python3 /tmp/patch_v13_verify.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_verify.py
+#15 0.247 model_executor/layers/fused_moe/router/base_router.py: 2/2 edits to apply
+#15 0.247 v1/worker/gpu/spec_decode/rejection_sampler.py: 2/2 edits to apply
+#15 0.247 v1/worker/gpu/model_runner.py: 3/3 edits to apply
+#15 0.247 v1/attention/backends/mla/indexer.py: 2/2 edits to apply
+#15 0.247 v1/worker/gpu/spec_decode/glm53_adaptive_verify.py: new file
+#15 0.247 v13 verify patch applied (5 files written)
+#15 DONE 0.3s
+
+#16 [12/14] COPY patch_v13_kpool_tail.py /tmp/patch_v13_kpool_tail.py
+#16 DONE 0.1s
+
+#17 [13/14] RUN python3 /tmp/patch_v13_kpool_tail.py "/usr/local/lib/python3.12/dist-packages/vllm"     && rm /tmp/patch_v13_kpool_tail.py
+#17 0.245 models/glm5next/nvidia/ops/kpool_compress.py: 12/12 edits to apply
+#17 0.245 models/glm5next/nvidia/attention.py: 1/1 edits to apply
+#17 0.245 v1/attention/backends/mla/indexer.py: 5/5 edits to apply
+#17 0.245 v13 kpool tail patch applied (3 files written)
+#17 DONE 0.3s
+
+#18 [14/14] RUN find "/usr/local/lib/python3.12/dist-packages/vllm" -name '*.py' -newer /tmp/v13.stamp -print0         | xargs -0 -r python3 -m compileall -q     && rm /tmp/v13.stamp
+#18 DONE 0.6s
+
+#19 exporting to image
+#19 exporting layers
+#19 exporting layers 0.3s done
+#19 writing image sha256:56c6084f422c4ab3ac20c0b56fe826b3c01e5dbe933c65360b17e97a225a6359 done
+#19 naming to docker.io/library/glm53-sm121-v13 done
+#19 DONE 0.3s
+rc=0 start 2026-09-28T00:43:12Z end 2026-09-28T00:43:16Z

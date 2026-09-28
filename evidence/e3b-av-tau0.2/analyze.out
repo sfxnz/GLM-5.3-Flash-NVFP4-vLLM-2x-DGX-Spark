@@ -1,0 +1,128 @@
+== compare vs E2e
+arm A boots: serve started 2026-09-27T21:54:39Z (2 panel(s))
+arm B boots: serve started 2026-09-28T03:40:03Z (2 panel(s))
+cell     boots  tok/s A  tok/s B  tok/s change [95% CI]     step_ms change            acc_len change            acc paired bootstrap      verdict
+A         1/1     20.19    23.00  +13.9% [+11.8,+16.1]      -13.4% [-13.9,-13.0]      -1.3% [-3.5,+0.9]         -1.3% [-3.1,+0.7]         KEEP
+B         1/1     36.28    37.05  +2.1% [-1.6,+5.8]         -4.6% [-5.3,-3.9]         -2.1% [-6.0,+1.7]         -2.1% [-5.3,+1.3]         INCONCLUSIVE(single-boot)
+J@c1      1/1     71.45    71.50  +0.1% [-0.7,+0.8]         -0.1% [-0.8,+0.7]         +0.0% [+0.0,+0.0]         -                         INCONCLUSIVE(single-boot)
+J@c2      1/1     61.53    60.92  -1.0% [-1.4,-0.6]         +1.0% [+0.6,+1.4]         +0.0% [+0.0,+0.0]         -                         INCONCLUSIVE(single-boot)
+H         1/1     14.40    17.02  +18.2% [+14.3,+22.0]      -15.9% [-16.7,-15.0]      -0.6% [-3.7,+2.5]         -                         KEEP
+K@c1      1/1     20.20    21.99  +8.9% [+3.8,+14.0]        -13.4% [-14.3,-12.5]      -5.8% [-10.8,-0.8]        -                         INCONCLUSIVE(single-boot)
+K@c2      1/1     15.16    17.47  +15.2% [+5.7,+24.7]       -13.7% [-18.2,-9.1]       -0.4% [-5.3,+4.6]         -                         KEEP
+single-boot: an arm has < 2 boots, so the intervals are within-boot (same-boot panels) and a verdict needs one to clear +-4.0% (--boot-band). Run 2 boots per arm, ABAB.
+== compare vs E0
+arm A boots: evidence/e0-nvidia-v11 (2 panel(s))
+arm B boots: serve started 2026-09-28T03:40:03Z (2 panel(s))
+cell     boots  tok/s A  tok/s B  tok/s change [95% CI]     step_ms change            acc_len change            acc paired bootstrap      verdict
+A         1/1     19.73    23.00  +16.6% [+15.3,+17.9]      -16.5% [-16.6,-16.3]      -2.5% [-3.8,-1.2]         -2.5% [-5.4,+0.9]         KEEP
+B         1/1     34.64    37.05  +6.9% [+2.9,+11.0]        -7.9% [-8.5,-7.3]         -1.3% [-5.2,+2.7]         -1.3% [-3.4,+1.7]         INCONCLUSIVE(single-boot)
+J@c1      1/1     68.87    71.50  +3.8% [+3.2,+4.4]         -3.7% [-4.2,-3.1]         +0.0% [+0.0,+0.0]         -                         INCONCLUSIVE(single-boot)
+J@c2      1/1     56.20    60.92  +8.4% [+5.7,+11.1]        -6.5% [-9.4,-3.6]         +1.2% [+0.8,+1.7]         -                         KEEP
+H         1/1     13.87    17.02  +22.7% [+18.7,+26.8]      -18.4% [-19.1,-17.7]      +0.0% [-4.1,+4.1]         -                         KEEP
+K@c1      1/1     18.94    21.99  +16.1% [+10.9,+21.4]      -16.5% [-17.4,-15.5]      -3.0% [-8.3,+2.3]         -                         KEEP
+K@c2      1/1     15.37    17.47  +13.6% [+7.2,+20.1]       -13.7% [-18.8,-8.5]       -1.7% [-6.5,+3.1]         -                         KEEP
+single-boot: an arm has < 2 boots, so the intervals are within-boot (same-boot panels) and a verdict needs one to clear +-4.0% (--boot-band). Run 2 boots per arm, ABAB.
+== T vs E2e
+arm A boots: serve started 2026-09-27T21:54:39Z (1 panel(s))
+arm B boots: serve started 2026-09-28T03:40:03Z (1 panel(s))
+cell     boots  tok/s A  tok/s B  tok/s change [95% CI]     step_ms change            acc_len change            acc paired bootstrap      verdict
+T         1/1     24.88    27.97  +12.4%                    -11.3%                    -0.2%                     -0.2% [-6.9,+6.1]         INCONCLUSIVE(single-boot)
+single-boot: an arm has < 2 boots, so the intervals are within-boot (same-boot panels) and a verdict needs one to clear +-4.0% (--boot-band). Run 2 boots per arm, ABAB.
+== per_pos
+cell     run              tok/s  step_ms  acc_len  per_pos p1..p7
+A        e2e-b1           20.02    111.0    2.230  0.626 0.323 0.157 0.061 0.026 0.012 0.005
+A        e2e-b2           20.35    111.5    2.273  0.620 0.341 0.150 0.075 0.037 0.014 0.005
+A        b1               23.11     96.4    2.236  0.628 0.315 0.151 0.070 0.030 0.011 0.006
+A        b2               22.90     96.2    2.209  0.642 0.313 0.145 0.065 0.021 0.009 0.004
+B        e2e-b1           36.41    115.8    4.238  0.832 0.670 0.533 0.406 0.314 0.228 0.163
+B        e2e-b2           36.15    116.1    4.212  0.838 0.668 0.519 0.415 0.306 0.239 0.180
+B        b1               36.38    110.2    4.052  0.820 0.648 0.475 0.364 0.285 0.214 0.149
+B        b2               37.71    111.0    4.217  0.834 0.656 0.536 0.410 0.307 0.237 0.168
+J@c1     e2e-b1           71.28    111.7    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c1     e2e-b2           71.62    111.1    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c1     b1               71.30    111.6    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c1     b2               71.70    111.0    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c2     e2e-b1           61.47    129.5    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c2     e2e-b2           61.59    129.3    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c2     b1               60.80    130.9    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+J@c2     b2               61.04    130.4    8.000  1.000 1.000 1.000 1.000 1.000 1.000 1.000
+H        e2e-b1           14.23    157.2    2.239  0.640 0.337 0.157 0.061 0.023 0.013 0.007
+H        e2e-b2           14.58    156.0    2.269  0.642 0.347 0.157 0.065 0.033 0.015 0.006
+H        b1               17.21    132.3    2.273  0.632 0.342 0.169 0.075 0.031 0.012 0.004
+H        b2               16.83    131.3    2.207  0.619 0.317 0.150 0.070 0.031 0.012 0.005
+T        e2e-T            24.88    109.0    2.717  0.703 0.427 0.241 0.146 0.088 0.058 0.040
+T        T                27.97     96.6    2.712  0.682 0.405 0.242 0.149 0.096 0.061 0.037
+== Tier 0
+                                  E0         E1a         E2e        this
+dNLL vs ref                -0.000146   -0.000120   -0.000078   -0.000339
+top1_agree vs ref           0.984464    0.983264    0.982686    0.984021
+KL top20 vs ref            5.089e-03   5.864e-03   6.050e-03   5.172e-03
+greedy hazard vs ref        0.009873    0.016716    0.016000    0.010728
+greedy diverged/20                14          17          16          14
+A/A |dNLL| (record)                -           -           -           -
+A/A top1 (record)                  -           -           -           -
+A/A KL (record)                    -           -           -           -
+A/A greedy hazard                  -           -           -           -
+A/A greedy diverged/20             -           -           -           -
+count                            200         200         200         200
+kwargs                            12          12          12          12
+utf8 sq_err                        0           0          11           5
+tools json_valid                1.00        1.00        1.00        1.00
+tools args_ok                   0.96        0.96        0.96        0.96
+vision                            12          13          12          12
+needle 8192                        3           3           3           3
+needle 32768                       3           3           3           3
+needle 131072                      -           -           -           -
+nll.delta                       PASS        PASS        PASS        PASS
+nll.top1_rerun                  PASS        PASS        PASS        PASS
+greedy.hazard                   PASS        PASS        PASS        PASS
+kwargs.core                     PASS        PASS        PASS        PASS
+kwargs.thinking_alias           PASS        PASS        PASS        PASS
+count                           PASS        PASS        PASS        PASS
+utf8                            PASS        PASS        FAIL        FAIL
+vision                          FAIL        PASS        FAIL        FAIL
+needle                          PASS        PASS        PASS        PASS
+tools.json_valid                PASS        PASS        PASS        PASS
+E0: mode=compare stage=None FAIL tier0 compare vs nvidia-v11-k7: 9/10 criteria; failed vision
+E1a: mode=compare stage=None PASS tier0 compare vs nvidia-v11-k7: 10/10 criteria
+E2e: mode=compare stage=None FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+this: mode=compare stage=None FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+== memory
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3237 min= 14.46 @ 03:52:47  first=116.14 last= 20.72  swap_first=3.95 swap_max=7.34  span=03:39:36..03:53:18
+spark1 PROFILE  n=   108 min= 11.17 @ 03:53:46  first= 20.71 last= 11.17  swap_first=7.33 swap_max=7.33  span=03:53:19..03:53:46
+spark1 KV_READY n=   230 min=  4.97 @ 03:54:44  first= 12.36 last=  4.97  swap_first=7.33 swap_max=7.33  span=03:53:46..03:54:44
+spark1 SERVING  n=   345 min=  4.19 @ 04:19:47  first=  4.97 last=  7.39  swap_first=7.16 swap_max=7.16  span=03:54:44..04:22:16
+spark2 LOAD     n=  3241 min= 15.52 @ 03:44:55  first=117.36 last= 21.03  swap_first=1.74 swap_max=4.37  span=03:39:36..03:53:18
+spark2 PROFILE  n=   108 min= 12.11 @ 03:53:45  first= 21.02 last= 12.33  swap_first=4.15 swap_max=4.15  span=03:53:19..03:53:46
+spark2 KV_READY n=   230 min= 10.70 @ 03:53:52  first= 11.76 last= 10.86  swap_first=4.15 swap_max=4.15  span=03:53:46..03:54:44
+spark2 SERVING  n=   353 min= 10.16 @ 04:19:47  first= 10.86 last= 10.81  swap_first=4.15 swap_max=4.15  span=03:54:45..04:22:15
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        03:54:55..03:55:03  spark1 min=4.39@03:54:56 swap 7.14->7.14 | spark2 min=10.72@03:54:59 swap 4.14->4.14
+bench-1                            03:55:03..04:03:24  spark1 min=4.43@03:55:11 swap 7.14->7.12 | spark2 min=10.76@03:55:04 swap 4.14->4.14
+bench-2                            04:03:24..04:11:43  spark1 min=6.01@04:10:24 swap 7.12->7.12 | spark2 min=12.26@04:04:17 swap 4.14->4.14
+bench-T                            04:11:43..04:14:15  spark1 min=6.00@04:13:54 swap 7.12->7.11 | spark2 min=12.37@04:13:56 swap 4.14->4.13
+tier0-compare                      04:14:15..04:22:18  spark1 min=4.19@04:19:47 swap 7.11->7.11 | spark2 min=10.16@04:19:47 swap 4.13->4.13
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+== boot
+2026-09-28T03:39:36Z
+94db407ef7a498c23f47046d0d388da44dca8919
+IMAGE=glm53-sm121-v13 EXTRA_ENV=MAX_JOBS=2 GLM53_NVFP4_W4A16=draft GLM53_KPOOL_TAIL_FIX=1 GLM53_DETERMINISTIC_MLA_INDEX=1 GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=0.2
+args parity (minus node-rank/host/port/chat-template/headless): OK
+env parity (minus VLLM_HOST_IP): DIFF ['HF_TOKEN=<redacted>', 'HUGGING_FACE_HUB_TOKEN=<redacted>']
+image parity: OK
+== head 2026-09-28T03:54:54Z
+      1 GLM53_ADAPTIVE_VERIFY: tau=0.2 max=7 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers
+      3 GLM53_DETERMINISTIC_MLA_INDEX: kpool pools sorted per row, sparse-MLA index compaction in column order (one program per row)
+      1 GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)
+      1 GLM53_NVFP4_W4A16: DFlash2Qwen3ForCausalLM draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 91.68 -> 90.92 GiB
+(Worker pid=249) INFO 09-28 03:40:47 [gpu_worker.py:386] Using V2 Model Runner
+(Worker_TP0 pid=249) INFO 09-28 03:53:19 [model_runner.py:375] Model loading took 89.55 GiB and 750.878608 seconds
+(EngineCore pid=177) INFO 09-28 03:53:46 [kv_cache_utils.py:2204] GPU KV cache size: 372,877 tokens, Maximum concurrency for 327,680 tokens per request: 1.14x
+== worker 2026-09-28T03:54:54Z
+      1 GLM53_ADAPTIVE_VERIFY: tau=0.2 max=7 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers
+      2 GLM53_DETERMINISTIC_MLA_INDEX: kpool pools sorted per row, sparse-MLA index compaction in column order (one program per row)
+      1 GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)
+      1 GLM53_NVFP4_W4A16: DFlash2Qwen3ForCausalLM draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 91.68 -> 90.92 GiB
+(Worker pid=191) INFO 09-28 03:40:47 [gpu_worker.py:386] Using V2 Model Runner
+(Worker_TP1 pid=191) INFO 09-28 03:45:17 [model_runner.py:375] Model loading took 89.55 GiB and 269.375894 seconds

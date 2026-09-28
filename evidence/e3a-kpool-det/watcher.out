@@ -1,0 +1,35 @@
+2026-09-28T01:07:36.712Z ssh ControlMaster up for spark2
+2026-09-28T01:07:36.713Z watching glm53-flash-nvfp4 head=spark1 worker=spark2 phase=LOAD floors={'LOAD': 10.0, 'PROFILE': 8.0, 'KV_READY': 3.0, 'SERVING': 2.0} kill_log_regex='' kill_compiler_regex=''
+2026-09-28T01:08:48.696Z head: (Worker_TP0 pid=250) INFO 09-28 01:08:48 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-28T01:08:48.739Z worker: (Worker_TP1 pid=190) INFO 09-28 01:08:48 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-28T01:08:48.797Z head: (Worker_TP0 pid=250) INFO 09-28 01:08:48 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-28T01:08:48.844Z worker: (Worker_TP1 pid=190) INFO 09-28 01:08:48 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-28T01:13:42.265Z worker: (Worker_TP1 pid=190) INFO 09-28 01:13:42 [model_runner.py:375] Model loading took 89.55 GiB and 293.868067 seconds
+2026-09-28T01:21:14.635Z head: (Worker_TP0 pid=250) INFO 09-28 01:21:14 [model_runner.py:375] Model loading took 89.55 GiB and 746.253556 seconds
+2026-09-28T01:21:14.645Z PHASE LOAD -> PROFILE (min GiB in LOAD: spark1=13.89 spark2=15.16)
+2026-09-28T01:21:17.284Z head: (Worker_TP0 pid=250) INFO 09-28 01:21:17 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-28T01:21:17.368Z worker: (Worker_TP1 pid=190) INFO 09-28 01:21:17 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-28T01:21:52.653Z worker: (Worker_TP1 pid=190) 2026-09-28 01:21:40  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:21:52.653Z worker: (Worker_TP1 pid=190) 2026-09-28 01:21:45  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+2026-09-28T01:21:52.660Z head: (Worker_TP0 pid=250) 2026-09-28 01:21:40  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:21:52.660Z head: (Worker_TP0 pid=250) 2026-09-28 01:21:45  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+2026-09-28T01:23:31.672Z head: (Worker_TP0 pid=250) INFO 09-28 01:23:31 [gpu_worker.py:492] Initial free memory 109.18 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config
+2026-09-28T01:23:31.673Z PHASE PROFILE -> KV_READY (min GiB in PROFILE: spark1=8.30 spark2=8.66)
+2026-09-28T01:23:31.678Z worker: (Worker_TP1 pid=190) INFO 09-28 01:23:31 [gpu_worker.py:492] Initial free memory 111.19 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config
+2026-09-28T01:23:31.778Z head: (EngineCore pid=178) INFO 09-28 01:23:31 [kv_cache_utils.py:2204] GPU KV cache size: 372,877 tokens, Maximum concurrency for 327,680 tokens per request: 1.14x
+2026-09-28T01:25:49.961Z head: (Worker_TP0 pid=250) 2026-09-28 01:25:26  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:25:49.961Z head: (Worker_TP0 pid=250) 2026-09-28 01:25:32  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+2026-09-28T01:25:49.961Z head: (Worker_TP0 pid=250) 2026-09-28 01:25:33  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:25:49.961Z head: (Worker_TP0 pid=250) 2026-09-28 01:25:41  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+2026-09-28T01:25:49.961Z head: (Worker_TP0 pid=250) 2026-09-28 01:25:42  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:25:50.722Z worker: (Worker_TP1 pid=190) 2026-09-28 01:25:26  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:25:50.722Z worker: (Worker_TP1 pid=190) 2026-09-28 01:25:31  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+2026-09-28T01:25:50.722Z worker: (Worker_TP1 pid=190) 2026-09-28 01:25:33  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:25:50.722Z worker: (Worker_TP1 pid=190) 2026-09-28 01:25:41  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+2026-09-28T01:25:50.722Z worker: (Worker_TP1 pid=190) 2026-09-28 01:25:42  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:26:35.067Z head: (EngineCore pid=178) INFO 09-28 01:26:35 [core.py:363] init engine (profile, create kv cache, warmup model) took 319.77 s
+2026-09-28T01:27:26.171Z head: (APIServer pid=1) INFO:     Application startup complete.
+2026-09-28T01:27:27.142Z PHASE KV_READY -> SERVING (min GiB in KV_READY: spark1=4.24 spark2=6.47)
+2026-09-28T01:27:44.823Z worker: (Worker_TP1 pid=190) 2026-09-28 01:27:38  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T01:27:44.848Z head: (Worker_TP0 pid=250) 2026-09-28 01:27:38  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+2026-09-28T02:44:08.625Z exit; min MemAvailable GiB per phase/node: LOAD/spark1=13.89 LOAD/spark2=15.16 PROFILE/spark1=8.30 PROFILE/spark2=8.66 KV_READY/spark1=4.24 KV_READY/spark2=6.47 SERVING/spark1=3.53 SERVING/spark2=8.87
