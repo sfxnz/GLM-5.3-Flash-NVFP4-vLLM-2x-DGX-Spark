@@ -6,7 +6,7 @@
 
 - `start-head` starts rank 0 on the head Spark and waits until `/v1/models` answers.
 - `start-worker` starts rank 1 on `spark2` before the head (auto SSH, or `ROLE=worker ./run.sh`).
-- `start-image-guard` refuses to run when `glm53-sm121-v11` is missing instead of pulling stock vLLM.
+- `start-image-guard` refuses to run when `glm53-sm121-v13` is missing instead of pulling stock vLLM.
 - `stop-both` removes the named container locally and on `spark2`.
 
 ## How to get to it (user POV)
@@ -25,7 +25,7 @@ Preconditions:
 - Drive only when `status=missing` and you intend to own the instance. After a successful `./run.sh`, write `.cursor/skills/verify-glm53-flash/.run-state/started` as in the skill Launch section.
 
 - **Image guard.** With `IMAGE` pointing at a tag that is not present, `./run.sh` exits non-zero and prints `Do not use stock vllm/vllm-openai on sm_121`. Do not actually run this against the lab default while the lab container exists.
-- **Start.** From the repo root, `./run.sh`. The script prints `Ready → http://127.0.0.1:8000/v1`. Doctor then prints `status=ready`, `image` matching `glm53-sm121-v11`, `worker=up`.
+- **Start.** From the repo root, `./run.sh`. The script prints `Ready → http://127.0.0.1:8000/v1`. Doctor then prints `status=ready`, `image` matching `glm53-sm121-v13`, `worker=up`.
 - **Stop.** `.cursor/skills/verify-glm53-flash/scripts/cleanup.sh` (or `./stop.sh` when `owned_by_verify=1`). Doctor then prints `status=missing`. `docker ps` on both nodes has no `glm53-flash-nvfp4`.
 - **Proof.** Save the `./run.sh` tail (ready line + `/v1/models` JSON), pre/post doctor dumps, and the stop transcript under `artifacts/serve-start-stop/<stamp>/`.
 
