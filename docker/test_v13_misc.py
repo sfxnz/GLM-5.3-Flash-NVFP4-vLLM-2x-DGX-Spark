@@ -31,9 +31,15 @@ SRC = Path(_V11_SRC) / "vllm" if _V11_SRC else Path(os.environ.get("GLM53_V11SRC
 HAVE_SRC = (SRC / "__init__.py").is_file()
 HAVE_TORCH = importlib.util.find_spec("torch") is not None
 HAVE_TRITON = importlib.util.find_spec("triton") is not None
-NV_CKPT = Path(
-    "/home/sfxnz/.cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/"
-    "snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3"
+# The hub cache as huggingface_hub finds it: HF_HUB_CACHE, else $HF_HOME/hub, else
+# ~/.cache/huggingface/hub (/home/sfxnz/... on the host, /root/... in the v11 container).
+HF_HUB_CACHE = Path(
+    os.environ.get("HF_HUB_CACHE")
+    or Path(os.environ.get("HF_HOME") or Path.home() / ".cache/huggingface") / "hub"
+)
+NV_CKPT = (
+    HF_HUB_CACHE / "models--nvidia--GLM-5.3-Flash-NVFP4"
+    / "snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3"
 )
 
 spec = importlib.util.spec_from_file_location(
