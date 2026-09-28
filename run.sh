@@ -61,7 +61,7 @@ LINEAR_BACKEND="${LINEAR_BACKEND:-marlin}"
 REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
 # DFlash2 snapshot (full commit sha). bf582e4 (2026-08-31) and dc77ff1 (2026-08-28)
-# are weights-only updates with the same config.json; the default waits on an A/B.
+# are weights-only updates with the same config.json. E1b: bf582e4 moved no acceptance.
 DRAFT_REV="${DRAFT_REV:-7d74cdd881ed7e32c31175984a67823127b66cfe}"
 DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
