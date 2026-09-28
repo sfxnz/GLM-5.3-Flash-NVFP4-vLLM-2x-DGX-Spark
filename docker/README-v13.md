@@ -3,7 +3,7 @@
 `Dockerfile.sm121-v13` builds on `glm53-sm121-v11` and adds Python-only patch layers, among them:
 
 - `patch_v13_misc.py` (this file documents it)
-- `patch_v13_fp8.py` (from the fp8 lane)
+- `patch_v13_fp8.py` (FP8, NVFP4, INT8 and INT4 weight-only Marlin; this file documents it)
 - `patch_v13_determinism.py` (`GLM53_DETERMINISTIC_MLA_INDEX`, and the lm_head check behind `LOGITS_FP32`; this file documents it)
 
 Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. Two Triton kernels change signature even with every switch off, so they compile to different binaries:
@@ -46,7 +46,7 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 | `GLM53_SKIP_MTP_WEIGHTS=1` | When the speculative method is not `mtp`, `Glm5NextModel` registers `model.language_model.layers.45.` (and the other name forms) in `ep_weight_filter.SKIP_NAME_PREFIXES`. The default safetensors iterator then skips those tensors before `get_tensor`. | Each rank reads 13.84 GiB less (889 tensors in the nvidia pack, PR11-9), so the load gets roughly 30-50 s shorter. Resident memory does not change. | None with DFlash2, because the draft's tensor names are `layers.0-4`. `SPEC=mtp` ignores the switch. Only the default loader applies the filter. `--load-format fastsafetensors`, `instanttensor` and multithread loading do not. |
 | `GLM53_DFLASH_PREFIX_CACHE_FIX=1` | A port of tonyd2wild's `patch_prefix_cache_draft_group.py` into `kv_cache_coordinator.py`, with two changes. (1) When no group is flagged EAGLE, only the DFlash draft sliding-window group gets the EAGLE last-block drop, where v11 applies it to every group. (2) The draft group never shrinks the hit that the target MLA and KDA groups agreed on. A shorter draft hit is dropped, so the draft gets fresh pages. | Prefix-cache hits come back with DFlash2 (EXT-5). Tony measured `0 hits / 35,280 queries → floor(len/2304)*2304` cached, and a 5178-token repeat going from 4.3 s to 0.7 s. | A dropped draft hit leaves the draft window without KV for the cached span, so acceptance is lower on those requests. Output is still lossless because the target verifies every draft token. One deviation from Tony: a shorter draft hit also clears draft blocks recorded in an earlier fixed-point pass. Without that, a stale longer block list could survive. |
 | `GLM53_DETERMINISTIC_MLA_INDEX=1` (`patch_v13_determinism.py`; set it with `EXTRA_ENV`, which `run.sh` passes to both ranks) | The sparse-MLA index conversion compacts each row's valid KV slots into `[0, valid_count)`. With 17 tiles per 2176-wide row it reserves slots through `tl.atomic_add`, so the order follows tile scheduling (`sparse_utils.py:113`, `:146-151`). With the switch on, a compacted row gets one Triton program padded to 4096 lanes (16 warps, masked loads), which keeps the input column order. `sparse_attn_indexer_kpool` also sorts `pool_topk` per row (`torch.sort`, `[rows, 512]` int32) before `expand_pools_and_append_tail`, so the list is ascending whatever order the top-k kernels emit. Off, the kernel's `NUM_COLS` defaults to 0, its branch compiles out, and both host helpers return their input. | Run-to-run fixed kv-index order, so the FA2 MLA kernel accumulates its online softmax and bf16 P in the same order every run. Within-boot greedy divergence (e0: 14/20 prompts) and Tier-0 top-1 disagreement (e0: 1.55%) should drop sharply. Estimated cost at most ~0.2 ms per ~116 ms verify step: 11 MLA layers, each with one program per row instead of 17 tiles plus one small sort. Not measured. | Selection ties at the top-k threshold are still decided by the top-k kernel. Cross-boot sources are untouched (KDA autotune, JIT flags). Tier 0's nll documents prefill as one ≤2048-row chunk without top-k, where the tiles should already run in order, so the nll gain may be smaller than the greedy gain (quality/README.md, Determinism). The MLA kernel is not changed. |
-| `LOGITS_FP32=1` (recipe knob, `run.sh`) | `run.sh` passes `--hf-overrides '{"text_config":{"head_dtype":"float32"}}'`. `patch_v13_determinism.py` lets `LogitsProcessor._apply_head` accept `UnquantizedLinearMethod`, which ModelOpt gives the excluded lm_head (`modelopt.py:185-187`). v11 accepts only `UnquantizedEmbeddingMethod` there and raises `ValueError` at the first logits (`logits_processor.py:144`). | fp32 logits from `torch.mm(out_dtype=float32)` on the bf16 lm_head, for the target and the DFlash2 drafter, which shares that lm_head. The drafter's top-k values were already fp32. | The logits buffers double (634 MB per 1024-row `prompt_logprobs` chunk). cuBLAS `out_dtype` on sm_121 carries the same risk as `ROUTER_FP32`. A quantized lm_head (the `GLM53_FP8` lm_head group) still raises. `run.sh` refuses it on `glm53-sm121-v11`. |
+| `LOGITS_FP32=1` (recipe knob, `run.sh`) | `run.sh` passes `--hf-overrides '{"text_config":{"head_dtype":"float32"}}'`. `patch_v13_determinism.py` lets `LogitsProcessor._apply_head` accept `UnquantizedLinearMethod`, which ModelOpt gives the excluded lm_head (`modelopt.py:185-187`). v11 accepts only `UnquantizedEmbeddingMethod` there and raises `ValueError` at the first logits (`logits_processor.py:144`). | fp32 logits from `torch.mm(out_dtype=float32)` on the bf16 lm_head, for the target and the DFlash2 drafter, which shares that lm_head. The drafter's top-k values were already fp32. | The logits buffers double (634 MB per 1024-row `prompt_logprobs` chunk). cuBLAS `out_dtype` on sm_121 carries the same risk as `ROUTER_FP32`. A quantized lm_head (the `lm_head` group of any `GLM53_*_W*A16` variable) still raises. `run.sh` refuses it on `glm53-sm121-v11`. |
 
 ## GPU validation (Sparks, one switch at a time)
 
@@ -473,3 +473,139 @@ Follow AGENTS.md. Keep receipts in `evidence/iter-kpool-tail/` with `trail.tsv` 
 6. **Keep or revert.** Keep the switch only if 3 and 5 pass and 4 is no worse than off. If it is kept, record a new Tier 0 reference with it on (`python3 quality/tier0.py record --name nvidia-v13-kpooltail`), so later lanes compare against the fixed state.
 7. **With adaptive verify.** Boot both switches on the setting its sweep chose and repeat 3 to 5. This is the first boot in which adaptive verify's tail mask runs on V2.
 8. **Optional, MTP rollback.** Boot `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp` with the switch. It must log `8 slots (index_kpool=4, k=4)`, and count-200 must stay lossless. MTP acceptance at c = 2 should not drop against off: the MTP layer's own ring is now per request as well.
+
+## Weight-only Marlin for the BF16 linears: FP8, NVFP4, INT8 and INT4 (`patch_v13_fp8.py`)
+
+The nvidia pack keeps every non-MoE linear in BF16, and so does the DFlash2 drafter. At M = 8 these GEMMs cost 41.1 ms per rank of a ~115 ms verify step (`evidence/e1-microbench/table.txt`). The patch stores selected groups in a smaller weight-only format and runs them through vLLM's Marlin kernels with BF16 activations.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_FP8_W8A16=<groups>` | unset | FP8 e4m3, one BF16 scale per output channel, Marlin FP8 GEMM |
+| `GLM53_NVFP4_W4A16=<groups>` | unset | NVFP4: E2M1 values, an e4m3 scale per 16 elements and an fp32 global scale, Marlin NVFP4 GEMM |
+| `GLM53_INT8_W8A16=<groups>` | unset | symmetric INT8 (`uint8b128`), one BF16 scale per group along K, GPTQ-Marlin GEMM |
+| `GLM53_INT4_W4A16=<groups>` | unset | symmetric INT4 (`uint4b8`), per-group BF16 scale chosen by clip search, GPTQ-Marlin GEMM |
+| `GLM53_INT_GROUP_SIZE=64\|128` | 128 | INT group size along K. Any other value fails the boot. |
+
+- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. Pass the variables through `EXTRA_ENV`, which `run.sh` forwards to both ranks, for example `EXTRA_ENV='MAX_JOBS=2 GLM53_INT8_W8A16=draft,shared,mla,kda_o,kda_in,lm_head'`.
+- **Off.** With all four group variables unset, `process_weights_after_loading` and the compile-cache key are exactly v11's. When set, the variables and `GLM53_INT_GROUP_SIZE` join the compile-cache key, because the drafter is `torch.compile`d.
+- **Images built before this change** carry the FP8 and NVFP4 modes only. Rebuild v13 for INT8, INT4 and the memory fix below.
+
+```bash
+GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v   # CPU; torch adds the quantizer tests
+python3 tools/bench_fp8_marlin.py --report-bytes                                # CPU: bytes per group and format
+```
+
+### Groups
+
+Weight bytes are MiB per rank per verify step, on Marlin's padded shapes (`--report-bytes`).
+
+| Group | Layers (per rank, TP = 2, N x K) | GEMMs per step | BF16 | FP8 | NVFP4 | INT8 g128 | INT4 g128 | E1 ms at M = 8: BF16 / FP8 / NVFP4 |
+|---|---|---|---|---|---|---|---|---|
+| `kda_in` | KDA `in_proj_qkvbfg_a` 12576 x 4096 (merged q, k, v, b, f_a, g_a) | 34 | 3340.5 | 1675.3 | 941.9 | 1700.7 | 863.4 | 15.41 / 7.78 / 4.68 |
+| `kda_o` | KDA `o_proj` 4096 x 4096 | 34 | 1088.0 | 544.3 | 306.0 | 552.5 | 280.5 | 5.09 / 2.58 / 1.54 |
+| `mla` | MLA `q_b_proj` 8192 x 1536, `o_proj` 4096 x 8192 | 22 | 968.0 | 484.3 | 272.3 | 491.6 | 249.6 | 4.54 / 2.29 / 1.33 |
+| `shared` | shared experts `gate_up_proj` 2048 x 4096, `down_proj` 4096 x 1024 | 84 | 1008.0 | 504.5 | 283.5 | 511.9 | 259.9 | 5.00 / 2.61 / 1.66 |
+| `lm_head` | target `ParallelLMHead` 77440 x 4096, read twice (DFlash2 shares it) | 2 | 1210.0 | 605.3 | 340.3 | 614.5 | 312.0 | 5.54 / 2.78 / 1.56 |
+| `draft` | every BF16 linear of the drafter (7 shapes, 32 layers) | 32 | 1162.0 | 581.3 | 326.8 | 590.1 | 299.6 | 5.53 / 2.77 / 1.65 |
+| all | | | 9.203 GB | 4.608 GB | 2.591 GB | 4.678 GB | 2.375 GB | 41.11 / 20.81 / 12.43 |
+
+- The indexer, router gate, mHC, embeddings, `kv_b` (absorbed into the MLA BMMs), `fused_qkv_a`, KDA `f_b`/`g_b`/conv and the vision tower stay BF16.
+- A selected layer stays as it was, with one warning line, if it is not a plain bias-free 2-D BF16 linear, if NVFP4 is asked and K is not a multiple of 16, or if INT is asked and K is not a multiple of the group size.
+- At TP = 2 every per-rank K (1024 to 20480) is a multiple of 128. No layer falls back, row-parallel shards split on group boundaries, and Marlin never pads K. Only `kda_in` pads N (12576 to 12608), as FP8 and NVFP4 already do (`IntShapeTest`, `--report-bytes`).
+
+### INT8 and INT4 (GPTQ-Marlin)
+
+- **Quantizer.** Each group of 64 or 128 elements along K of the per-rank shard gets the scale `ratio * amax / qmax`, rounded to BF16, where qmax is 127 or 7. INT8 uses ratio 1.0. INT4 tries 1.0, 0.95, 0.9 and 0.85 and keeps the lowest squared error per group, clamping to [-8, 7]. Values are stored as q + 128 or q + 8 in GPTQ layout: int32 rows of K * bits / 32, packed along K (the same bits as vLLM's `pack_rows`).
+- **Kernel path.** The layer then goes through `MarlinLinearKernel`'s own steps: `marlin_padded_nk`, `marlin_pad_qweight`, `gptq_marlin_repack` with an empty perm, `marlin_pad_scales`, `marlin_permute_scales`, and `apply_gptq_marlin_linear` with empty zero points and `g_idx`, and `is_k_full=True`. `test_marlin_gptq_api_matches` pins these v11 signatures and call sites.
+- **Grouped scales are applied in BF16.** With grouped scales, Marlin multiplies the dequantized weight by its scale in BF16 before the MMA. That rounding adds about 0.0004 to INT8's relative error (0.0067 to 0.0071). The bench's layout check compares against exactly that BF16 product.
+- **Capture and compile.** `apply` makes the same calls as a GPTQ checkpoint served through `MarlinLinearKernel`. It has no host sync, and it allocates only through the caching allocator.
+
+### Reconstruction error on the checkpoint (CPU)
+
+Relative Frobenius error `||W_hat - W|| / ||W||`, averaged over 512 rows of one to three tensors per group of `09b04e5` and drafter `7d74cdd` (`evidence/e3-int-lane-cpu/weight_error.txt`):
+
+| Group | FP8 per-channel | NVFP4 | INT8 g128 | INT8 g128, BF16 product | INT8 g64 | INT4 g128, amax | INT4 g128, clip search | INT4 g64, clip search |
+|---|---|---|---|---|---|---|---|---|
+| `kda_in` | 0.0277 | 0.0858 | 0.0067 | 0.0071 | 0.0061 | 0.1201 | 0.1047 | 0.0971 |
+| `kda_o` | 0.0261 | 0.0857 | 0.0068 | 0.0072 | 0.0062 | 0.1227 | 0.1072 | 0.0990 |
+| `mla` | 0.0253 | 0.0835 | 0.0070 | 0.0072 | 0.0064 | 0.1278 | 0.1106 | 0.1019 |
+| `shared` | 0.0250 | 0.0839 | 0.0067 | 0.0069 | 0.0062 | 0.1228 | 0.1061 | 0.0983 |
+| `lm_head` | 0.0264 | 0.0860 | 0.0067 | 0.0069 | 0.0061 | 0.1207 | 0.1065 | 0.0982 |
+| `draft` | 0.0264 | 0.0860 | 0.0065 | 0.0067 | 0.0060 | 0.1185 | 0.1046 | 0.0971 |
+
+- **INT8 g128 has 3.6-4.1x less weight error than FP8** for 1.5% more bytes (4.678 against 4.608 GB per rank per step). FP8's 3 mantissa bits give about 2.5% whatever the scale; INT8 with a scale per 128 elements has a step of amax/127.
+- **INT4 is not a lower-error NVFP4.** Round-to-nearest INT4 with 16 levels per 128 elements lands at 0.10-0.11 even with the clip search, and at 0.097-0.102 with g64, against NVFP4's 0.083-0.086. Its 8% byte saving over NVFP4 does not buy quality. Beating NVFP4 at 4 bits needs error-compensating quantization (GPTQ or AWQ with calibration data), which this patch does not do.
+- **Output error.** On Gaussian activations, the relative output error equals the weight error to within 2% for every format, as expected for isotropic inputs. Real activations have outlier channels, so Tier 0 is the judge.
+
+### What the serves showed (E2, 2026-09-27)
+
+| Boot | Groups | Step A ms | Prose tok/s A | Tier 0 KL top-20 | top-1 | dNLL | Verdict |
+|---|---|---|---|---|---|---|---|
+| E0 (speed) and E1a (Tier 0 cross-boot A/A), BF16 | none | 115.3 | 19.79 / 19.66 | 5.864e-3 | 0.9833 | -0.0001 | reference |
+| E2a FP8 | all six | 93.1 | 23.84 / 24.54 (+22.6%) | 1.103e-2 | 0.9765 | +0.0020 | Tier 0 FAIL |
+| E2b NVFP4 | all six | 84.5 | 26.33 / 26.82 (+34.7%) | 3.715e-2 | 0.9562 | +0.0194 | Tier 0 FAIL |
+| E2c FP8 | draft, shared, mla, kda_o | 103.6 | 21.10 / 21.56 (+8.1%) | 9.659e-3 | 0.9783 | +0.0016 | Tier 0 FAIL |
+| E2d FP8 | draft, kda_in | 104.3 | 21.76 / 22.14 (+11.3%) | 8.263e-3 | 0.9796 | +0.0004 | Tier 0 FAIL |
+| E2e NVFP4 | draft | 111.3 | 20.02 / 20.35 (+2.3%) | 6.050e-3 | 0.9827 | -0.0001 | Tier 0 pass (judged), Tier 1 PASS |
+
+- Tier 0 `--stage fp8` allows the reference A/A's KL + 1e-3 and top-1 - 0.5 points. Against the cross-boot A/A that is KL <= 6.864e-3 and top-1 >= 0.97826.
+- The byte model held: every step_ms moved by the E1 microbench's saving within about 2 ms. The drafter cannot change served output, so only target groups move Tier 0.
+- **Expectation for INT8.** Added KL grew as about error^1.5 between E2a and E2b (3.3x the error gave 6x the KL). INT8's kernel-side error is 0.27x FP8's, which scales E2a's +5.2e-3 to about +0.7e-3 (+0.4e-3 if quadratic, +1.4e-3 if linear). That is inside the 1e-3 margin, but not by much more than the ~1e-3 boot-to-boot noise (E2c + E2d added more than E2a). The speed should match E2a within 1-2%: 4.678 against 4.608 GB, if GPTQ-Marlin reaches FP8 Marlin's GB/s. The bench checks that before any boot.
+
+### Memory after the swap
+
+E2 logged `torch reserved 88.96 -> 87.44 GiB` for 3.42 GiB of freed target weights, and similar shortfalls in every boot (E2b 2.56 of 4.66, E2c 0.21 of 1.53, E2d 0.29 of 1.63 GiB). MemAvailable gained correspondingly less than the weights shrank.
+
+- **Cause.** `run.sh` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, so the allocator maps physical memory in 20 MiB pages, and `empty_cache` can only unmap pages that are entirely free. vLLM runs `load_model` under `max_split_size_mb:20` (`gpu_worker.py`, `_scoped_allocator_max_split`). Under that rule a request below 20 MiB may not take a free block of 20 MiB or more, and a larger request may not take a block 20 MiB larger than itself. The freed BF16 blocks are exactly such oversized blocks for the packed tensors. So each packed weight landed on freshly mapped pages among the swap's fp32 transients, and once those were unmapped it kept two partly used pages.
+- **Fix.** After each layer's swap, `_compact` calls `empty_cache` and then copies the layer's new weight and scale tensors. With the cache empty, the only mapped free memory is page remainders. A copy either fills one of them, or starts right after the last live block at the lowest free address, so consecutive layers share pages. The cost is one packed tensor of peak memory, and one device copy plus one `empty_cache` per layer (about 200 per boot).
+- **Model.** `evidence/e3-int-lane-cpu/allocsim.py` replays the swap on a model of the allocator and the per-rank layout. It reproduces the four E2 measurements to within about 0.3 GiB. The table shows its predictions for the release (`allocsim.txt`):
+
+| Case | Before (measured) | Before (model) | With `_compact` (model) |
+|---|---|---|---|
+| FP8, all target groups (E2a) | 1.52 of 3.42 GiB | 1.64 | 2.27 |
+| NVFP4, all target groups (E2b) | 2.56 of 4.66 GiB | 2.85 | 3.73 |
+| FP8 kda_o, mla, shared (E2c) | 0.21 of 1.53 GiB | -0.06 | 0.39 |
+| FP8 kda_in (E2d) | 0.29 of 1.63 GiB | 0.33 | 0.96 |
+| INT8, all target groups | | 1.78 | 2.27 |
+
+  The model also tried other orders: `empty_cache` before the repack, dropping the BF16 weight after it, and `empty_cache` before the drop. Each was better than the E2 order and worse than `_compact`. In the model, the remaining ~1.1 GiB (FP8 or INT8 on all groups) sits in pages that freed blocks share with live neighbours (MoE experts, router, mHC). Only allocating the BF16 linears apart from their neighbours at model init would release those pages.
+
+### GPU validation (exclusive TP = 2 slot, one knob per boot)
+
+1. **Build and ship** v13 from this branch on the head, then `docker save glm53-sm121-v13 | ssh spark2 docker load`, so both nodes carry the same image ID.
+2. **Microbench**, with no serve up:
+
+   ```bash
+   docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \
+     -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
+     glm53-sm121-v13 tools/bench_fp8_marlin.py --json evidence/<run>/bench.json
+   ```
+
+   - PASS needs INT8 at most 1.1x the FP8 time at M = 8 and 16 for every group, and every INT output within 0.02 of a BF16 GEMM on its own dequantized weights.
+   - A kernel error at the first INT GEMM means this vLLM build has no BF16 x `uint8b128` Marlin instantiation for sm_121. Stop there.
+   - Expected: INT8 about 20.8-21.2 ms per step for all groups at M = 8 (FP8 20.81), and INT4 about 11.4-12.4 ms (NVFP4 12.43).
+3. **Boot INT8 on all six groups:**
+
+   ```bash
+   bash evidence/e1-tools/boot.sh evidence/<run> IMAGE=glm53-sm121-v13 WARM_SHARDS=0 \
+     EXTRA_ENV='MAX_JOBS=2 GLM53_INT8_W8A16=draft,shared,mla,kda_o,kda_in,lm_head'
+   ```
+
+   - Both ranks log `GLM53_INT8_W8A16 (group 128): Glm5NextForConditionalGeneration kda_in[int8]=34 layers 3340.5->1700.7 MiB, ...` with no `left ... as they were` warning. They also log the drafter line `draft[int8]=32 layers 1162.0->590.1 MiB`.
+   - `torch reserved X -> Y GiB` should fall by about 2.2 GiB on the target line (E2a: 1.52). `Model loading took` should come in about 3.9 GiB under E1a's 90.36 GiB.
+   - Log `free -h` at ready against E1a and E2a.
+   - Count-200 must stay lossless, and the thinking-off smoke must pass.
+4. **Speed.** Run `bash evidence/e2-tools/post_ready.sh evidence/<run> fp8`. It runs the ruler v2 fast gate twice, cell T, and Tier 0 `compare --ref nvidia-v11-k7 --stage fp8`. Expect step A near E2a's 93.1 ms. Then run `python3 kit/compare.py --a <E0 bench.json files> --b <this boot's>` for the verdict.
+5. **Tier 0, judged against the cross-boot A/A.** The tool's `--stage fp8` KL limit is the reference boot's same-boot rerun plus 1e-3, which is 6.137e-3. That leaves 0.27e-3 above a clean cross-boot run (E1a 5.864e-3), so judge against the cross-boot A/A, as E2 did. Pass means all of these hold:
+   - KL top-20 <= 6.864e-3.
+   - top-1 >= 0.97826.
+   - |dNLL| <= 0.005.
+   - greedy hazard <= 0.0192.
+   - count, kwargs, tools, vision and needle pass.
+
+   The utf8 squares and the video probe also fail on the unmodified reference boot (E2e), so rerun them with `evidence/e2-tools/rerun_flaky.sh` before counting them.
+6. **Tier 1**, only if Tier 0 passes: `bash evidence/e2-tools/tier1.sh evidence/<run> <name>`. `compare_tier1` against `nvidia-v11-k7` must say VERDICT PASS.
+7. **If Tier 0 fails on KL,** drop the output-side groups first. With FP8, `kda_o`, `mla` and `shared` carried about 3.8e-3 of E2a's 5.2e-3, and `kda_in` plus `lm_head` about 1.4e-3. So the next boot is `GLM53_INT8_W8A16=draft,kda_in,lm_head`. Then try `GLM53_INT_GROUP_SIZE=64`, which cuts the error by another 9% for 1.5% more bytes.
+8. **Memory fix alone.** Any FP8 or NVFP4 boot on the rebuilt image checks `_compact`: E2a's settings should log a target drop of about 2.2 GiB instead of 1.52.
+9. **INT4.** Worth a boot only for `draft`, which cannot change served output. It saves 27 MiB per step over NVFP4 (about 0.1 ms), which is below boot noise. Do not use it for target groups.
+10. **Record** each boot in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`, as E2 did.
