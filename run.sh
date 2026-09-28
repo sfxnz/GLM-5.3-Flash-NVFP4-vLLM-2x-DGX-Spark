@@ -189,7 +189,11 @@ if [[ "$DRAFT_WEIGHTS" != bf16 && "$DRAFT_WEIGHTS" != nvfp4 ]]; then
   exit 1
 fi
 # docker/patch_v13_fp8.py GROUPS, less draft: DRAFT_WEIGHTS owns the drafter.
-IFS=, read -r -a int8_groups <<<"$TARGET_WEIGHT_GROUPS_INT8"
+# "none" keeps every target group BF16 (an empty value falls back to the default).
+int8_groups=()
+if [[ "$TARGET_WEIGHT_GROUPS_INT8" != none ]]; then
+  IFS=, read -r -a int8_groups <<<"$TARGET_WEIGHT_GROUPS_INT8"
+fi
 for group in "${int8_groups[@]}"; do
   case "$group" in
     shared | mla | kda_o | kda_in | lm_head) ;;
@@ -222,12 +226,12 @@ fi
 # GLM53_* env for both ranks, from the knobs above.
 glm53_env=()
 if [[ "$DRAFT_WEIGHTS" == nvfp4 ]]; then glm53_env+=(GLM53_NVFP4_W4A16=draft); fi
-if [[ -n "$TARGET_WEIGHT_GROUPS_INT8" ]]; then glm53_env+=("GLM53_INT8_W8A16=$TARGET_WEIGHT_GROUPS_INT8"); fi
+if (( ${#int8_groups[@]} > 0 )); then glm53_env+=("GLM53_INT8_W8A16=$TARGET_WEIGHT_GROUPS_INT8"); fi
 if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
 if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
 if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
-  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0, with TARGET_WEIGHT_GROUPS_INT8 empty. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"

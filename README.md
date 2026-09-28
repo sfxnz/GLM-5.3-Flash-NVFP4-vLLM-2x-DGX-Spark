@@ -61,7 +61,7 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 v13 adds Python-only runtime patches on top of v11 (misc, fp8, census, verify, kpool_tail; [`docker/README-v13.md`](docker/README-v13.md)). Every one is off unless its `GLM53_*` variable is set; with none set, v13 serves like v11 (E1a passed Tier 0 against the v11 reference). The recipe sets them from the knobs `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `KPOOL_TAIL_FIX` and `ADAPTIVE_VERIFY` / `ADAPTIVE_VERIFY_TAU` (see Defaults), passes them to both ranks, and refuses any knob that is on unless `IMAGE` is a `glm53-sm121-v13*` tag (`FORCE_UNSAFE_IMAGE=1` overrides). v11 stays the rollback:
 
 ```bash
-IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 ./run.sh
+IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 ./run.sh
 ```
 
 ## DFlash2 drafter
@@ -158,7 +158,7 @@ Stop both ranks from the head:
 | Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`) |
 | Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
 | Drafter weights | `DRAFT_WEIGHTS=nvfp4`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off |
-| Target INT8 | `TARGET_WEIGHT_GROUPS_INT8="shared,mla,kda_o,kda_in,lm_head"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. Empty keeps them BF16. FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010 |
+| Target INT8 | `TARGET_WEIGHT_GROUPS_INT8="shared,mla,kda_o,kda_in,lm_head"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. `none` keeps them BF16 (an empty value falls back to the default). FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010 |
 | Indexer tail ring | `KPOOL_TAIL_FIX=1` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring |
 | Adaptive verify | `ADAPTIVE_VERIFY=1`, `ADAPTIVE_VERIFY_TAU=0.3` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a (tau 0.2): prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. E4b tau 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. Needs `SPEC=dflash2`; `0` turns it off |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |

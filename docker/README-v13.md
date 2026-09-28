@@ -39,7 +39,7 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 
 Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the five knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
 
-The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0`. Two forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only) and INT8 on `draft`.
+The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0`. Two forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only) and INT8 on `draft`.
 
 ## Switches
 

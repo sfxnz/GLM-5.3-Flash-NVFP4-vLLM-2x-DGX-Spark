@@ -235,14 +235,26 @@ class V13Knobs(RunShCase):
               "ADAPTIVE_VERIFY": "1", "ADAPTIVE_VERIFY_TAU": "0.3"}
     ALL_ON_ENV = ["GLM53_NVFP4_W4A16=draft", "GLM53_INT8_W8A16=shared,mla", "GLM53_KPOOL_TAIL_FIX=1",
                   "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"]
-    V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
+    V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "TARGET_WEIGHT_GROUPS_INT8": "none",
+                    "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
 
     def test_defaults_are_the_validated_v13_switches(self):
         proc = self.run_sh()
         self.assertAccepted(proc)
-        self.assertEqual(glm53_env(proc.stdout), ["GLM53_NVFP4_W4A16=draft", "GLM53_KPOOL_TAIL_FIX=1",
-                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.2"])
+        self.assertEqual(glm53_env(proc.stdout), ["GLM53_NVFP4_W4A16=draft",
+                                                  "GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head",
+                                                  "GLM53_KPOOL_TAIL_FIX=1",
+                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"])
         self.assertIn("IMAGE=glm53-sm121-v13", shell_words(worker_command(proc.stdout)))
+
+    def test_int8_none_keeps_bf16_and_empty_means_default(self):
+        proc = self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8="none")
+        self.assertAccepted(proc)
+        self.assertFalse([e for e in glm53_env(proc.stdout) if e.startswith("GLM53_INT8_W8A16=")])
+        self.assertIn("TARGET_WEIGHT_GROUPS_INT8=none", shell_words(worker_command(proc.stdout)))
+        proc = self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8="")
+        self.assertAccepted(proc)
+        self.assertIn("GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head", glm53_env(proc.stdout))
 
     def test_knobs_resolve_to_glm53_env(self):
         proc = self.run_sh(**self.V13, **self.ALL_ON, EXTRA_ENV="MAX_JOBS=2 GLM53_ROUTER_FP32=1")
@@ -404,7 +416,8 @@ class StubbedLaunch(RunShCase):
                 self.assertEqual(run.count("GLM53_"), len(V13Knobs.ALL_ON_ENV))
 
     def test_knobs_off_pass_no_glm53_env(self):
-        proc = self.launch(JIT_CACHE="0", DRAFT_WEIGHTS="bf16", KPOOL_TAIL_FIX="0", ADAPTIVE_VERIFY="0")
+        proc = self.launch(JIT_CACHE="0", DRAFT_WEIGHTS="bf16", TARGET_WEIGHT_GROUPS_INT8="none",
+                           KPOOL_TAIL_FIX="0", ADAPTIVE_VERIFY="0")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertNotIn("GLM53_", run)
