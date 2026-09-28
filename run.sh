@@ -89,7 +89,7 @@ TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,
 # cuBLAS instead of Marlin (GLM53_WQ_DEQUANT_MIN_M, GLM53_WQ_DEQUANT_GROUPS=kda_in).
 # 0 is off. Values below 64 are refused: they would reach the captured decode graphs.
 # E5: INT8 Marlin kda_in is 3.6x BF16 at the 1152-row prefill chunk, 93% of the
-# -11% prefill. 512 is the candidate once a GPU A/B confirms it.
+# -11% prefill. E6: 512 gave +6.4% / +3.5% at 32k / 128k, short of the +5% rule.
 PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-0}"
 # 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
 # rejected drafts no longer write committed pool keys. E3a: needles pass to
