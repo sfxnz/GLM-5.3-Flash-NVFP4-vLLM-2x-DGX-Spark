@@ -4,20 +4,17 @@
 
 - `patch_v13_misc.py` (this file documents it)
 - `patch_v13_fp8.py` (FP8, NVFP4, INT8 and INT4 weight-only Marlin; this file documents it)
-- `patch_v13_determinism.py` (`GLM53_DETERMINISTIC_MLA_INDEX`, and the lm_head check behind `LOGITS_FP32`; this file documents it)
 
-Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. Two Triton kernels change signature even with every switch off, so they compile to different binaries:
+Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. One Triton kernel in `patch_v13_misc.py` changes signature even with every switch off, so it compiles to a different binary:
 
 - The `fused_recurrent_kda` kernel (every KDA layer on every verify step) takes four token-stride arguments and the `STRIDED_QKVB` constexpr, which is False while `GLM53_KDA_TRIM` is unset.
-- The sparse-MLA index conversion kernel takes `NUM_COLS`, which is 0 while `GLM53_DETERMINISTIC_MLA_INDEX` is unset, so its branch compiles out.
 
-Both load the same elements as v11, and with the switch off their output is bit-exact with v11 under the Triton CPU interpreter (`test_v13_misc.py`, `test_v13_determinism.py`). On the GPU, E1a (v13, every switch off) passed Tier 0 10/10 against the v11 reference (`evidence/e1a-v13-off/tier0-notes.txt`).
+It loads the same elements as v11, and with the switch off its output is bit-exact with v11 under the Triton CPU interpreter (`test_v13_misc.py`). On the GPU, E1a (v13, every switch off) passed Tier 0 10/10 against the v11 reference (`evidence/e1a-v13-off/tier0-notes.txt`).
 
 ```bash
 docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker   # needs docker/patch_v13_fp8.py
 GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py                 # CPU tests
 GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v   # CPU tests
-GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_determinism.py          # CPU tests; kernel test needs torch + triton
 ```
 
 Both test files read `GLM53_V11_SRC`: the directory that holds the `vllm/` package tree copied out of `glm53-sm121-v11` (for example a `dist-packages` copy). Without it the source-dependent tests skip. `test_v13_misc.py` still accepts the old `GLM53_V11SRC`, which points at `vllm/` itself, when `GLM53_V11_SRC` is unset.
@@ -31,8 +28,6 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 - The pure-logic pieces behave as intended.
 - The KDA kernel is bit-exact. This runs under the Triton CPU interpreter and compares trim on and trim off against v11.
 
-`test_v13_determinism.py` runs the same apply checks on its three files. It also runs the patched index kernel under the Triton CPU interpreter: with the switch off the kernel's output matches v11 bit for bit, and with it on the output is a stable column-order compaction from one program per row. The lm_head test shows that v11's `_apply_head` raises on an `UnquantizedLinearMethod` head, and that the patched one returns fp32.
-
 **Forwarding (recipe lane).** `run.sh` only passes the variables it lists. Every `GLM53_*` switch needs `-e GLM53_…` in `env_args` on both ranks, and it must also appear in the worker's ssh command line. Set the switches identically on head and worker: TP ranks must build identical graphs and workspaces.
 
 ## Switches
@@ -45,7 +40,6 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 | `GLM53_KDA_TRIM=1` | `fused_recurrent_kda` stops calling `.contiguous()` on q/k/v/beta when each token's `[H, D]` block is dense. The kernel takes the token strides instead (`STRIDED_QKVB`). The GDN call site passes `STRIDED_QKVB=False`. | 4 fewer copy kernels per KDA layer per verify step, about 136 kernel launches in total. The estimate is about 0.3-0.7 ms per step (NMK-7), not measured. Output is bit-exact: the kernel reads the same elements. | Pointer math. Covered by the interpreter test, including spec-decode state slots and COMPUTE_GATE. Varlen, B=1 path only. Anything else falls back to `.contiguous()`. |
 | `GLM53_SKIP_MTP_WEIGHTS=1` | When the speculative method is not `mtp`, `Glm5NextModel` registers `model.language_model.layers.45.` (and the other name forms) in `ep_weight_filter.SKIP_NAME_PREFIXES`. The default safetensors iterator then skips those tensors before `get_tensor`. | Each rank reads 13.84 GiB less (889 tensors in the nvidia pack, PR11-9), so the load gets roughly 30-50 s shorter. Resident memory does not change. | None with DFlash2, because the draft's tensor names are `layers.0-4`. `SPEC=mtp` ignores the switch. Only the default loader applies the filter. `--load-format fastsafetensors`, `instanttensor` and multithread loading do not. |
 | `GLM53_DFLASH_PREFIX_CACHE_FIX=1` | A port of tonyd2wild's `patch_prefix_cache_draft_group.py` into `kv_cache_coordinator.py`, with two changes. (1) When no group is flagged EAGLE, only the DFlash draft sliding-window group gets the EAGLE last-block drop, where v11 applies it to every group. (2) The draft group never shrinks the hit that the target MLA and KDA groups agreed on. A shorter draft hit is dropped, so the draft gets fresh pages. | Prefix-cache hits come back with DFlash2 (EXT-5). Tony measured `0 hits / 35,280 queries → floor(len/2304)*2304` cached, and a 5178-token repeat going from 4.3 s to 0.7 s. | A dropped draft hit leaves the draft window without KV for the cached span, so acceptance is lower on those requests. Output is still lossless because the target verifies every draft token. One deviation from Tony: a shorter draft hit also clears draft blocks recorded in an earlier fixed-point pass. Without that, a stale longer block list could survive. |
-| `GLM53_DETERMINISTIC_MLA_INDEX=1` (`patch_v13_determinism.py`; set it with `EXTRA_ENV`, which `run.sh` passes to both ranks) | The sparse-MLA index conversion compacts each row's valid KV slots into `[0, valid_count)`. With 17 tiles per 2176-wide row it reserves slots through `tl.atomic_add`, so the order follows tile scheduling (`sparse_utils.py:113`, `:146-151`). With the switch on, a compacted row gets one Triton program padded to 4096 lanes (16 warps, masked loads), which keeps the input column order. `sparse_attn_indexer_kpool` also sorts `pool_topk` per row (`torch.sort`, `[rows, 512]` int32) before `expand_pools_and_append_tail`, so the list is ascending whatever order the top-k kernels emit. Off, the kernel's `NUM_COLS` defaults to 0, its branch compiles out, and both host helpers return their input. | Run-to-run fixed kv-index order, so the FA2 MLA kernel accumulates its online softmax and bf16 P in the same order every run. Within-boot greedy divergence (e0: 14/20 prompts) and Tier-0 top-1 disagreement (e0: 1.55%) should drop sharply. Estimated cost at most ~0.2 ms per ~116 ms verify step: 11 MLA layers, each with one program per row instead of 17 tiles plus one small sort. Not measured. | Selection ties at the top-k threshold are still decided by the top-k kernel. Cross-boot sources are untouched (KDA autotune, JIT flags). Tier 0's nll documents prefill as one ≤2048-row chunk without top-k, where the tiles should already run in order, so the nll gain may be smaller than the greedy gain (quality/README.md, Determinism). The MLA kernel is not changed. |
 
 ## GPU validation (Sparks, one switch at a time)
 
@@ -109,22 +103,6 @@ Follow AGENTS.md: exclusive GPUs, one knob per boot, record everything in `evide
 - All three completions must be byte-identical to each other and to the switch-off run.
 - Count-200 must stay lossless.
 - Compare the spec-decode acceptance counters on sends 2 and 3 against send 1. A large drop means dropped draft hits (risk above).
-
-**DETERMINISTIC_MLA_INDEX** (A/A with and without the switch, both on `IMAGE=glm53-sm121-v13`, everything else identical)
-
-- Boot the off arm with no `GLM53_*`, and the on arm with `EXTRA_ENV='GLM53_DETERMINISTIC_MLA_INDEX=1'`.
-- On the on arm, `L | grep "GLM53_DETERMINISTIC_MLA_INDEX: kpool pools sorted per row"` must print at least one line per rank. On the off arm it must print nothing.
-- On each boot, run `python3 quality/tier0.py record --name v13-detidx-<off|on>`, then `compare --ref v13-detidx-<off|on>`. `record` captures nll and greedy twice on the same boot, so its `nll.rerun` and `greedy.aa` are the within-boot A/A.
-- Compare the two arms' A/A:
-  - `nll.rerun.top1_agree`: e0 had a 1.55% disagreement.
-  - |dNLL| and KL.
-  - `greedy.aa`: the number of prompts that diverge (e0: 14/20) and the hazard.
-- Both should drop sharply on the on arm. If greedy converges but nll top-1 does not, the nll noise comes from outside the compaction. Tier 0's nll documents prefill as one ≤2048-row chunk, where the tiles should already be in order. See quality/README.md, Determinism.
-- Count-200 must stay lossless, and the thinking-off smoke must pass.
-- Run the ruler v2 fast gate on each boot: `python3 bench_decode.py --cells A,B --out evidence/<run>/bench-<arm>-<boot>`. Then run `python3 kit/compare.py --a <off bench.json files> --b <on bench.json files>`.
-  - `step_ms` must show no regression beyond noise. The expected cost is about 0.2% or less.
-  - `acceptance_len` may move, because the greedy drafts now follow a different, fixed order.
-- For a verdict, run 2 boots per arm, ABAB.
 
 ## Not in this layer
 
