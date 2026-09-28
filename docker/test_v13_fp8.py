@@ -845,7 +845,8 @@ class DequantTest(unittest.TestCase):
     on Marlin tensors that v11's Python references build: marlin_weights is
     what vLLM's own repack test holds gptq_marlin_repack to, and the scale
     steps are the functions prepare_*_for_marlin call. Every element must be
-    the BF16 rounding of the patch's reference dequant, bit for bit."""
+    the BF16 rounding of the patch's reference dequant, bit for bit (FP8 and
+    NVFP4 up to the sign of zero)."""
 
     @classmethod
     def setUpClass(cls):
@@ -930,7 +931,11 @@ class DequantTest(unittest.TestCase):
         layer = self.layer(mode, parts, n, k, gs)
         out = torch.empty(n, k, dtype=torch.bfloat16)
         self.m.dequantize_marlin(layer, self.m.dequant_spec(layer, mode, gs), out)
-        bad = out.view(torch.int16) != ref.to(torch.bfloat16).view(torch.int16)
+        ref = ref.to(torch.bfloat16)
+        if mode in ("fp8", "nvfp4"):
+            # E6: in the v11 image the kernel's -w writes +0 for the -0 codes, so compare values here.
+            out, ref = out + 0.0, ref + 0.0
+        bad = out.view(torch.int16) != ref.view(torch.int16)
         self.assertFalse(bad.any(), f"{mode} g{gs} {n}x{k}: {int(bad.sum())} elements differ")
         return layer
 
