@@ -28,7 +28,18 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 - The pure-logic pieces behave as intended.
 - The KDA kernel is bit-exact. This runs under the Triton CPU interpreter and compares trim on and trim off against v11.
 
-**Forwarding (recipe lane).** `run.sh` only passes the variables it lists. Every `GLM53_*` switch needs `-e GLM53_…` in `env_args` on both ranks, and it must also appear in the worker's ssh command line. Set the switches identically on head and worker: TP ranks must build identical graphs and workspaces.
+**Forwarding (recipe lane).** Set the switches identically on head and worker: TP ranks must build identical graphs and workspaces. `run.sh` does that two ways. The validated switches are recipe knobs (`recipe.yaml` `serve.env`); `run.sh` turns each one that is on into `-e GLM53_…` on both ranks, and forwards the knob to the worker:
+
+| Knob | Sets | Recipe default |
+|---|---|---|
+| `DRAFT_WEIGHTS=bf16\|nvfp4` | `GLM53_NVFP4_W4A16=draft` when `nvfp4` | `nvfp4` |
+| `TARGET_WEIGHT_GROUPS_INT8=<groups>` | `GLM53_INT8_W8A16=<groups>`, target groups only (`draft` is refused) | empty |
+| `KPOOL_TAIL_FIX=0\|1` | `GLM53_KPOOL_TAIL_FIX=1` when `1` | `1` |
+| `ADAPTIVE_VERIFY=0\|1`, `ADAPTIVE_VERIFY_TAU=<decimal in (0,1)>` | `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU` when `1` (needs `SPEC=dflash2`) | `1`, `0.2` |
+
+Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the five knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
+
+The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0`. Two forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only) and INT8 on `draft`.
 
 ## Switches
 
@@ -219,7 +230,7 @@ The step model:
 ### Risks
 
 - **Calibration.** The selector softmax covers the top-K candidates only, so it overstates confidence. A tau that is too high also cuts positions that would have been accepted, and code and structured output lose acceptance. Sweep tau, and fall back to `MAX` alone. The walk is greedy, so its probabilities ignore the request temperature. On sampled traffic the rule over-verifies, which costs speed and never correctness.
-- **Rank agreement.** Both ranks must mask the same rows. m comes from rank-identical draft scores, and `EXTRA_ENV` sets the switch on both ranks. A width mismatch is worse than a draft-token mismatch: the ranks would emit different `num_sampled` and diverge for good. Only the census check `rank0 vs rank1 routing identical` would show it. `TAU=0` with `MAX` alone cannot mismatch.
+- **Rank agreement.** Both ranks must mask the same rows. m comes from rank-identical draft scores, and `run.sh` sets the switch on both ranks. A width mismatch is worse than a draft-token mismatch: the ranks would emit different `num_sampled` and diverge for good. Only the census check `rank0 vs rank1 routing identical` would show it. `TAU=0` with `MAX` alone cannot mismatch.
 - **EPLB.** It is not refused. With redundant experts, `_apply_eplb_mapping` picks a replica by token index, so a masked row can land on a different replica than its anchor and add reads. This costs speed only, and the recipe does not use EP.
 - **c=2 Marlin block spill.** At 8-16 rows Marlin uses 8-row blocks (`marlin_moe.py:333`). An anchor expert shared by both requests can pass 8 rows and be read twice. The expected count is about 8·8/288 ≈ 0.22 experts per layer, at most ~65 MB per step per rank.
 - **Metrics.** Masked drafts count as drafted and rejected, so the acceptance rate drops by construction, and per-position acceptance past m is 0. Judge by acceptance_len and step_ms.
@@ -410,7 +421,7 @@ Each trial runs its prompts, then verify steps with random acceptance (every a i
 
 - **Output changes above 2048 tokens.** Pool keys now match non-speculative decoding, and at c ≥ 2 they no longer mix requests. Long-context greedy text can therefore differ from v11. Judge the change by the quality gates, not by byte equality.
 - **Block size.** R must divide `--block-size`, and the spec asserts it. The 512·R-byte ring must also fit the tail page, which is padded to the indexer page (block_size/4 · 132 bytes). The recipe's 2304 fits R ≤ 148. `--block-size 128` (a 4,224-byte page) cannot hold R = 16, and the boot then stops on the page-size assert in `AttentionSpec.page_size_bytes`.
-- **Both ranks.** The switch changes the tail KV spec, so set it on both ranks, which `EXTRA_ENV` does. Otherwise the ranks disagree on the tail spec.
+- **Both ranks.** The switch changes the tail KV spec, so set it on both ranks, which `run.sh` does. Otherwise the ranks disagree on the tail spec.
 - **The in-place write** assumes that every call hands the builder the tail group's own slot-mapping row. Both runners' target builds and the V2 speculators do. V1's EAGLE proposer builds every draft group from one metadata object, but it cannot host GLM-5-Next's MTP layer: that layer's MLA and tail sit in different KV groups, and its `validate_same_kv_cache_group` asserts they share one (read from the v11 source, not run).
 - **PD connectors** transfer the tail block by its unpadded page, now 8 KB instead of 2 KB. The recipe does not use PD.
 - **Stale docstrings.** v11's docstrings (the seed kernel, `KpoolTailSpec`, `Glm5NextTailCache`, `KpoolTailManager`) and adaptive verify's module docstring still describe a kpool-slot ring addressed `pos % kpool`.
@@ -454,7 +465,7 @@ The nvidia pack keeps every non-MoE linear in BF16, and so does the DFlash2 draf
 | `GLM53_INT4_W4A16=<groups>` | unset | symmetric INT4 (`uint4b8`), per-group BF16 scale chosen by clip search, GPTQ-Marlin GEMM |
 | `GLM53_INT_GROUP_SIZE=64\|128` | 128 | INT group size along K. Any other value fails the boot. |
 
-- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. Pass the variables through `EXTRA_ENV`, which `run.sh` forwards to both ranks, for example `EXTRA_ENV='MAX_JOBS=2 GLM53_INT8_W8A16=draft,shared,mla,kda_o,kda_in,lm_head'`.
+- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. The recipe sets `GLM53_NVFP4_W4A16=draft` from `DRAFT_WEIGHTS=nvfp4` and `GLM53_INT8_W8A16` from `TARGET_WEIGHT_GROUPS_INT8`, for example `TARGET_WEIGHT_GROUPS_INT8=shared,mla,kda_o,kda_in,lm_head`. `GLM53_FP8_W8A16`, `GLM53_INT4_W4A16` and `GLM53_INT_GROUP_SIZE` go through `EXTRA_ENV`, which `run.sh` forwards to both ranks.
 - **Off.** With all four group variables unset, `process_weights_after_loading` and the compile-cache key are exactly v11's. When set, the variables and `GLM53_INT_GROUP_SIZE` join the compile-cache key, because the drafter is `torch.compile`d.
 - **Images built before this change** carry the FP8 and NVFP4 modes only. Rebuild v13 for INT8, INT4 and the memory fix below.
 

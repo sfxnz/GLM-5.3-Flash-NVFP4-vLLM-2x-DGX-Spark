@@ -81,7 +81,7 @@ class Guards(RunShCase):
 
     def test_spec_mtp_refused_on_nvidia(self):
         self.assertRefused(self.run_sh(SPEC="mtp"), "FORCE_UNSAFE_SPEC=1")
-        self.assertAccepted(self.run_sh(SPEC="mtp", **LIBERTAI))
+        self.assertAccepted(self.run_sh(SPEC="mtp", ADAPTIVE_VERIFY="0", **LIBERTAI))
 
     def test_language_model_only_must_be_0_or_1(self):
         self.assertRefused(self.run_sh(LANGUAGE_MODEL_ONLY="2"), "want exactly 0 or 1")
@@ -223,6 +223,113 @@ class JitCache(RunShCase):
         self.assertIn("JIT_CACHE_DIR=/d/jit cache", words)
 
 
+def glm53_env(stdout):
+    m = re.search(r"^==> glm53_env: (.*)$", stdout, re.M)
+    assert m, stdout
+    return m.group(1).split()
+
+
+class V13Knobs(RunShCase):
+    V13 = {"IMAGE": "glm53-sm121-v13"}
+    ALL_ON = {"DRAFT_WEIGHTS": "nvfp4", "TARGET_WEIGHT_GROUPS_INT8": "shared,mla", "KPOOL_TAIL_FIX": "1",
+              "ADAPTIVE_VERIFY": "1", "ADAPTIVE_VERIFY_TAU": "0.3"}
+    ALL_ON_ENV = ["GLM53_NVFP4_W4A16=draft", "GLM53_INT8_W8A16=shared,mla", "GLM53_KPOOL_TAIL_FIX=1",
+                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"]
+    V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
+
+    def test_defaults_are_the_validated_v13_switches(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        self.assertEqual(glm53_env(proc.stdout), ["GLM53_NVFP4_W4A16=draft", "GLM53_KPOOL_TAIL_FIX=1",
+                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.2"])
+        self.assertIn("IMAGE=glm53-sm121-v13", shell_words(worker_command(proc.stdout)))
+
+    def test_knobs_resolve_to_glm53_env(self):
+        proc = self.run_sh(**self.V13, **self.ALL_ON, EXTRA_ENV="MAX_JOBS=2 GLM53_ROUTER_FP32=1")
+        self.assertAccepted(proc)
+        self.assertEqual(glm53_env(proc.stdout), self.ALL_ON_ENV + ["GLM53_ROUTER_FP32=1"])
+
+    def test_off_adds_nothing(self):
+        proc = self.run_sh(**self.V11_ROLLBACK)
+        self.assertAccepted(proc)
+        self.assertEqual(glm53_env(proc.stdout), [])
+
+    def test_each_knob_needs_a_v13_image(self):
+        for name, value in self.ALL_ON.items():
+            if name == "ADAPTIVE_VERIFY_TAU":
+                continue  # only read when ADAPTIVE_VERIFY=1
+            with self.subTest(name=name):
+                env = {**self.V11_ROLLBACK, name: value}
+                self.assertRefused(self.run_sh(**env), "is not a glm53-sm121-v13 image")
+                self.assertAccepted(self.run_sh(**env, FORCE_UNSAFE_IMAGE="1"))
+                self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v13-rc1"}))
+
+    def test_bad_values_refused(self):
+        cases = [("DRAFT_WEIGHTS", "fp8", "want bf16 or nvfp4"), ("DRAFT_WEIGHTS", "NVFP4", "want bf16 or nvfp4"),
+                 ("KPOOL_TAIL_FIX", "yes", "KPOOL_TAIL_FIX=yes: want exactly 0 or 1"),
+                 ("ADAPTIVE_VERIFY", "2", "ADAPTIVE_VERIFY=2: want exactly 0 or 1")]
+        cases += [("ADAPTIVE_VERIFY_TAU", tau, "strictly between 0 and 1")
+                  for tau in ("0", "0.0", "1", "1.0", "1.5", "-0.2", "1e-9", ".", "0.2.1", "abc")]
+        for name, value, needle in cases:
+            with self.subTest(name=name, value=value):
+                self.assertRefused(self.run_sh(**self.V13, **{name: value}), needle)
+
+    def test_tau_accepts_decimals_in_the_open_interval(self):
+        for tau in ("0.2", ".05", "0.000000001", "0.999"):
+            with self.subTest(tau=tau):
+                proc = self.run_sh(**self.V13, ADAPTIVE_VERIFY="1", ADAPTIVE_VERIFY_TAU=tau)
+                self.assertAccepted(proc)
+                self.assertIn(f"GLM53_ADAPTIVE_VERIFY_TAU={tau}", glm53_env(proc.stdout))
+
+    def test_int8_groups_follow_the_patch(self):
+        src = (REPO / "docker/patch_v13_fp8.py").read_text()
+        groups = re.findall(r'"(\w+)"', re.search(r"^GROUPS = \((.*)\)$", src, re.M).group(1))
+        self.assertIn("draft", groups)
+        for group in groups:
+            with self.subTest(group=group):
+                proc = self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8=group)
+                if group == "draft":
+                    self.assertRefused(proc, "DRAFT_WEIGHTS sets the drafter's weights")
+                else:
+                    self.assertAccepted(proc)
+                    self.assertIn(f"GLM53_INT8_W8A16={group}", glm53_env(proc.stdout))
+        target = ",".join(g for g in groups if g != "draft")
+        self.assertAccepted(self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8=target))
+
+    def test_int8_bad_groups_refused(self):
+        for bad in ("shared,draft", "attn", "shared, mla", "SHARED", "shared,,mla"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8=bad),
+                                   f"TARGET_WEIGHT_GROUPS_INT8={bad}")
+
+    def test_extra_env_cannot_set_a_knob_variable(self):
+        owners = {"GLM53_NVFP4_W4A16": "DRAFT_WEIGHTS", "GLM53_INT8_W8A16": "TARGET_WEIGHT_GROUPS_INT8",
+                  "GLM53_KPOOL_TAIL_FIX": "KPOOL_TAIL_FIX", "GLM53_ADAPTIVE_VERIFY": "ADAPTIVE_VERIFY",
+                  "GLM53_ADAPTIVE_VERIFY_TAU": "ADAPTIVE_VERIFY_TAU"}
+        for name, knob in owners.items():
+            with self.subTest(name=name):
+                self.assertRefused(self.run_sh(**self.V13, EXTRA_ENV=f"MAX_JOBS=2 {name}=1"),
+                                   f"EXTRA_ENV sets {name}, which run.sh sets from {knob}")
+
+    def test_adaptive_verify_needs_dflash2(self):
+        mtp = {**self.V13, "SPEC": "mtp", **LIBERTAI}
+        self.assertRefused(self.run_sh(**mtp, ADAPTIVE_VERIFY="1"), "ADAPTIVE_VERIFY=1 needs SPEC=dflash2")
+        self.assertAccepted(self.run_sh(**mtp, ADAPTIVE_VERIFY="0"))
+
+    def test_worker_resolves_the_same_glm53_env(self):
+        head = self.run_sh(**self.V13, **self.ALL_ON)
+        self.assertAccepted(head)
+        words = shell_words(worker_command(head.stdout))
+        for name, value in self.ALL_ON.items():
+            self.assertIn(f"{name}={value}", words)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "VALIDATE_ONLY": "1",
+               **dict(w.split("=", 1) for w in words[1:-2])}
+        worker = subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertAccepted(worker)
+        self.assertEqual(glm53_env(worker.stdout), self.ALL_ON_ENV)
+        self.assertEqual(head.stdout, worker.stdout)
+
+
 class StubbedLaunch(RunShCase):
     """The real launch path (no VALIDATE_ONLY) with docker, sudo and curl stubbed.
 
@@ -254,7 +361,7 @@ class StubbedLaunch(RunShCase):
     def launch(self, **extra):
         env = self.base_env(**{
             "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
-            "IMAGE": "glm53-test-stub-image", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
+            "IMAGE": "glm53-sm121-v13-test-stub", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
             "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
         del env["VALIDATE_ONLY"]
         return subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
@@ -266,7 +373,7 @@ class StubbedLaunch(RunShCase):
         self.assertTrue(jit.is_dir())
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"-v {jit}:/jit-cache -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", run)
-        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-test-stub-image ", run)
+        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-sm121-v13-test-stub ", run)
 
     def test_jit_cache_0(self):
         proc = self.launch(JIT_CACHE="0")
@@ -284,6 +391,23 @@ class StubbedLaunch(RunShCase):
         self.assertEqual(calls, [f"hf download incoai/GLM-5.3-Flash-DFlash2 --revision {rev}"])
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/{rev}", run)
+
+    def test_glm53_env_on_both_ranks(self):
+        want = " ".join(f"-e {kv}" for kv in V13Knobs.ALL_ON_ENV) + " -e MAX_JOBS=2 "
+        for role in ("head", "worker"):
+            with self.subTest(role=role):
+                self.log.unlink(missing_ok=True)
+                proc = self.launch(ROLE=role, JIT_CACHE="0", EXTRA_ENV="MAX_JOBS=2", **V13Knobs.ALL_ON)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
+                self.assertIn(want, run)
+                self.assertEqual(run.count("GLM53_"), len(V13Knobs.ALL_ON_ENV))
+
+    def test_knobs_off_pass_no_glm53_env(self):
+        proc = self.launch(JIT_CACHE="0", DRAFT_WEIGHTS="bf16", KPOOL_TAIL_FIX="0", ADAPTIVE_VERIFY="0")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
+        self.assertNotIn("GLM53_", run)
 
 
 class ImageParity(RunShCase):
@@ -319,8 +443,8 @@ class ImageParity(RunShCase):
     def test_mismatch_warns_with_sync_command(self):
         proc = self.run_auto("sha256:aaa", "sha256:bbb")
         self.assertAccepted(proc)
-        self.assertIn("WARN image glm53-sm121-v11 differs", proc.stderr)
-        self.assertIn("docker save glm53-sm121-v11 | ssh worker.invalid docker load", proc.stderr)
+        self.assertIn("WARN image glm53-sm121-v13 differs", proc.stderr)
+        self.assertIn("docker save glm53-sm121-v13 | ssh worker.invalid docker load", proc.stderr)
         self.assertNotIn("docker run", self.log.read_text())
 
     def test_orchestrate_0_never_sshes(self):

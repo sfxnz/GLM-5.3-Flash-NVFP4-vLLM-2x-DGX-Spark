@@ -75,6 +75,7 @@ def main() -> int:
         "Dockerfile.sm121-v9",
         "Dockerfile.sm121-v10",
         "Dockerfile.sm121-v11",
+        "Dockerfile.sm121-v13",
         "dflash2_backport.diff",
         "patch_v10_dflash_glm5.py",
         "patch_v11_dflash_kv_groups.py",
@@ -105,6 +106,8 @@ def main() -> int:
         "docker build -f docker/Dockerfile.sm121-v9",
         "docker build -f docker/Dockerfile.sm121-v10",
         "docker build -f docker/Dockerfile.sm121-v11",
+        "docker build -f docker/Dockerfile.sm121-v13",
+        "docker save glm53-sm121-v13 | ssh spark2 docker load",
         "./run.sh",
         "./stop.sh",
         "python3 bench_decode.py",
@@ -123,7 +126,7 @@ def main() -> int:
             failures.append(f"README missing {snippet!r}")
 
     expected = {
-        "IMAGE": "glm53-sm121-v11",
+        "IMAGE": "glm53-sm121-v13",
         "PORT": "8000",
         "MAX_MODEL_LEN": "327680",
         "MAX_NUM_SEQS": "2",
@@ -201,6 +204,7 @@ def main() -> int:
         REPO / "docker/Dockerfile.sm121-v9": "glm53-sm121-v8",
         REPO / "docker/Dockerfile.sm121-v10": "glm53-sm121-v9",
         REPO / "docker/Dockerfile.sm121-v11": "glm53-sm121-v10",
+        REPO / "docker/Dockerfile.sm121-v13": "glm53-sm121-v11",
     }
     for path, want in chain.items():
         if not path.exists():

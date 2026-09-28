@@ -4,11 +4,11 @@ Serve [nvidia/GLM-5.3-Flash-NVFP4](https://huggingface.co/nvidia/GLM-5.3-Flash-N
 
 320B total / 18B active. Official NVIDIA ModelOpt 0.47.0 NVFP4 W4A4 on routed experts and dense MLP (`nvfp4_experts_dense_mlp-kv_fp8_cast`, ~190.5 GiB). Attention, shared experts, and vision stay BF16. Checkpoint KV scheme is `kv_fp8_cast`. Native context is 1,048,576. This recipe serves `--max-model-len` 327680 with the DFlash2 block-diffusion drafter (7 speculative tokens, two sequences). Vision is on (`LANGUAGE_MODEL_ONLY=0`). Do not copy the NVIDIA card's TP=4 / expert-parallel / 32-sequence / 8192 batched-token flags onto 2× Spark.
 
-Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v11` first.
+Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v13` first.
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
-Published decode is prose only. Do not score decode from structured, code, or other cells. The table is greedy, but a request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`), so default-path speed and quality are unmeasured. Streamed greedy, thinking off, 200 completion tokens, 3-run median. These cells were measured on the LibertAIDAI pin on this image; the nvidia pack is unmeasured on Sparks. `max-num-seqs=2`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs. Prose is the low-acceptance regime (free text); structured (count 1→200) stays `--phase structured` for occupancy / acceptance only.
+Published decode is prose only. Do not score decode from structured, code, or other cells. The table is greedy, but a request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`), so default-path speed and quality are unmeasured. Streamed greedy, thinking off, `max_tokens` 200, 3-run median. These cells are the 2026-09-02 rebench (`evidence/rebench-20260902T204243Z/`): the LibertAIDAI pin on `glm53-sm121-v11`, with the old prose prompt that stops near 98 tokens (cell K of today's ruler) and none of the v13 switches. They are not a measurement of the current defaults (nvidia pack, v13, the switches below). The nvidia pack has ruler-v2 receipts in `evidence/` (E0 on v11, E1-E3 on v13); a final measurement of the defaults will replace this table. `max-num-seqs=2`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs. Prose is the low-acceptance regime (free text); structured (count 1→200) stays `--phase structured` for occupancy / acceptance only.
 
 <!-- BEGIN generated measured from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
@@ -19,7 +19,7 @@ Published decode is prose only. Do not score decode from structured, code, or ot
 
 Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. `MAX_NUM_SEQS=3` at DFlash2-7 does not starve the third stream, but structured c=2 fell 59.5 → 50.7. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). `ENFORCE_EAGER=1` is the rollback; it slowed structured c=1 68.1 → 65.0. Adding capture size 3 to the ladder was inside noise. Capture size 24 at two sequences was unused and stayed inside noise. `VLLM_USE_BREAKABLE_CUDAGRAPH=0` slowed structured c=2 59.7 → 52.1. Leave the engine auto-on. Async scheduling is already on: this vLLM auto-enables it for DFlash with the `mp` executor, so passing `--async-scheduling` was a no-op and every cell stayed inside noise. Do not pass `--no-async-scheduling`. Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476). Tony's 3.0 GiB KV pin cannot boot `--max-model-len` 327680 (vLLM wants 3.62 GiB). The displayed 3.62 GiB pin (3886945403) still estimates max len 327168 and refuses. A 4.0 GiB pin boots but structured c=2 fell 59.5 → 52.4.
 
-MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. A first concurrent structured wave on this boot can median ~52 tok/s while `VLLM::Worker_TP0` has ~1.3 GiB in swap (host `vm.swappiness=60`, 6.1 GiB swap used). This table is a second frozen wave after those pages faulted in. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo. `python3 bench_decode.py` repeats the published prose phase at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
+MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. A first concurrent structured wave on this boot can median ~52 tok/s while `VLLM::Worker_TP0` has ~1.3 GiB in swap (host `vm.swappiness=60`, 6.1 GiB swap used). This table is a second frozen wave after those pages faulted in. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo. `python3 bench_decode.py --cells K` reruns this table's prose prompt at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
 
 Receipts for these numbers are in [`evidence/`](evidence/): `trail.tsv` and `decision.tsv` (what was tried, kept, reverted), `hypotheses.md`, and per-iteration `bench.txt` / `run.log` / `doctor.txt`.
 
@@ -44,9 +44,11 @@ docker build -f docker/Dockerfile.sm121-v8 -t glm53-sm121-v8 docker
 docker build -f docker/Dockerfile.sm121-v9 -t glm53-sm121-v9 docker
 docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
 docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
+docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker
+docker save glm53-sm121-v13 | ssh spark2 docker load
 ```
 
-Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits. Prefer building on the head and copying it with `docker save glm53-sm121-v11 | ssh spark2 docker load`. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
+Build once on the head and copy the image to the worker with `docker save | docker load` as above. That took 253 s in E1 and gave both nodes the same image ID (`evidence/e1-v13-build/`). Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits; E0 ran two different v11 builds. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
 
 The v8 Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
 
@@ -56,14 +58,20 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 - v10 teaches the fork-only Glm5Next model to capture aux hidden states for the drafter (the mHC stream contraction follows the reference integration, sglang [#36708](https://github.com/sgl-project/sglang/pull/36708)).
 - v11 adds a dedicated draft KV group to the GLM5 bespoke KV layout so the draft's sliding-window layers share the pool.
 
+v13 adds Python-only runtime patches on top of v11 (misc, fp8, census, verify, kpool_tail; [`docker/README-v13.md`](docker/README-v13.md)). Every one is off unless its `GLM53_*` variable is set; with none set, v13 serves like v11 (E1a passed Tier 0 against the v11 reference). The recipe sets them from the knobs `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `KPOOL_TAIL_FIX` and `ADAPTIVE_VERIFY` / `ADAPTIVE_VERIFY_TAU` (see Defaults), passes them to both ranks, and refuses any knob that is on unless `IMAGE` is a `glm53-sm121-v13*` tag (`FORCE_UNSAFE_IMAGE=1` overrides). v11 stays the rollback:
+
+```bash
+IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 ./run.sh
+```
+
 ## DFlash2 drafter
 
 [incoai/GLM-5.3-Flash-DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) is a 1B block-diffusion draft model that predicts a whole block per pass. Upstream reports it beating GLM's native MTP on acceptance length across every task they measured. Decoding is lossless; our greedy outputs matched MTP's byte for byte.
 
-DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well:
+DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well, and `ADAPTIVE_VERIFY=0`, because adaptive verify reads DFlash2's selector scores:
 
 ```bash
-MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ./run.sh
+MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 ./run.sh
 ```
 
 `run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16 that are not in the quant ignore list, so they cannot load (NVFP4 params expected) or fit (~6.9 GiB per rank). LibertAI's MTP experts are NVFP4.
@@ -132,7 +140,7 @@ Stop both ranks from the head:
 <!-- BEGIN generated defaults from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Setting | Value |
 |---|---|
-| Image | `glm53-sm121-v11` (local) |
+| Image | `glm53-sm121-v13` (local; chain v8 → v9 → v10 → v11 → v13, see Build the image for the v11 rollback) |
 | Model | `nvidia/GLM-5.3-Flash-NVFP4` (served under `SERVED_NAME`, which defaults to `$MODEL`) |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
@@ -147,13 +155,19 @@ Stop both ranks from the head:
 | Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
+| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`) |
 | Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
+| Drafter weights | `DRAFT_WEIGHTS=nvfp4`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off |
+| Target INT8 | `TARGET_WEIGHT_GROUPS_INT8=""`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. Empty keeps them BF16. FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d); INT8 is under test (E4) |
+| Indexer tail ring | `KPOOL_TAIL_FIX=1` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring |
+| Adaptive verify | `ADAPTIVE_VERIFY=1`, `ADAPTIVE_VERIFY_TAU=0.2` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a: prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. Needs `SPEC=dflash2`; `0` turns it off |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
 | Reasoning / tools | `glm45` / `glm47` |
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
+
+The v13 rows cite one boot each: E2e (`evidence/e2e-nvfp4-draft-only/notes.txt`), E3a (`evidence/e3a-kpool-det/notes.txt`) and E3b (`evidence/e3b-av-tau0.2/notes.txt`). E3a and E3b also ran `GLM53_DETERMINISTIC_MLA_INDEX=1`, which was later dropped from the image because it changed nothing measurable (`evidence/decision.tsv`, `e3a-det-index-remove`). To A/B one switch, set only that knob to its off value.
 
 The official NVIDIA pack is W4A4 on experts and dense MLP. `--moe-backend` covers only the routed experts; the layer 0-2 dense MLP goes through `--linear-backend`. With `--linear-backend auto` vLLM picks a FlashInfer FP4 GEMM on sm_121 that JIT-compiles during the first profile forward, so `run.sh` pins `LINEAR_BACKEND=marlin` and refuses other values unless `FORCE_UNSAFE_LINEAR=1`. Both ranks should log `Using MarlinNvFp4LinearKernel for NVFP4 GEMM`. Marlin dequantizes weights and never reads an activation `input_scale`, so this pin is a weight-layout + dense-MLP change until an SM121 W4A4 MoE path exists that does not JIT-OOM. `flashinfer_cutlass` is not that path on 2× GB10. v11 dies at JIT (`nvrtc.h` missing). v12 with `cuda-nvrtc-dev-13-0` got past that and then global-OOM'd spark2 during `cudafe++` after 90.67 GiB weights (`NV_ERR_NO_MEMORY`, ~18 GiB left). `run.sh` refuses any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar. Rollback to that pack: `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177`.
 
@@ -181,11 +195,11 @@ export MAX_NUM_SEQS=2
 
 Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`.
 
-`EXTRA_ENV` adds container env on both ranks as space-separated `NAME=VALUE` pairs, for example `EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'`. For verbose FlashInfer JIT logs use `EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=0'`: this image's FlashInfer treats `FLASHINFER_JIT_VERBOSE=1` as `FLASHINFER_JIT_DEBUG=1` when `FLASHINFER_JIT_DEBUG` is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel, the serving kernels included, builds `-O0 --device-debug`. On 2026-09-27 that debug topk build pushed spark1 under the 8 GiB PROFILE floor (`evidence/e0-nvidia-v11/boot1-killed/cause.txt`). `run.sh` refuses `FLASHINFER_JIT_VERBOSE=1` without `FLASHINFER_JIT_DEBUG=0`. Names must match `^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$` or be `MAX_JOBS`; names containing `TOKEN`, `KEY` or `SECRET` are refused. `EXTRA_ARGS` adds `vllm serve` flags on both ranks. The head forwards both, and every other setting, to the worker from one `FORWARD_ENVS` list; `VALIDATE_ONLY=1 ./run.sh` prints the exact worker command.
+`EXTRA_ENV` adds container env on both ranks as space-separated `NAME=VALUE` pairs, for example `EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'`. For verbose FlashInfer JIT logs use `EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=0'`: this image's FlashInfer treats `FLASHINFER_JIT_VERBOSE=1` as `FLASHINFER_JIT_DEBUG=1` when `FLASHINFER_JIT_DEBUG` is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel, the serving kernels included, builds `-O0 --device-debug`. On 2026-09-27 that debug topk build pushed spark1 under the 8 GiB PROFILE floor (`evidence/e0-nvidia-v11/boot1-killed/cause.txt`). `run.sh` refuses `FLASHINFER_JIT_VERBOSE=1` without `FLASHINFER_JIT_DEBUG=0`. Names must match `^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+$` or be `MAX_JOBS`; names containing `TOKEN`, `KEY` or `SECRET` are refused. Ad-hoc v13 switches (`GLM53_*`, [`docker/README-v13.md`](docker/README-v13.md)) go through `EXTRA_ENV`, except the five a knob sets: `GLM53_NVFP4_W4A16`, `GLM53_INT8_W8A16`, `GLM53_KPOOL_TAIL_FIX`, `GLM53_ADAPTIVE_VERIFY` and `GLM53_ADAPTIVE_VERIFY_TAU`. `run.sh` refuses those in `EXTRA_ENV`, so each has one owner; `VALIDATE_ONLY=1 ./run.sh` prints every `GLM53_*` the containers get (`==> glm53_env:`). `EXTRA_ARGS` adds `vllm serve` flags on both ranks. The head forwards both, and every other setting, to the worker from one `FORWARD_ENVS` list; `VALIDATE_ONLY=1 ./run.sh` prints the exact worker command.
 
 ## JIT and compile cache
 
-With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` at `/jit-cache`. `JIT_CACHE_DIR` defaults to `~/projects/data/glm53-jit-cache`, and `<image id>` is the first 12 hex digits of that node's own `docker image inspect -f '{{.Id}}' glm53-sm121-v11`. `run.sh` points each engine's cache variable into the mount:
+With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` at `/jit-cache`. `JIT_CACHE_DIR` defaults to `~/projects/data/glm53-jit-cache`, and `<image id>` is the first 12 hex digits of that node's own `docker image inspect -f '{{.Id}}' $IMAGE` (`glm53-sm121-v13` by default). `run.sh` points each engine's cache variable into the mount:
 
 - `FLASHINFER_WORKSPACE_BASE`
 - `VLLM_CACHE_ROOT`, which covers torch.compile, the FlashInfer autotune file and DeepGEMM
@@ -200,7 +214,7 @@ The container runs as root, so the cached files are root-owned. To clear a cache
 ```bash
 ls ~/projects/data/glm53-jit-cache/                                # one directory per image ID
 sudo rm -rf ~/projects/data/glm53-jit-cache/<id>                   # one image
-docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v11 -rf /c/<id>   # no sudo
+docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v13 -rf /c/<id>   # no sudo
 ```
 
 ## Repeat the decode bench
