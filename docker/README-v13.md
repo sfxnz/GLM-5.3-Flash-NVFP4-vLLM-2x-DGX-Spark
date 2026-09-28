@@ -1,0 +1,673 @@
+# v13 image layer: opt-in runtime patches
+
+`Dockerfile.sm121-v13` builds on `glm53-sm121-v11` and adds Python-only patch layers, among them:
+
+- `patch_v13_misc.py` (this file documents it)
+- `patch_v13_fp8.py` (FP8, NVFP4, INT8 and INT4 weight-only Marlin; this file documents it)
+
+Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off in the image. The recipe turns four on through its knobs (Forwarding, below). With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. One Triton kernel in `patch_v13_misc.py` changes signature even with every switch off, so it compiles to a different binary:
+
+- The `fused_recurrent_kda` kernel (every KDA layer on every verify step) takes four token-stride arguments and the `STRIDED_QKVB` constexpr, which is False while `GLM53_KDA_TRIM` is unset.
+
+It loads the same elements as v11, and with the switch off its output is bit-exact with v11 under the Triton CPU interpreter (`test_v13_misc.py`). On the GPU, E1a (v13, every switch off) passed Tier 0 10/10 against the v11 reference (`evidence/e1a-v13-off/tier0-notes.txt`).
+
+```bash
+docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker   # needs docker/patch_v13_fp8.py
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py                 # CPU tests
+GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v   # CPU tests
+```
+
+Both test files read `GLM53_V11_SRC`: the directory that holds the `vllm/` package tree copied out of `glm53-sm121-v11` (for example a `dist-packages` copy). Without it the source-dependent tests skip. `test_v13_misc.py` still accepts the old `GLM53_V11SRC`, which points at `vllm/` itself, when `GLM53_V11_SRC` is unset.
+
+The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substring replace. If the replacement text is already present, the edit is skipped, so reruns are no-ops. If any anchor is missing or appears more than once, the script refuses before writing anything. `test_v13_misc.py` checks the following on a copy of the v11 tree:
+
+- Applying twice is idempotent.
+- Every anchor appears exactly once.
+- The refusal on drift fires.
+- `py_compile` passes on every touched file.
+- The pure-logic pieces behave as intended.
+- The KDA kernel is bit-exact. This runs under the Triton CPU interpreter and compares trim on and trim off against v11.
+
+**Forwarding (recipe lane).** Set the switches identically on head and worker: TP ranks must build identical graphs and workspaces. `run.sh` does that two ways. The validated switches are recipe knobs (`recipe.yaml` `serve.env`); `run.sh` turns each one that is on into `-e GLM53_…` on both ranks, and forwards the knob to the worker:
+
+| Knob | Sets | Recipe default |
+|---|---|---|
+| `DRAFT_WEIGHTS=bf16\|nvfp4` | `GLM53_NVFP4_W4A16=draft` when `nvfp4` | `nvfp4` |
+| `TARGET_WEIGHT_GROUPS_INT8=<groups>\|none` | `GLM53_INT8_W8A16=<groups>`, target groups only (`draft` is refused); `none` sets nothing | `shared,mla,kda_o,kda_in,lm_head` |
+| `PREFILL_DEQUANT_MIN_M=<rows>` | `GLM53_WQ_DEQUANT_MIN_M=<rows>` and `GLM53_WQ_DEQUANT_GROUPS=kda_in` unless `0` | `0` |
+| `KPOOL_TAIL_FIX=0\|1` | `GLM53_KPOOL_TAIL_FIX=1` when `1` | `1` |
+| `ADAPTIVE_VERIFY=0\|1`, `ADAPTIVE_VERIFY_TAU=<decimal in (0,1)>` | `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU` when `1` (needs `SPEC=dflash2`) | `1`, `0.3` |
+
+Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the seven knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
+
+The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0` (and `PREFILL_DEQUANT_MIN_M=0`). Three forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only), INT8 on `draft`, and `GLM53_WQ_DEQUANT_GROUPS` other than `kda_in`.
+
+## Switches
+
+| Env var | Changes | Expected effect | Risk |
+|---|---|---|---|
+| `GLM53_ROUTER_FP32=1` | `Glm5NextMoE` sets `gate.allow_cublas_router_gemm`, so the router GEMM runs `torch.mm(x, W.T, out_dtype=float32)` (GateLinear tier 5) instead of BF16 `F.linear` + `.to(fp32)` (tier 6) | Router logits stay fp32, as `moe_router_dtype` asks, which restores parity with the SM90/SM100 path. About 1e-3 score shift at top-8 boundaries (MOE-3). Removes 42 cast kernels per step (about +0.1 ms). | cuBLAS `out_dtype` on sm_121. An unsupported case errors at warmup or capture, which makes the failure visible at boot. |
+| `GLM53_INDEXER_WS_FACTOR=<int ≥1>` | `get_max_prefill_buffer_size` returns `max_model_len * factor` instead of `* 40`. The chunk planner and the indexer op both size from it. | At 327680 context, factor 1 cuts the indexer gather workspace from 1.61 GiB to 41 MiB per rank, freeing about 1.57 GiB of UMA per rank (XP-4). | Long prefills split into more indexer chunks, so check the 318k needle and prefill speed. An invalid value raises `ValueError` at boot. |
+| `GLM53_MHC_WARMUP=1` | New `warmup/glm5next_mhc_warmup.py`, called from `kernel_warmup`. It runs `hc_pre`, `hc_fused_post_pre` and `hc_post` of one Glm5Next layer once per distinct TileLang specialisation up to `max_num_batched_tokens`. At 2048 tokens on 48 SMs that is 14 sizes and 12 `n_splits` classes. | No more ~5-7 s first-shape TTFT stalls while serving (NMK-4 / XP-9). Boot takes about 60-70 s longer with a cold TileLang cache. | 64 MiB of transient bf16 tensors at 2048 tokens. The compiles move into boot. |
+| `GLM53_KDA_TRIM=1` | `fused_recurrent_kda` stops calling `.contiguous()` on q/k/v/beta when each token's `[H, D]` block is dense. The kernel takes the token strides instead (`STRIDED_QKVB`). The GDN call site passes `STRIDED_QKVB=False`. | 4 fewer copy kernels per KDA layer per verify step, about 136 kernel launches in total. The estimate is about 0.3-0.7 ms per step (NMK-7), not measured. Output is bit-exact: the kernel reads the same elements. | Pointer math. Covered by the interpreter test, including spec-decode state slots and COMPUTE_GATE. Varlen, B=1 path only. Anything else falls back to `.contiguous()`. |
+| `GLM53_SKIP_MTP_WEIGHTS=1` | When the speculative method is not `mtp`, `Glm5NextModel` registers `model.language_model.layers.45.` (and the other name forms) in `ep_weight_filter.SKIP_NAME_PREFIXES`. The default safetensors iterator then skips those tensors before `get_tensor`. | Each rank reads 13.84 GiB less (889 tensors in the nvidia pack, PR11-9), so the load gets roughly 30-50 s shorter. Resident memory does not change. | None with DFlash2, because the draft's tensor names are `layers.0-4`. `SPEC=mtp` ignores the switch. Only the default loader applies the filter. `--load-format fastsafetensors`, `instanttensor` and multithread loading do not. |
+| `GLM53_DFLASH_PREFIX_CACHE_FIX=1` | A port of tonyd2wild's `patch_prefix_cache_draft_group.py` into `kv_cache_coordinator.py`, with two changes. (1) When no group is flagged EAGLE, only the DFlash draft sliding-window group gets the EAGLE last-block drop, where v11 applies it to every group. (2) The draft group never shrinks the hit that the target MLA and KDA groups agreed on. A shorter draft hit is dropped, so the draft gets fresh pages. | Prefix-cache hits come back with DFlash2 (EXT-5). Tony measured `0 hits / 35,280 queries → floor(len/2304)*2304` cached, and a 5178-token repeat going from 4.3 s to 0.7 s. | A dropped draft hit leaves the draft window without KV for the cached span, so acceptance is lower on those requests. Output is still lossless because the target verifies every draft token. One deviation from Tony: a shorter draft hit also clears draft blocks recorded in an earlier fixed-point pass. Without that, a stale longer block list could survive. |
+
+## GPU validation (Sparks, one switch at a time)
+
+Follow AGENTS.md: exclusive GPUs, one knob per boot, record everything in `evidence/iter-<name>/` with `trail.tsv` and `decision.tsv` rows. Read memory with `free -h`, never with `nvidia-smi`. Use `L` as shorthand for both ranks' engine logs (`docker logs glm53-flash-nvfp4` on spark1 and on spark2).
+
+**P3.0 gate: v13 with no `GLM53_*` set equals v11.** Boot `IMAGE=glm53-sm121-v13` with default settings.
+
+- `L | grep -c GLM53_` must print 0 on both ranks.
+- Greedy count-200 must be lossless.
+- Thinking-off smoke must not start `content` with chain-of-thought.
+- Tier 0 against the v11 reference must PASS: `python3 quality/tier0.py compare --ref nvidia-v11-k7`. Its gates are relative to the reference's A/A: top-1 agreement at least the A/A's minus 0.5 points, and greedy hazard at most 2 × max(the A/A's, 0.005). Byte-identical greedy text is not a usable gate, because the serve is not run-to-run deterministic: in E0's same-boot A/A, greedy diverged on 14 of 20 prompts. The cross-boot A/A from E1a is what a passing boot lands near: top-1 98.33%, top-20 KL 5.9e-3, greedy hazard 0.0167 (`evidence/e1a-v13-off/tier0-notes.txt`).
+- `python3 bench_decode.py` must be within noise of v11.
+
+**ROUTER_FP32**
+
+- `L | grep "GLM53_ROUTER_FP32: MoE router GEMM uses cuBLAS"` must print one line per rank.
+- Boot must reach ready. A cuBLAS `out_dtype` failure shows up during capture.
+- Count-200 lossless, thinking-off smoke, Tier 0.
+- Expect small greedy divergences against the flag-off run. That is the intended fidelity change, so compare on the quality eval, not byte equality.
+- Bench prose c=1 and c=2 must be within noise.
+
+**INDEXER_WS_FACTOR=1**
+
+- `L | grep "GLM53_INDEXER_WS_FACTOR=1: indexer prefill buffer 327680 entries"`.
+- After ready, run `free -h` on both nodes and log `MemAvailable` at ready, after smoke and after a 32k needle.
+- Expect about +1.5 GiB per node against a same-day factor-40 control.
+- The 318k needle must still pass, and prefill tok/s on a 64k prompt must stay flat.
+
+**MHC_WARMUP**
+
+- Before `Application startup complete`, both ranks must log `GLM53_MHC_WARMUP: compiling ... token sizes [1, 8, 17, ...]` and `GLM53_MHC_WARMUP: finished <n> sizes in <s> s` (n = 14 at `max_num_batched_tokens` 2048).
+- After ready, send single prompts of about 30, 100, 300, 700, 1500 and 2000 tokens, then one c=2 pair.
+- `L | grep -c "JIT compilation during inference: mhc"` must be 0 on both ranks. `jit_monitor` logs each kernel name only once, so also check that `L | grep -c "TileLang begins to compile"` does not grow after ready.
+- Every request's TTFT must stay under 1 s.
+- Run 1 and run 3 of `bench_decode.py` should no longer differ by the ~6 s first-wave TTFT spike.
+
+**KDA_TRIM**
+
+- Check that the switch is set: `docker exec glm53-flash-nvfp4 env | grep GLM53_KDA_TRIM` on both nodes.
+- Greedy outputs (prose, structured and count-200, temperature 0) must be byte-identical to the same image with the switch off.
+- nsys on 30 verify steps at c=1 should show 136 fewer copy kernels (`elementwise`/`copy_`) per step.
+- Bench prose c=1 and c=2: keep the switch only if it beats noise, per AGENTS.md.
+
+**SKIP_MTP_WEIGHTS** (with `SPEC=dflash2`)
+
+- `L | grep "GLM53_SKIP_MTP_WEIGHTS: not reading ('model.language_model.layers.45.'"`.
+- `Loading weights took` must drop against the nvidia-pack control, with an expected read of 176.5 GiB instead of 190.4 GiB.
+- `Model loading took X GiB` must stay the same to within 0.01.
+- Count-200 must stay lossless.
+- With `SPEC=mtp`, that log line must be absent and MTP acceptance must be normal.
+
+**DFLASH_PREFIX_CACHE_FIX** (with `SPEC=dflash2`)
+
+- Add `EXTRA_ARGS="--enable-prompt-tokens-details"`.
+- On the head, `L | grep "GLM53_DFLASH_PREFIX_CACHE_FIX: EAGLE block drop on draft KV group(s)"`.
+- Send one identical 9216-token prompt three times at temperature 0 with `max_tokens` 32.
+- After each send, record `curl -s localhost:8000/metrics | grep -E 'prefix_cache_(queries|hits)_total'` and `usage.prompt_tokens_details.cached_tokens`.
+- Measure the switch-off baseline first. EXT-5 predicts 0 hits, and that prediction is unverified locally.
+- With the switch on, sends 2 and 3 must report cached tokens of at least 4608, and at most 6912. The count is a multiple of 2304 (the block size).
+- TTFT must drop accordingly.
+- All three completions must be byte-identical to each other and to the switch-off run.
+- Count-200 must stay lossless.
+- Compare the spec-decode acceptance counters on sends 2 and 3 against send 1. A large drop means dropped draft hits (risk above).
+
+## Not in this layer
+
+- **f_b/g_b GEMM merge (NMK-7 part b).** Not done because it cannot be made bit-exact by construction. f_a and g_a are adjacent 128-wide slices, so one GEMM would need either of two things:
+  - A block-diagonal `[4096, 256]` weight. Its f and g outputs come out as strided halves, and the recurrent kernel and `o_norm` would then copy them back.
+  - A `bmm` over stacked weights. That swaps cuBLAS `gemm` for `gemmStridedBatched`, and Inductor may add a layout copy.
+
+  Neither is guaranteed to reproduce the separate GEMMs' bits, and the gain is at most 34 launches (≈0.1-0.17 ms per step).
+- **Scheduler half of upstream vLLM #54163.** This is the `last_cache_position` back-off for DFlash in mamba-align mode. Tony's coordinator-only patch already measured `floor(len/2304)*2304` hits on the same design. The back-off only costs prompts shorter than two blocks. Revisit if the DFLASH_PREFIX_CACHE_FIX check shows sub-2-block misses.
+- **Persistent TileLang, Triton and DeepGEMM caches.** These are `run.sh` volume mounts, which belong to the recipe lane. With `/root/.tilelang` and `/root/.cache` persisted, MHC_WARMUP compiles hit the cache after the first boot.
+
+## GLM53_ADAPTIVE_VERIFY: fixed-shape adaptive verification (`patch_v13_verify.py`)
+
+DFlash2-7 verifies 8 rows per request per step, and every row pulls its own top-8 routed experts. On prose, positions 4-7 are almost never accepted (E0 cell A: .640 .345 .169 .065 .029 .012 .003). Code uses the whole block (cell B: .817 .657 .515 .406 .322 .238 .182). vLLM's adaptive verification (#52228) changes the per-request query length, which the DSA indexer, the KDA backend and the FlashInfer draft attention reject on sm_121. This switch keeps every shape and stops paying expert reads for the rows the drafter does not believe in.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_ADAPTIVE_VERIFY=1` | off | Master switch. Off means no hook is bound, nothing is allocated and the graphs are the v11 graphs. |
+| `GLM53_ADAPTIVE_VERIFY_TAU=<f>` | `0.1` | Verify width m = the number of leading drafts whose running product of DFlash2 top probabilities is ≥ tau. `0` turns the confidence rule off. |
+| `GLM53_ADAPTIVE_VERIFY_MAX=<n>` | k | Fixed per-request cap in 1..k. With `TAU=0`, every step verifies min(n, drafts) positions. |
+
+- The Default column is the image's. The recipe sets `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU=0.3` (`ADAPTIVE_VERIFY=1`, `ADAPTIVE_VERIFY_TAU=0.3`) and leaves `MAX` at k.
+- m is always in [1, MAX], so at least one draft is verified.
+- The DFlash2 probability of draft step i is the maximum of the softmax over the selector walk's realized scores (`_selector_scores`). These are the same top-K scores the probabilistic draft path uses as q.
+- `TAU` needs DFlash2. `TAU=0` with `MAX<k` works with any V2 drafter.
+- Only the V2 runner creates the state, which means `SPEC=dflash2`. `SPEC=mtp` logs nothing.
+- At boot it refuses PP, DP, PCP, DBO, sequence-parallel MoE, monolithic MoE kernels, a rejection sampler that is not the stock V2 class, and vLLM's own adaptive verification.
+
+```bash
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_verify.py   # CPU; torch + triton add the kernel tests
+```
+
+### Mechanism
+
+One predicate on logit rows drives everything: `local_pos > verify_len[req_state]`. Local position 0 is the anchor (the last sampled token) and local position i is draft d_i. The state lives in `v1/worker/gpu/spec_decode/glm53_adaptive_verify.py`.
+
+1. `prepare()` runs in the runner after `prepare_attn`, outside every graph and before `model_state.prepare_attn` builds the attention metadata. It zeroes `masked[:num_tokens_after_padding]`, scatters the predicate onto the input rows `logits_indices`, and stores each row's anchor row as `logits_indices - local_pos`.
+2. `compute_kpool_tail_slot_mapping` (`indexer.py`) runs in the kpool tail metadata build, which is eager. After v11 fills the tail slots, it sets the slot of every masked row to -1. The indexer's K-pool update kernel then skips that row's stash into the `pos % index_kpool` tail ring (`kpool_compress.py:596`). This costs one eager kernel per step. The lossless section says why the ring needs it. On the V2 runner, the only one that creates this state, v11's tail builder never calls that function (V2 builds no positions), so the hook only runs with `GLM53_KPOOL_TAIL_FIX=1`. See that section.
+3. `remap()` runs in `BaseRouter._select_experts`, after `_compute_routing` and before the census capture and EPLB. That code is inside the opaque `moe_forward` op, so the remap is captured in the FULL and PIECEWISE graphs. A masked row takes its anchor's top-8 ids with weight 0. This costs 4 fixed-shape kernels per MoE layer: the out-of-place `masked_fill` is a clone plus `masked_fill_`, then a gather and a `where`.
+4. `mask_drafts()` runs in `RejectionSampler._verify`, after `apply_sampling_params`. A masked row's draft id becomes -1 in the tensor handed to `rejection_sample`. The sampling-parameter kernels still see the real ids.
+5. `record()` runs in the runner after the draft. It sets `verify_len[idx_mapping] = m` for the drafts just proposed. The next step's 1-4 read it, in stream order.
+
+The buffers are persistent: `masked` and `anchor` have `max_num_batched_tokens` rows, and `verify_len` has `max_num_seqs` entries. The indexer hook holds a reference to `masked`. Nothing calls `.item()` or `.cpu()`, and no shape depends on data. `anchor[t] <= t` always holds, so the gather stays inside the batch at every graph size. Both TP ranks compute m from the draft scores that already give them identical draft tokens, so both ranks mask the same rows.
+
+### Why it is lossless (index arithmetic of this tree)
+
+Take one verify request with n drafts (n = k = 7 unless the scheduler truncated) and width m < n.
+
+- **Layout.** The runner writes the query as input rows q..q+n = [x_0 = anchor, x_1 = d_1, ..., x_n = d_n] (`input_batch.py:415,433,443`). The logit rows are the last n+1 rows: `logits_indices[c+j] = q+j` and `expanded_local_pos[c+j] = j`.
+- **Which logits test which draft.** The sampler's draft vector is `input_ids[logits_indices]` (`rejection_sampler.py:259`), so its row c+j holds x_j. Iteration i of `_rejection_kernel` tests `draft_sampled[c+i+1] = d_{i+1}` against logit row c+i, which is the target distribution after x_0..x_i. So the logits of input i predict the token after input i, and the draft at local position j is tested by row j-1.
+- **Forced rejection.** Masking sets d_j = -1 for every j > m. At i = m the kernel meets d_{m+1} = -1 (`rejection_sampler_utils.py:558`):
+  - Greedy: `accepted &= is_valid_draft` (:588) is false, so the kernel stores the argmax of row m at `sampled[m]` (:593) and stops.
+  - Sampled (standard, block or synthetic): `verifying &= is_valid_draft` (:565) stops before any test. `_resample_kernel` sees `rejected_draft_token < 0` and draws from row m's raw target logits (:767-770), with Gumbel noise keyed by (seed, pos of row m).
+
+  Under k' = m, the same row m is the bonus row. Greedy takes its argmax (the leftmost maximum on both paths), and sampled draws from its raw target logits with the same key. A rejection before m is identical in both cases, because test i < m sees the same row and the same uniform keyed by (seed, pos of row i). Block verification's look-ahead at i = m-1 also sees no next draft in both cases: the placeholder in one, the end of the drafts in the other. So the emitted tokens and `num_sampled` equal k' = m speculation, and the sampler reads rows 0..m only.
+- **Rows 0..m do not see the masked inputs.** The masked inputs are rows m+1..n. Every Glm5Next block is either per-token or causal:
+  - Per-token: embedding, norms, mHC, shared and dense MLPs, lm_head, and routed MoE (routing is per token).
+  - Causal: MLA and the DSA indexer read positions ≤ their own, and KDA and its conv1d advance token by token.
+
+  The remap only rewrites the masked rows' own ids and weights. In exact arithmetic, rows 0..m equal the rows of a k' = m forward. The sampling parameters of row j (penalties, bad words, thinking budget, logit bias, grammar) read x_1..x_j only, and they get the real ids.
+- **State after the step.** `num_sampled = a+1 ≤ m+1`, where a is the number of accepted drafts. Masked rows sit at positions after x_a. The state they write falls into three classes.
+  - **Position-addressed, rewritten before it is read.** The next step for the request starts at pos(x_a)+1, at or before the first masked position (a ≤ m). With k drafts its rows cover every masked position. With fewer, its queries stop before the positions it does not cover.
+    - MLA KV. The step writes all its rows' KV before attention reads it, and a query reads only positions at or before its own.
+    - Indexer pool cache. A masked row at a pool boundary (pos % 4 = 3) compresses that pool from garbage. A query scores only complete pools: the builder floor-divides its token seq_len by `compress_ratio` = index_kpool (`indexer.py:1277-1284`). The indexer runs the K-pool update over all of a step's rows, in position order, before it scores (`sparse_attn_indexer_kpool.py:725` before `:788`). So the next step recompresses that pool before any query reads it.
+    - KDA and conv states. The next step starts from spec-state column `num_accepted - 1 = a` (`fused_recurrent.py:114-121`, with `num_accepted = max(num_sampled, 1)` from `mamba_hybrid.py:342`). The conv window offset is also `num_accepted - 1`. Neither starts from a masked row's column.
+    - DFlash2 draft KV. The context K/V precompute also covers masked rows (`dflash/speculator.py:416`), at positions after `last_valid_pos = pos(x_a)` (:522, :531). The next draft query block covers pos(x_a)+1 .. pos(x_a)+k+1 (:554) and writes those slots before its attention reads them. The context it reads ends at `last_valid_pos` (:593).
+  - **Position-aliased: the kpool tail ring. Lossless only with stash suppression.** The indexer keeps each request's open pool in a ring of `index_kpool` = 4 slots addressed by `pos % 4` (`indexer.py:565`; 09b04e5 config). Every verify row stashes its indexer K and gate there, gated only on its tail slot being ≥ 0 (`kpool_compress.py:596, 687-697`). A pool completion reads the other three slots (:609-653).
+    - A row at position c+4 lands on the slot of position c. If c is committed and its pool is still open when the step ends, nothing rewrites that slot before the pool completes in a later step.
+    - The first version of this patch let masked rows stash. On v11's kernel, with history 0..8, an anchor at 9, m = 2 and a = 0, masked rows 12..16 overwrote the slots of committed positions 8 and 9, so pool [8..11] came out different from k' = 2's.
+    - The patch now gives every masked row tail slot -1 (step 2 of the mechanism), and the kernel skips its stash. A masked row at a pool boundary still compresses its pool, reading ring block 0 instead of its own (`kpool_compress.py:587`). That pool entry is in the first class.
+    - So the ring holds exactly the stashes of rows 0..m, as under k' = m.
+  - **Shared with baseline k=7: rejected rows in the ring.** Rows a+1..m are rejected, but they stash the same way under masked k=7 and under k' = m. Baseline k=7 stashes all of rows a+1..7.
+    - When the verify window crosses into the next pool while a committed pool is still open, a rejected row overwrites a committed slot.
+    - This is a pre-existing v11 defect of every draft length k ≥ 2, DFlash2 and MTP alike. `KpoolTailSpec` and the kernel docstring assume completed pools never roll back, and speculative decoding breaks that assumption.
+    - It matters above index_topk = 2048 tokens, where the indexer really ranks pools.
+    - This lane does not fix it. Adaptive verify equals k' = m exactly and overwrites fewer committed slots than baseline k=7.
+    - The root fix belongs in its own lane: a ring of at least kpool - 1 + k + 1 slots addressed `pos % R`, or a re-stash after acceptance. `GLM53_KPOOL_TAIL_FIX` (below) is that fix.
+- **Conclusion.** The step's output distribution equals k' = m speculation from the same drafts, and so does every piece of state a later step reads. For sampling that is lossless by Leviathan et al., and for greedy by construction, up to the ring defect that k' = m and baseline k=7 share.
+
+`test_v13_verify.py` checks this on v11's own kernels under the Triton interpreter.
+
+- **Within a step.** The test runs the real layout kernels, then `prepare()` and `mask_drafts()`, then `rejection_sample`. The k=7 batch has garbage logits on its masked rows, and the reference is the scheduler-truncated k' = m batch.
+  - The emitted tokens are equal in greedy, sampled, block-verification and probabilistic-draft modes. The trials cover both "all m accepted" and "rejected early".
+  - The check is sensitive. Each of these module mutations makes it fail: masking row m, dropping the -1, masking one row late, masking row m on the input side only, and an off-by-one anchor.
+- **Across steps.** The test runs `_kpool_decode_update_batched_kernel` over a history plus four verify steps at c=2, with index_kpool = 4, k = 7 and random m and a.
+  - The tail slots come from `prepare()` and `compute_kpool_tail_slot_mapping` exactly as the patch writes it.
+  - The whole tail ring equals truncated k' = m's, and so does every committed pool entry the steps touch: 0 of 83 differ. Letting masked rows stash, as the first version did, changes 35 of those 83.
+  - The tail-slot tests fail if the mask is a no-op, shifted by one row, applied before v11 fills the slots, or never bound.
+
+**Floating point.** Rows 0..m are not bit-equal to an unmasked k=7 step. Marlin splits its work over SMs by total block count, so fewer distinct experts changes the fp32 reduction grouping. The serve is already not run-to-run deterministic: in the E0 A/A, top-1 disagreed on 1.55% of positions and greedy diverged on 14 of 20 prompts. The GPU check therefore compares against that band.
+
+### Expected gain
+
+The step model:
+
+- Routed-expert bytes grow with the distinct experts per layer, D(n) = 288(1-(1-8/288)^n), at 7.08 MB per expert per layer per rank over 42 layers.
+- Masked rows add no experts, so a c=1 step costs D(m+1) instead of D(8).
+- Two slopes bound the saving per distinct expert per layer: 0.75 ms (the SD-1 fit to the k=5/k=7 receipts) and 1.25 ms (bytes at 237 GB/s).
+- The E0 baselines are A 115.3 ms at 19.79 tok/s, B 120.0 ms at 34.90 tok/s and H 161.1 ms at 13.69 tok/s. Acceptance is 1 + the sum of the verified positions.
+
+| Cell | Drafts verified (m) | Acceptance | Step ms (0.75 / 1.25 slope) | tok/s (0.75 / 1.25 slope) |
+|---|---|---|---|---|
+| A prose c=1 | 7 (today) | 2.263 | 115.3 | 19.8 |
+| A prose c=1 | 3 | 2.154 (−4.8%) | 94.7 / 80.9 | 22.9 (+16%) / 26.8 (+36%) |
+| A prose c=1 | 2 | 1.985 (−12%) | 89.2 / 71.7 | 22.4 (+13%) / 27.9 (+41%) |
+| H prose c=2 | 3 per request | −4.8% (A's curve) | 126.3 / 102.9 | 16.6 (+21%) / 20.4 (+49%) |
+| B code c=1 | 7 | 4.137 | 120.0 | 34.9 |
+| B code c=1 | 3 (fixed cap) | 2.989 (−28%) | 99.4 / 85.6 | 30.4 (−13%) / 35.4 (+1%) |
+
+- **Fixed cap vs confidence rule.** A fixed cap trades code for prose. The confidence rule is meant to give both. If the drafter's running product tracked the E0 curves, tau = 0.1 would verify 3 prose drafts (4 live rows instead of 8) and all 7 code drafts. The unit test checks exactly this arithmetic. The SD-1 oracle line of `tools/census_report.py` bounds any cut rule.
+- **Upper slope.** The 1.25 ms slope multiplies the independent-routing D(n). If real routing is correlated, the real D(8) - D(4) drop is smaller than 27.4. The E1 microbench's dense linears (41.1 ms per step at M=8, BF16, drafter included) plus D(8) expert bytes (58.1 × 42 × 7.08 MB at 237 GB/s ≈ 73 ms) already reach ~114 ms of the 115.3 ms step, before attention, indexer and KDA. Expect the lower end of the range until the census prefix curve and the microbench (step 6 below) settle it.
+- **Overhead.** Per target forward, prefill included: 168 small in-graph kernels, 4 per MoE layer. Per step: about 18 eager kernels (prepare 6, tail-slot mask 1, mask_drafts 3, record 8). Roughly 0.5 ms (estimate), and code steps with m = k pay it for nothing. A precomputed source index and keep mask per step would cut the 168 to 84, and a fused Triton remap to 42, if nsys shows it matters.
+- **Lower bound 0.** Masked rows still run attention, KDA, the shared expert and lm_head at full shape. If the k-dependence of step time is per-token work rather than expert reads (the review's alternative fit, step ≈ 79.5 + 4.75·n ms), the gain is 0.
+
+### Risks
+
+- **Calibration.** The selector softmax covers the top-K candidates only, so it overstates confidence. A tau that is too high also cuts positions that would have been accepted, and code and structured output lose acceptance. Sweep tau, and fall back to `MAX` alone. The walk is greedy, so its probabilities ignore the request temperature. On sampled traffic the rule over-verifies, which costs speed and never correctness.
+- **Rank agreement.** Both ranks must mask the same rows. m comes from rank-identical draft scores, and `run.sh` sets the switch on both ranks. A width mismatch is worse than a draft-token mismatch: the ranks would emit different `num_sampled` and diverge for good. Only the census check `rank0 vs rank1 routing identical` would show it. `TAU=0` with `MAX` alone cannot mismatch.
+- **EPLB.** It is not refused. With redundant experts, `_apply_eplb_mapping` picks a replica by token index, so a masked row can land on a different replica than its anchor and add reads. This costs speed only, and the recipe does not use EP.
+- **c=2 Marlin block spill.** At 8-16 rows Marlin uses 8-row blocks (`marlin_moe.py:333`). An anchor expert shared by both requests can pass 8 rows and be read twice. The expected count is about 8·8/288 ≈ 0.22 experts per layer, at most ~65 MB per step per rank.
+- **Metrics.** Masked drafts count as drafted and rejected, so the acceptance rate drops by construction, and per-position acceptance past m is 0. Judge by acceptance_len and step_ms.
+- **Census.** It records the ids after the remap: masked rows copy the anchor. That is the intended measurement.
+- **GPU runs.** E3b measured tau 0.1 and 0.2 against off, and E4b tau 0.3 against 0.2 (`evidence/e3b-av-tau0.2/notes.txt`, `evidence/e4b-int8-tau0.3/notes.txt`). tau 0.3 is the recipe default. The sections above are the pre-GPU design and estimates.
+
+### GPU validation (exclusive TP=2 slot, one switch per boot)
+
+Follow AGENTS.md and keep receipts in `evidence/iter-adaptive-verify/`, with `trail.tsv` and `decision.tsv` rows. `L` means both ranks' engine logs.
+
+1. **Build and gate.** Build v13 on the head and `docker save glm53-sm121-v13 | ssh spark2 docker load`. Boot with nothing set: `L | grep -c GLM53_ADAPTIVE_VERIFY` must print 0 on both ranks, and the P3.0 checks above must pass.
+2. **Mechanism, fixed cap.** The cap separates the mechanism from calibration.
+   ```bash
+   IMAGE=glm53-sm121-v13 EXTRA_ENV="GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=0 GLM53_ADAPTIVE_VERIFY_MAX=3" ./run.sh
+   ```
+   - Both ranks log `GLM53_ADAPTIVE_VERIFY: tau=0 max=3 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers`.
+   - The boot must reach ready. Graph capture includes the remap.
+3. **Overhead only (A/A).** `TAU=0` with `MAX=k` is refused, so boot with `EXTRA_ENV="GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=1e-9"`.
+   - The pinned drafter has `selector_top_k` = 16, so every selector probability is ≥ 1/16 and the running product is ≥ 16^-7 ≈ 3.7e-9. m = k on every step: every hook runs and nothing is masked.
+   - Run ABAB against off on cells A and B. This separates the mechanism cost (~0.5 ms estimated) from the truncation gain.
+   - Optionally take one nsys trace to confirm the remap kernels sit inside the graph segments.
+4. **Lossless.** Three checks and one limit:
+   - **Greedy identity, allowing for known nondeterminism.** `python3 quality/tier0.py compare --ref nvidia-v11-k7` must PASS. That covers count-200 exact, the thinking-off kwargs cells, and greedy.hazard within 2× the reference's A/A.
+   - **Acceptance-weighted distribution.** Run `python3 bench_decode.py --cells A,B,G`.
+     - Acceptance at the first three draft positions must stay near E0 (A .640 .345 .169, B .817 .657 .515). Step boundaries move with the cap, so a few percent of drift is expected; a collapse is not.
+     - The last four draft positions must be exactly 0.
+     - If masked rows leaked into live logits, acceptance at the first three positions would collapse, and the text would degrade.
+   - **Census.** Run the same setting with `GLM53_EXPERT_CENSUS=/cache/huggingface/glm53-census/$RUN` added to `EXTRA_ENV`, then `tools/census_report.py` (see tools/README.md).
+     - Census positions 4-7 (the draft rows past m = 3) show overlap 1.000, new 0.00 and accept 0.000.
+     - `distinct/layer` at c=1 matches the off-census prefix curve at n=4, not at n=8.
+     - `rank0 vs rank1 routing identical: True`.
+   - **What these cannot see.** No GPU check here tests cross-step state against a clean reference. Count-200 and greedy.hazard stay under index_topk = 2048 tokens, where every pool is selected anyway. Ruler v2 against E0 shares the ring defect of the lossless section. The CPU kernel test is the gate for "identical to k' = m" across steps.
+5. **Step time and acceptance.** One boot per setting, ABAB against off: `MAX=3` with `TAU=0`, then `TAU` ∈ {0.3, 0.2, 0.1, 0.05}.
+   - Per boot, run the ruler v2 fast gate plus the c=2 cell (`python3 bench_decode.py --cells A,B,H`) and Tier 0 (`python3 quality/tier0.py compare --ref nvidia-v11-k7`).
+   - Record acceptance_len, step_ms, tok/s and per-position acceptance for A, B and H.
+   - Keep a setting only if A and H beat noise and B does not regress beyond noise.
+   - step_ms should fall toward the table. Acceptance should fall by at most the share of the truncated positions.
+6. **Optional microbench.** On one Spark, time the image's `fused_marlin_moe` on one nvidia-pack layer at M=8 rows. Draw `topk_ids` to touch D ∈ {8, 16, 24, 32, 48, 58} distinct experts, with 200 graph replays each. The slope in ms per distinct expert, times 42 layers, settles 0.75 against 1.25 ms and so the table's range.
+
+## GLM53_KPOOL_TAIL_FIX: a tail ring sized for the verify window (`patch_v13_kpool_tail.py`)
+
+Under speculative decoding, v11's DSA indexer builds committed pool keys from rejected drafts. On the V2 runner, which is the runner the serve uses, it also builds them from other requests' tokens. The switch below fixes both. After every step, every committed pool and every tail-ring slot a later step can read equals what non-speculative decoding writes. This holds on V2 (SPEC=dflash2 and SPEC=mtp) and on V1, at c=1 and above. The published serve (DFlash2-7) and the MTP-4 rollback are both affected once a context passes index_topk = 2048 tokens.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_KPOOL_TAIL_FIX=1` | off | Give each request's tail ring enough slots for the verify window, and on V2 its own tail block. Write the tail slots in place, and write the prefill seed through the tail view's real strides. Off keeps every v11 address. |
+
+The recipe sets it (`KPOOL_TAIL_FIX=1`).
+
+```bash
+GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_kpool_tail.py   # CPU; torch adds the builder tests, triton the kernel simulation (~3 min)
+```
+
+### The bug: rejected rows overwrite committed slots
+
+- **The ring.** Each of the 11 indexer layers keeps a request's open pool in a tail block of index_kpool = 4 slots. A slot holds one token's raw indexer K and gate, addressed `pos % 4` (`indexer.py:565`; the `KpoolTailSpec` block size is kpool). The K-pool update kernel stashes every row. When the pool's last token arrives, the kernel compresses the pool from the three stashed slots plus the current row and writes the fp8 pool key (`kpool_compress.py:596-697`).
+- **A verify step** runs 1 + k rows at positions P..P+k (k = 7 for DFlash2, 4 for MTP). It stashes all of them in position order, gated only on the tail slot, so row r overwrites the slot of position r − 4.
+  - After rejection sampling, P..P+a is committed. The open pool at P' = P + a + 1 has up to three committed positions, ⌊P'/4⌋·4 .. P'−1.
+  - Rows four positions later overwrote their slots. Those rows are rejected drafts, or the row at the bonus position.
+  - Nothing rewrites those slots before the pool completes in a later step. That step compresses the rejected drafts' K and gate into a committed pool key.
+- **Example.** P = 10, so pool [8..11] is open with 8 and 9 committed. The step runs rows 10..17 and accepts nothing (a = 0, P' = 11). Rows 12, 13 and 14 overwrite the slots of positions 8, 9 and 10, and rows 16 and 17 then overwrite rows 12 and 13. The next step's row 11 completes pool [8..11] from rows 16, 17 and 14, all rejected.
+- **Scope.**
+  - Any k ≥ 2 is affected. k = 1 is safe: for it, the bound below asks for R ≥ kpool, which is v11's ring.
+  - Only pools built during decode are affected. Prefill compresses pools straight from the batch (`_kpool_compress_insert`) and never reads the ring.
+  - Below index_topk = 2048 tokens every pool is selected, so nothing changes. Above it the indexer ranks pools by these keys, so a corrupted pool can drop out of the 512 selected pools, or take another pool's place.
+  - The E0 long-context cells (E at 32k and 128k) ran with the defect.
+- **With adaptive verify.** Masked rows stash nothing, but only where its tail mask runs, which on V2 needs this switch (next section). Its live rejected rows still overwrite committed slots (the "Shared with baseline k=7" bullet above).
+
+### On the served runner: one ring for every request
+
+- **Where the tail slots come from.** The tail builder (`KpoolTailMetadataBuilder.build`, `indexer.py:600-633`) maps each token to `own_block · kpool + pos % kpool` (`compute_kpool_tail_slot_mapping`, `indexer.py:529-566`) only when the attention metadata carries positions. Without positions it keeps the generic slots of `_compute_slot_mappings_kernel`, which are `bt[req][pos // kpool] · kpool + pos % kpool` (`v1/worker/gpu/block_table.py:262`).
+- **The served runner passes none.**
+  - SPEC=dflash2 forces the V2 runner (`config/vllm.py` `_is_dflash2_draft`). GLM-5-Next is also a default V2 architecture (`config/vllm.py:73-78`), so SPEC=mtp runs V2 too. The E0 logs say `Using V2 Model Runner` (`evidence/e0-nvidia-v11/worker.docker.log`).
+  - GLM-5-Next is hybrid, so V2 uses `MambaHybridModelState`. Its `prepare_attn` calls `build_attn_metadata` without `positions` (`mamba_hybrid.py:270-287`), unlike `DefaultModelState` (`default.py:181`). The V2 speculators' draft builds pass none either.
+  - Only V1 passes positions (`gpu_model_runner.py:2505`).
+- **Effect.**
+  - The V2 tail block table is `cdiv(max_model_len, kpool)` wide and zero-filled, and only column 0 is written, because `KpoolTailManager` allocates one block per request.
+  - Every token at pos ≥ kpool of every request therefore maps into block 0, the null block: one ring shared by all running requests.
+  - At c=1 that ring is only misplaced. At c=2 the requests overwrite each other's slots, and each completes pools from the other's K.
+- **The larger ring alone does not fix it.** On V2 slots, 40 of 105 committed pools still differed at c=2 with the first version of this patch (review rerun). Adaptive verify's tail mask lives in `compute_kpool_tail_slot_mapping`, so on V2 it never ran either.
+
+### A third v11 defect in the same ring: the prefill seed writes the wrong bytes
+
+- **What the seed does.** `kpool_seed_tail_cache` copies the last kpool tokens of each prefill chunk into the ring, so that decode can complete the prompt's boundary pool. Its kernel puts tail block b at element `(b·2·kpool + pos % kpool)·128` (`kpool_compress.py:481`), which is the address in a contiguous `[num_blocks, 2, kpool, 128]` tensor.
+- **The real layout is not contiguous.**
+  - The tail co-owns the indexer tensor: its page is padded to the indexer page (`kv_cache_utils.py:1461`).
+  - The runner carves the tail view with the padded page as its block stride (`attn_utils.py:295-316`). That stride is idx_page = 2304/4 · 132 = 76,032 bytes.
+  - The decode kernel addresses the ring through that stride (`TAIL_BLOCK_ELEMS = stride(0)`, `kpool_compress.py:783`). The seed kernel does not.
+- **Where the seed lands.** The seed for tail block b goes to byte b·2048 of each of the 11 indexer tensors.
+  - For b ≤ 36 that is the null block's page.
+  - For larger b it lands in block ⌊b·2048/76032⌋'s page, over 2 KB of the compressed pool keys (or their scales) of whichever request owns that block.
+- **What the boundary pool reads.** The ring keeps what the KV block zeroer left there, which is zeros. So when the prompt length is not a multiple of 4, the boundary pool compresses zeros for its prompt tokens.
+- **Where it bites.** On V1, and on the served V2 path too. Speculation plays no part.
+  - On V2 today the prompt's last kpool tokens map to block 0 (previous section), where the contiguous and the strided address coincide, so the boundary pool reads the right slots.
+  - The prompt's first kpool tokens map to the request's own block, and the token kpool ahead of each maps to block 0. The seed kernel therefore takes them for the request's tail and writes them at the contiguous address: 2 KB at byte b·2048 of each indexer tensor, for every new request.
+  - In the CPU simulation, v11 as served writes 8-36 KB per scenario past block 0, and only the seed writes there. The fix writes none.
+- **Why the fix touches it.** Per-request blocks and a larger ring put every seed where the defect bites. v11's addressing on a 16-slot block would scatter 8 KB per request instead of 2 KB, so the fix has to address the seed correctly.
+
+### The fix
+
+- **Ring size.** `KpoolTailSpec.block_size`, the ring, becomes R = the next power of two ≥ k + kpool − 1. That is 16 for DFlash2-7 and 8 for MTP-4 (and for k = 5). The size comes from `glm53_tail_ring_slots` in `kpool_compress.py`, which `Glm5NextTailCache.get_kv_cache_spec` calls.
+- **Kernels.**
+  - The K-pool update kernel stashes at `pos % RING`, reads a completion's three slots at `pos % RING`, and takes the tail block as `tail_slot // RING`. RING is the tail view's slot count.
+  - The seed kernel uses the same arithmetic and addresses the block through the view's two strides.
+  - With the switch off, RING = kpool and the seed gets v11's contiguous strides, so every address is v11's. The CPU test compares the whole indexer tensor byte for byte.
+- **Tail slots** (`KpoolTailMetadataBuilder` in `indexer.py`). With the switch the builder:
+  - **Maps V2 batches too.** Without positions it derives them on device: token t of request r sits at `seq_lens[r] - (query_start_loc[r + 1] - t)`. That is how V2 computes them (`prepare_pos_seq_lens`, `input_batch.py:331-358`). Each token then lands in `own_block · R + pos % R`.
+  - **Writes the slots in place** into `slot_mapping`, the tail group's row of the persistent `BlockTables.slot_mappings`, and returns that row. v11 returns a clone, which is safe only where the indexer op is an eager break (PIECEWISE), because the op reads the tail slots from the forward context there. The uniform verify batch runs as a FULL graph: the recipe resolves FULL_AND_PIECEWISE, and the GDN and sparse-MLA builders are UNIFORM_BATCH. V2 captures a FULL graph by running the whole forward inside `torch.cuda.graph` (`cudagraph_utils.py:367`), so the indexer op is recorded, and replay reads the metadata addresses of capture time (`model_runner.py:1637`). A clone is gone by then. The persistent row has the same address at capture (`get_dummy_slot_mappings`) and at every step (`compute_slot_mappings`).
+  - **Maps the real tokens only**, the first `query_start_loc_cpu[num_reqs]`, a host value (no sync). CUDA-graph padding past them keeps the slot kernel's -1 and stashes nothing. v11 on V1 maps padding into the null block. The V2 speculators' padding rows can hold stale block ids, because only the target's gather zeroes them.
+  - **Reads the switch** from `kpool_compress.py` when it is built, next to the ring size.
+- **Why R ≥ k + kpool − 1.**
+  - Row r overwrites the slot of position r − R.
+  - A later step reads only the committed positions of the open pool. The lowest of those is ⌊P'/4⌋·4 ≥ P − (kpool − 2), reached when a = 0 and P % 4 = 2. The last row is P + k. So no readable slot is overwritten when P − (kpool − 2) + R > P + k.
+  - A completion inside the step reads the three positions just before it. For any R ≥ kpool those are still the latest writes to their slots.
+  - Rejected rows stash at positions ≥ P'. The next step rewrites those positions in order before any completion reads them.
+  - The CPU test shows the bound is exact: R = k + kpool − 1 is lossless, and one slot less is not.
+- **Why a power of two.** The scheduler block size is the LCM of every KV group's block size, and that includes the tail group (`kv_cache_utils.py:639`). A power of two ≤ 128 divides every block size the kpool indexer accepts (a multiple of index_kpool · 32), so the LCM stays at 2304. `get_kv_cache_spec` asserts that R divides `--block-size`.
+- **Memory.** Nothing is allocated. v11 already pads the tail page to 76,032 bytes. The 16-slot ring uses 8 KB of it (v11 uses 2 KB). KV accounting charges the tail one whole block per request either way, so the KV pool size does not change. The V2 tail block table narrows from `cdiv(max_model_len, 4)` to `cdiv(max_model_len, 16)` columns.
+- **Edited files.** `models/glm5next/nvidia/ops/kpool_compress.py`, `models/glm5next/nvidia/attention.py` and `v1/attention/backends/mla/indexer.py`. No other v13 patch edits the first two. `patch_v13_misc.py` and `patch_v13_verify.py` also edit `indexer.py`, at disjoint anchors. The CPU test checks that the three give the same file in either order.
+
+### Why this design
+
+- **(c) Snapshot and restore the committed pre-step slots: not enough.** Committed rows of the current step are overwritten too. With P = 8 and a = 1, rows 8 and 9 are committed and rows 12 and 13 overwrite them. To restore them after the step you need somewhere to keep them, which is the extra storage (a) adds, plus a restore kernel per layer after acceptance.
+- **(b) Stash the accepted rows after rejection sampling: more machinery.** The rows' K and gate only exist during the forward, one set per layer. So (b) needs a buffer per layer and a hook after acceptance in the speculators. The in-step completions would also have to read the batch instead of the ring.
+- **(a) An enlarged ring: neither.** The ring stays addressed by position, as in v11. Nothing is keyed by step, and nothing runs after acceptance.
+  - It holds for any acceptance pattern, by the bound above.
+  - It works the same in both runners.
+  - It covers prefill chunks: the seed writes the last kpool tokens, and a chunk of ≤ 1 + k tokens runs through the decode kernel.
+  - It covers the MTP layer's own indexer. Its draft prefill reuses the target's attention metadata, so it writes the verify rows' positions: the same pattern. The later single-token passes, when they run the indexer at all (`skip_topk` skips it), write at most k − 1 positions past the bonus token, which stays inside the same bound.
+  - No kernel is added and no shape changes. The slot mapping adds a few small eager ops to the metadata build and no host sync.
+- **Positions derived in the builder**, rather than passed by `MambaHybridModelState.prepare_attn`. The builder then maps every caller that brings no positions. The V2 speculators are such callers: they build the MTP layer's decode-step metadata without positions. With the published checkpoints those steps skip the indexer (`index_share_for_mtp_iteration`), but without that flag their stashes would otherwise go to block 0 while the draft prefill's go to the request's own block. The change also stays in the file that owns the slot mapping.
+- **The persistent row**, rather than a buffer owned by the builder. The row is already the one address that capture and every step share, for the target and for the MTP draft prefill graph, which is captured through the target's builders.
+- **Adaptive verify.** The two switches compose. With this switch the V2 builder runs adaptive verify's tail mask for the first time, so masked rows get tail slot −1 and stash nothing. With both on, k' = m and baseline k = 7 both leave exact state. The CPU test applies every v13 patch in Dockerfile order and simulates the combination.
+
+### Proof: v11's own kernels under the Triton CPU interpreter
+
+`test_v13_kpool_tail.py` builds the simulation from v11's source:
+
+- the K-pool update, pool-compress and seed kernels, and the prefill insert helper;
+- the tail builder and its slot mapping, v11's and patched, each without and with adaptive verify;
+- a shared indexer tensor with the tail view carved exactly as `_reshape_attention_kv_cache` carves it. The padded page holds the requests' pool pages and tail blocks in one buffer.
+
+The tail slots are built as the serve builds them:
+
+- The generic slot kernel fills the tail group's persistent slot-mapping row.
+- The builder then runs on the V2 runner's metadata (no positions) or on V1's (positions).
+- Batches are in the runner's order: decodes first, then prefills.
+- A uniform verify batch runs as a FULL graph, padded by one request. Its kernel reads the persistent row, as a replay does, not the tensor the builder returns.
+
+Each trial runs its prompts, then verify steps with random acceptance (every a in 0..k occurs). A prompt takes the prefill path, or the decode path when it has ≤ 1 + k tokens. In the chunked scenario, request 1's prompt arrives in two chunks next to request 0's verify steps: a prefill-path chunk that ends pool-aligned, as the mamba-align split ends them, then a chunk of either path. The reference is v11 non-speculative decoding with positions on a contiguous tail, where v11's seed is right, running each prompt chunk in a forward of its own. Stale ring contents are random, so reading a slot nobody wrote shows up as a differing pool.
+
+| Scenario (trials × verify steps) | fix on V2 (served): pools differ | fix on V2: readable ring slots differ | fix on V1: pools differ | v11 as served (V2) | v11 on V1, contiguous tail (overwrite only) | v11 non-speculative, real layout (seed only) |
+|---|---|---|---|---|---|---|
+| DFlash2 k=7, c=1 (10 × 5) | 0/66 | 0/13 | 0/66 | 18/66 | 18/66 | 2/66 |
+| DFlash2 k=7, c=2 (10 × 5) | 0/109 | 0/23 | 0/109 | 53/109 | 36/109 | 8/109 |
+| MTP k=4, c=2 (10 × 5) | 0/104 | 0/40 | 0/104 | 53/104 | 22/104 | 11/104 |
+| k=7, c=2 + adaptive verify (10 × 5) | 0/95 | 0/33 | 0/95 | 50/95 | 17/95 | 9/95 |
+| k=5, c=4, the four-way rollback (5 × 5) | 0/102 | 0/27 | 0/102 | 52/102 | 34/102 | 10/102 |
+| k=7, c=2, chunked prompt next to verify (10 × 4) | 0/154 | 0/37 | 0/154 | 41/154 | 30/154 | 8/154 |
+
+- On both runners the fix leaves every readable ring slot equal and writes no byte outside the requests' own blocks. Every tail build (30-70 per run) returns the persistent row itself.
+- v11 as served writes 28-57 KB per scenario into blocks no request owns. The shared ring accounts for the part in block 0. The seed accounts for the 8-36 KB past it.
+- With the switch off, the patched source leaves the whole shared tensor byte-identical to v11 as served.
+- k = 5 at c = 4 has R = 8 = k + kpool − 1, exactly the bound.
+- The test fails under each of these mutations of the fix (k = 7, c = 2, V2, 105 committed pools):
+  - the stash still at `pos % kpool`: 65 pools differ;
+  - completions reading `pos % kpool`: 62 pools differ;
+  - the decode block id taken by kpool: 5 pools and 32 ring slots differ, and 161 KB land in foreign blocks;
+  - the seed with v11's contiguous strides: 5 pools differ;
+  - the seed block id taken by kpool: 5 pools differ, and 34 KB land in foreign blocks;
+  - a ring one slot below the bound: 6 pools differ;
+  - V2 left on the generic slots: 12 pools and 29 ring slots differ, and 72 KB land in foreign blocks;
+  - the slots in a clone: the FULL replay reads the generic row, so the same 12 pools differ, and 0 of 60 builds are in place;
+  - V2 positions off by one request: 5 pools differ;
+  - CUDA-graph padding mapped: 5 KB land in the null block.
+- It also checks:
+  - every anchor occurs once in v11, a rerun is a no-op, and drift refuses (kernels and indexer);
+  - `py_compile` and the Dockerfile chain (misc, fp8, census, verify, this patch) apply and rerun clean, and the three `indexer.py` patches commute;
+  - the ring-size helper;
+  - `get_kv_cache_spec` off gives v11's arguments; on gives 16, 8 or 4 slots, the log line and the block-size assert;
+  - the builder on one mixed batch (verify rows, a mid-prompt chunk, a decode and padding), which needs torch only. Off, it returns what v11's returns on both runners' metadata. On, it writes `own_block · R + pos % R` for the real tokens in place, leaves -1 on the padding, and derives the same positions V1 hands it. With adaptive verify it masks rows on V2.
+
+### Cost
+
+- Graphs: no allocation or launch added. The update kernel does the same loads and stores, taking `% 16` of a constexpr where v11 takes `% 4`. The seed kernel does the same stores, at the right address.
+- Metadata: on V2 the tail build now runs the slot mapping, about 13 small eager torch ops outside the graphs, with no host sync. It runs once per target step. SPEC=mtp also runs it once per draft decode step (k − 1 per step). DFlash2's drafter has no tail layer. The fast gate's ABAB includes this cost.
+- Triton JIT: the patched kernels change their cache keys even with the switch off, so the first v13 boot compiles both kpool kernels once, during warmup and before capture. For boot-aware comparisons, compare warm boots.
+
+### Risks
+
+- **Output changes above 2048 tokens.** Pool keys now match non-speculative decoding, and at c ≥ 2 they no longer mix requests. Long-context greedy text can therefore differ from v11. Judge the change by the quality gates, not by byte equality.
+- **Block size.** R must divide `--block-size`, and the spec asserts it. The 512·R-byte ring must also fit the tail page, which is padded to the indexer page (block_size/4 · 132 bytes). The recipe's 2304 fits R ≤ 148. `--block-size 128` (a 4,224-byte page) cannot hold R = 16, and the boot then stops on the page-size assert in `AttentionSpec.page_size_bytes`.
+- **Both ranks.** The switch changes the tail KV spec, so set it on both ranks, which `run.sh` does. Otherwise the ranks disagree on the tail spec.
+- **The in-place write** assumes that every call hands the builder the tail group's own slot-mapping row. Both runners' target builds and the V2 speculators do. V1's EAGLE proposer builds every draft group from one metadata object, but it cannot host GLM-5-Next's MTP layer: that layer's MLA and tail sit in different KV groups, and its `validate_same_kv_cache_group` asserts they share one (read from the v11 source, not run).
+- **PD connectors** transfer the tail block by its unpadded page, now 8 KB instead of 2 KB. The recipe does not use PD.
+- **Stale docstrings.** v11's docstrings (the seed kernel, `KpoolTailSpec`, `Glm5NextTailCache`, `KpoolTailManager`) and adaptive verify's module docstring still describe a kpool-slot ring addressed `pos % kpool`.
+- **GPU run.** E3a booted it on the E2e settings: needles 3/3 at 8k, 32k and 128k, decode-built pools at the prefill A/A floor, step time within noise (`evidence/e3a-kpool-det/notes.txt`). It is the recipe default.
+
+### GPU validation (exclusive TP=2 slot, one switch per boot)
+
+Follow AGENTS.md. Keep receipts in `evidence/iter-kpool-tail/` with `trail.tsv` and `decision.tsv` rows. `L` means both ranks' engine logs.
+
+1. **Build and gate.** Build v13 on the head and copy it with `docker save glm53-sm121-v13 | ssh spark2 docker load`. Boot with nothing set. `L | grep -c GLM53_KPOOL_TAIL_FIX` must print 0 on both ranks, and the P3.0 checks must pass.
+2. **Boot with the switch.** `IMAGE=glm53-sm121-v13 EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1" ./run.sh`
+   - Both ranks log `GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)`.
+   - The KV pool size (372,877 tokens on the E0 pin) and `free -h` MemAvailable at ready match the off boot.
+3. **Short context, where no pool is ranked.** This must equal off within the A/A band. Check count-200 lossless and the thinking-off smoke, then run `python3 quality/tier0.py compare --ref nvidia-v11-k7`, which must PASS.
+4. **Long context.**
+   - **Needles.** Run `python3 quality/tier0.py compare --ref nvidia-v11-k7 --long`. It covers 8k, 32k and 128k, and each length must find 2 of 3 depths.
+   - **Decode against prefill, on decode-built pools.** This probe targets the fixed state directly.
+     - Use unique-salt fillers of 32k and of 128k tokens. Generate 2,000 greedy tokens with thinking off, `logprobs: true` and `return_token_ids: true`. The V2 rejection sampler returns the target's raw logprobs.
+     - Run it twice: once alone (c = 1), and once as two concurrent streams with different fillers (c = 2). At c = 1 v11's V2 ring is only misplaced; at c = 2 it is shared by both streams, so c = 2 is where the fix changes most.
+     - Send each prompt plus its generated ids to `/v1/completions` with `prompt_logprobs: 0` and `max_tokens: 1`, and with a new `cache_salt`. Require `usage.prompt_tokens_details.cached_tokens == 0`. Otherwise the prefill side reuses cached blocks whose pool keys decode built.
+     - The prefill path compresses pools straight from the batch and never reads the ring. In the off build, though, v11's seed still writes 2 KB per chunk at byte b·2048 of each indexer tensor, and that page can be one of the probe request's own. So the off build's prefill side is not a clean reference. Compare the two builds' |Δ|, not |Δ| against zero.
+     - Per generated token, Δ = decode logprob − prefill logprob. Report the mean and p99 of |Δ| after the first 64 tokens.
+     - Run the same probe at a 1,500-token context, where no pool is ranked, for the numerical floor. Run it with the switch off on the same day.
+     - Expected: with the switch on, |Δ| at 32k and 128k is at the floor at c = 1 and at c = 2. With it off, it may sit above, most likely at c = 2.
+   - **FULL graphs against eager.** Boot again with the switch and `ENFORCE_EAGER=1`, and repeat the c = 2 probe at 32k. |Δ| must sit at the same floor as in the default FULL_AND_PIECEWISE boot. If the tail slots reached a FULL graph at a stale address, only the graph boot would sit above the floor.
+   - **Long-context speed.** Run `python3 bench_decode.py --cells E` and compare acceptance and step_ms with E0 (32k: 2.327 at 111.5 ms; 128k: 2.822 at 112.7 ms).
+5. **Speed.** Run the ruler v2 fast gate, `python3 bench_decode.py --cells A,B,H`, ABAB against off. step_ms must stay within noise (E0: A 115.3 ms, B 120.0 ms, H 161.1 ms). This includes the tail build's eager ops.
+6. **Keep or revert.** Keep the switch only if 3 and 5 pass and 4 is no worse than off. If it is kept, record a new Tier 0 reference with it on (`python3 quality/tier0.py record --name nvidia-v13-kpooltail`), so later lanes compare against the fixed state.
+7. **With adaptive verify.** Boot both switches on the setting its sweep chose and repeat 3 to 5. This is the first boot in which adaptive verify's tail mask runs on V2.
+8. **Optional, MTP rollback.** Boot `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp` with the switch. It must log `8 slots (index_kpool=4, k=4)`, and count-200 must stay lossless. MTP acceptance at c = 2 should not drop against off: the MTP layer's own ring is now per request as well.
+
+## Weight-only Marlin for the BF16 linears: FP8, NVFP4, INT8 and INT4 (`patch_v13_fp8.py`)
+
+The nvidia pack keeps every non-MoE linear in BF16, and so does the DFlash2 drafter. At M = 8 these GEMMs cost 41.1 ms per rank of a ~115 ms verify step (`evidence/e1-microbench/table.txt`). The patch stores selected groups in a smaller weight-only format and runs them through vLLM's Marlin kernels with BF16 activations.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_FP8_W8A16=<groups>` | unset | FP8 e4m3, one BF16 scale per output channel, Marlin FP8 GEMM |
+| `GLM53_NVFP4_W4A16=<groups>` | unset | NVFP4: E2M1 values, an e4m3 scale per 16 elements and an fp32 global scale, Marlin NVFP4 GEMM |
+| `GLM53_INT8_W8A16=<groups>` | unset | symmetric INT8 (`uint8b128`), one BF16 scale per group along K, GPTQ-Marlin GEMM |
+| `GLM53_INT4_W4A16=<groups>` | unset | symmetric INT4 (`uint4b8`), per-group BF16 scale chosen by clip search, GPTQ-Marlin GEMM |
+| `GLM53_INT_GROUP_SIZE=64\|128` | 128 | INT group size along K. Any other value fails the boot. |
+
+- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. The recipe sets `GLM53_NVFP4_W4A16=draft` from `DRAFT_WEIGHTS=nvfp4` and `GLM53_INT8_W8A16` from `TARGET_WEIGHT_GROUPS_INT8` (default `shared,mla,kda_o,kda_in,lm_head`). `GLM53_FP8_W8A16`, `GLM53_INT4_W4A16` and `GLM53_INT_GROUP_SIZE` go through `EXTRA_ENV`, which `run.sh` forwards to both ranks.
+- **Off.** With all four group variables unset, `process_weights_after_loading` and the compile-cache key are exactly v11's. When set, the variables and `GLM53_INT_GROUP_SIZE` join the compile-cache key, because the drafter is `torch.compile`d.
+- **Images built before this change** carry the FP8 and NVFP4 modes only. Rebuild v13 for INT8, INT4 and the memory fix below.
+
+```bash
+GLM53_V11_SRC=/path/to/v11src python3 -m unittest docker/test_v13_fp8.py -v   # CPU; torch adds the quantizer tests
+python3 tools/bench_fp8_marlin.py --report-bytes                                # CPU: bytes per group and format
+```
+
+### Groups
+
+Weight bytes are MiB per rank per verify step, on Marlin's padded shapes (`--report-bytes`).
+
+| Group | Layers (per rank, TP = 2, N x K) | GEMMs per step | BF16 | FP8 | NVFP4 | INT8 g128 | INT4 g128 | E1 ms at M = 8: BF16 / FP8 / NVFP4 |
+|---|---|---|---|---|---|---|---|---|
+| `kda_in` | KDA `in_proj_qkvbfg_a` 12576 x 4096 (merged q, k, v, b, f_a, g_a) | 34 | 3340.5 | 1675.3 | 941.9 | 1700.7 | 863.4 | 15.41 / 7.78 / 4.68 |
+| `kda_o` | KDA `o_proj` 4096 x 4096 | 34 | 1088.0 | 544.3 | 306.0 | 552.5 | 280.5 | 5.09 / 2.58 / 1.54 |
+| `mla` | MLA `q_b_proj` 8192 x 1536, `o_proj` 4096 x 8192 | 22 | 968.0 | 484.3 | 272.3 | 491.6 | 249.6 | 4.54 / 2.29 / 1.33 |
+| `shared` | shared experts `gate_up_proj` 2048 x 4096, `down_proj` 4096 x 1024 | 84 | 1008.0 | 504.5 | 283.5 | 511.9 | 259.9 | 5.00 / 2.61 / 1.66 |
+| `lm_head` | target `ParallelLMHead` 77440 x 4096, read twice (DFlash2 shares it) | 2 | 1210.0 | 605.3 | 340.3 | 614.5 | 312.0 | 5.54 / 2.78 / 1.56 |
+| `draft` | every BF16 linear of the drafter (7 shapes, 32 layers) | 32 | 1162.0 | 581.3 | 326.8 | 590.1 | 299.6 | 5.53 / 2.77 / 1.65 |
+| all | | | 9.203 GB | 4.608 GB | 2.591 GB | 4.678 GB | 2.375 GB | 41.11 / 20.81 / 12.43 |
+
+- The indexer, router gate, mHC, embeddings, `kv_b` (absorbed into the MLA BMMs), `fused_qkv_a`, KDA `f_b`/`g_b`/conv and the vision tower stay BF16.
+- A selected layer stays as it was, with one warning line, if it is not a plain bias-free 2-D BF16 linear, if NVFP4 is asked and K is not a multiple of 16, or if INT is asked and K is not a multiple of the group size.
+- At TP = 2 every per-rank K (1024 to 20480) is a multiple of 128. No layer falls back, row-parallel shards split on group boundaries, and Marlin never pads K. Only `kda_in` pads N (12576 to 12608), as FP8 and NVFP4 already do (`IntShapeTest`, `--report-bytes`).
+
+### INT8 and INT4 (GPTQ-Marlin)
+
+- **Quantizer.** Each group of 64 or 128 elements along K of the per-rank shard gets the scale `ratio * amax / qmax`, rounded to BF16, where qmax is 127 or 7. INT8 uses ratio 1.0. INT4 tries 1.0, 0.95, 0.9 and 0.85 and keeps the lowest squared error per group, clamping to [-8, 7]. Values are stored as q + 128 or q + 8 in GPTQ layout: int32 rows of K * bits / 32, packed along K (the same bits as vLLM's `pack_rows`).
+- **Kernel path.** The layer then goes through `MarlinLinearKernel`'s own steps: `marlin_padded_nk`, `marlin_pad_qweight`, `gptq_marlin_repack` with an empty perm, `marlin_pad_scales`, `marlin_permute_scales`, and `apply_gptq_marlin_linear` with empty zero points and `g_idx`, and `is_k_full=True`. `test_marlin_gptq_api_matches` pins these v11 signatures and call sites.
+- **Grouped scales are applied in BF16.** With grouped scales, Marlin multiplies the dequantized weight by its scale in BF16 before the MMA. That rounding adds about 0.0004 to INT8's relative error (0.0067 to 0.0071). The bench's layout check compares against exactly that BF16 product.
+- **Capture and compile.** `apply` makes the same calls as a GPTQ checkpoint served through `MarlinLinearKernel`. It has no host sync, and it allocates only through the caching allocator.
+
+### Reconstruction error on the checkpoint (CPU)
+
+Relative Frobenius error `||W_hat - W|| / ||W||`, averaged over 512 rows of one to three tensors per group of `09b04e5` and drafter `7d74cdd` (`evidence/e3-int-lane-cpu/weight_error.txt`):
+
+| Group | FP8 per-channel | NVFP4 | INT8 g128 | INT8 g128, BF16 product | INT8 g64 | INT4 g128, amax | INT4 g128, clip search | INT4 g64, clip search |
+|---|---|---|---|---|---|---|---|---|
+| `kda_in` | 0.0277 | 0.0858 | 0.0067 | 0.0071 | 0.0061 | 0.1201 | 0.1047 | 0.0971 |
+| `kda_o` | 0.0261 | 0.0857 | 0.0068 | 0.0072 | 0.0062 | 0.1227 | 0.1072 | 0.0990 |
+| `mla` | 0.0253 | 0.0835 | 0.0070 | 0.0072 | 0.0064 | 0.1278 | 0.1106 | 0.1019 |
+| `shared` | 0.0250 | 0.0839 | 0.0067 | 0.0069 | 0.0062 | 0.1228 | 0.1061 | 0.0983 |
+| `lm_head` | 0.0264 | 0.0860 | 0.0067 | 0.0069 | 0.0061 | 0.1207 | 0.1065 | 0.0982 |
+| `draft` | 0.0264 | 0.0860 | 0.0065 | 0.0067 | 0.0060 | 0.1185 | 0.1046 | 0.0971 |
+
+- **INT8 g128 has 3.6-4.1x less weight error than FP8** for 1.5% more bytes (4.678 against 4.608 GB per rank per step). FP8's 3 mantissa bits give about 2.5% whatever the scale; INT8 with a scale per 128 elements has a step of amax/127.
+- **INT4 is not a lower-error NVFP4.** Round-to-nearest INT4 with 16 levels per 128 elements lands at 0.10-0.11 even with the clip search, and at 0.097-0.102 with g64, against NVFP4's 0.083-0.086. Its 8% byte saving over NVFP4 does not buy quality. Beating NVFP4 at 4 bits needs error-compensating quantization (GPTQ or AWQ with calibration data), which this patch does not do.
+- **Output error.** On Gaussian activations, the relative output error equals the weight error to within 2% for every format, as expected for isotropic inputs. Real activations have outlier channels, so Tier 0 is the judge.
+
+### What the serves showed (E2, 2026-09-27)
+
+| Boot | Groups | Step A ms | Prose tok/s A | Tier 0 KL top-20 | top-1 | dNLL | Verdict |
+|---|---|---|---|---|---|---|---|
+| E0 (speed) and E1a (Tier 0 cross-boot A/A), BF16 | none | 115.3 | 19.79 / 19.66 | 5.864e-3 | 0.9833 | -0.0001 | reference |
+| E2a FP8 | all six | 93.1 | 23.84 / 24.54 (+22.6%) | 1.103e-2 | 0.9765 | +0.0020 | Tier 0 FAIL |
+| E2b NVFP4 | all six | 84.5 | 26.33 / 26.82 (+34.7%) | 3.715e-2 | 0.9562 | +0.0194 | Tier 0 FAIL |
+| E2c FP8 | draft, shared, mla, kda_o | 103.6 | 21.10 / 21.56 (+8.1%) | 9.659e-3 | 0.9783 | +0.0016 | Tier 0 FAIL |
+| E2d FP8 | draft, kda_in | 104.3 | 21.76 / 22.14 (+11.3%) | 8.263e-3 | 0.9796 | +0.0004 | Tier 0 FAIL |
+| E2e NVFP4 | draft | 111.3 | 20.02 / 20.35 (+2.3%) | 6.050e-3 | 0.9827 | -0.0001 | Tier 0 pass (judged), Tier 1 PASS |
+
+- Tier 0 `--stage fp8` allows the reference A/A's KL + 1e-3 and top-1 - 0.5 points. Against the cross-boot A/A that is KL <= 6.864e-3 and top-1 >= 0.97826.
+- The byte model held: every step_ms moved by the E1 microbench's saving within about 2 ms. The drafter cannot change served output, so only target groups move Tier 0.
+- **Expectation for INT8.** Added KL grew as about error^1.5 between E2a and E2b (3.3x the error gave 6x the KL). INT8's kernel-side error is 0.27x FP8's, which scales E2a's +5.2e-3 to about +0.7e-3 (+0.4e-3 if quadratic, +1.4e-3 if linear). That is inside the 1e-3 margin, but not by much more than the ~1e-3 boot-to-boot noise (E2c + E2d added more than E2a). The speed should match E2a within 1-2%: 4.678 against 4.608 GB, if GPTQ-Marlin reaches FP8 Marlin's GB/s. The bench checks that before any boot.
+- **Measured (E4a).** INT8 g128 on the five target groups: step A -17 ms against E3b (the microbench predicted -17.2), KL top-20 6.761e-3 (+0.71e-3 over E2e, inside the 6.864e-3 limit), top-1 0.9816, and Tier 1 863 vs 857 of 1010 (`evidence/e4a-int8/notes.txt`). It is the recipe default.
+
+### Memory after the swap
+
+E2 logged `torch reserved 88.96 -> 87.44 GiB` for 3.42 GiB of freed target weights, and similar shortfalls in every boot (E2b 2.56 of 4.66, E2c 0.21 of 1.53, E2d 0.29 of 1.63 GiB). MemAvailable gained correspondingly less than the weights shrank.
+
+- **Cause.** `run.sh` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, so the allocator maps physical memory in 20 MiB pages, and `empty_cache` can only unmap pages that are entirely free. vLLM runs `load_model` under `max_split_size_mb:20` (`gpu_worker.py`, `_scoped_allocator_max_split`). Under that rule a request below 20 MiB may not take a free block of 20 MiB or more, and a larger request may not take a block 20 MiB larger than itself. The freed BF16 blocks are exactly such oversized blocks for the packed tensors. So each packed weight landed on freshly mapped pages among the swap's fp32 transients, and once those were unmapped it kept two partly used pages.
+- **Fix.** After each layer's swap, `_compact` calls `empty_cache` and then copies the layer's new weight and scale tensors. With the cache empty, the only mapped free memory is page remainders. A copy either fills one of them, or starts right after the last live block at the lowest free address, so consecutive layers share pages. The cost is one packed tensor of peak memory, and one device copy plus one `empty_cache` per layer (about 200 per boot).
+- **Model.** `evidence/e3-int-lane-cpu/allocsim.py` replays the swap on a model of the allocator and the per-rank layout. It reproduces the four E2 measurements to within about 0.3 GiB. The table shows its predictions for the release (`allocsim.txt`):
+
+| Case | Before (measured) | Before (model) | With `_compact` (model) |
+|---|---|---|---|
+| FP8, all target groups (E2a) | 1.52 of 3.42 GiB | 1.64 | 2.27 |
+| NVFP4, all target groups (E2b) | 2.56 of 4.66 GiB | 2.85 | 3.73 |
+| FP8 kda_o, mla, shared (E2c) | 0.21 of 1.53 GiB | -0.06 | 0.39 |
+| FP8 kda_in (E2d) | 0.29 of 1.63 GiB | 0.33 | 0.96 |
+| INT8, all target groups | | 1.78 | 2.27 |
+
+  The model also tried other orders: `empty_cache` before the repack, dropping the BF16 weight after it, and `empty_cache` before the drop. Each was better than the E2 order and worse than `_compact`. In the model, the remaining ~1.1 GiB (FP8 or INT8 on all groups) sits in pages that freed blocks share with live neighbours (MoE experts, router, mHC). Only allocating the BF16 linears apart from their neighbours at model init would release those pages.
+
+### GPU validation (exclusive TP = 2 slot, one knob per boot)
+
+1. **Build and ship** v13 from this branch on the head, then `docker save glm53-sm121-v13 | ssh spark2 docker load`, so both nodes carry the same image ID.
+2. **Microbench**, with no serve up:
+
+   ```bash
+   docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \
+     -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
+     glm53-sm121-v13 tools/bench_fp8_marlin.py --json evidence/<run>/bench.json
+   ```
+
+   - PASS needs INT8 at most 1.1x the FP8 time at M = 8 and 16 for every group, and every INT output within 0.02 of a BF16 GEMM on its own dequantized weights.
+   - A kernel error at the first INT GEMM means this vLLM build has no BF16 x `uint8b128` Marlin instantiation for sm_121. Stop there.
+   - Expected: INT8 about 20.8-21.2 ms per step for all groups at M = 8 (FP8 20.81), and INT4 about 11.4-12.4 ms (NVFP4 12.43).
+3. **Boot INT8 on all six groups:**
+
+   ```bash
+   bash evidence/e1-tools/boot.sh evidence/<run> IMAGE=glm53-sm121-v13 WARM_SHARDS=0 \
+     EXTRA_ENV='MAX_JOBS=2 GLM53_INT8_W8A16=draft,shared,mla,kda_o,kda_in,lm_head'
+   ```
+
+   - Both ranks log `GLM53_INT8_W8A16 (group 128): Glm5NextForConditionalGeneration kda_in[int8]=34 layers 3340.5->1700.7 MiB, ...` with no `left ... as they were` warning. They also log the drafter line `draft[int8]=32 layers 1162.0->590.1 MiB`.
+   - `torch reserved X -> Y GiB` should fall by about 2.2 GiB on the target line (E2a: 1.52). `Model loading took` should come in about 3.9 GiB under E1a's 90.36 GiB.
+   - Log `free -h` at ready against E1a and E2a.
+   - Count-200 must stay lossless, and the thinking-off smoke must pass.
+4. **Speed.** Run `bash evidence/e2-tools/post_ready.sh evidence/<run> fp8`. It runs the ruler v2 fast gate twice, cell T, and Tier 0 `compare --ref nvidia-v11-k7 --stage fp8`. Expect step A near E2a's 93.1 ms. Then run `python3 kit/compare.py --a <E0 bench.json files> --b <this boot's>` for the verdict.
+5. **Tier 0, judged against the cross-boot A/A.** The tool's `--stage fp8` KL limit is the reference boot's same-boot rerun plus 1e-3, which is 6.137e-3. That leaves 0.27e-3 above a clean cross-boot run (E1a 5.864e-3), so judge against the cross-boot A/A, as E2 did. Pass means all of these hold:
+   - KL top-20 <= 6.864e-3.
+   - top-1 >= 0.97826.
+   - |dNLL| <= 0.005.
+   - greedy hazard <= 0.0192.
+   - count, kwargs, tools, vision and needle pass.
+
+   The utf8 squares and the video probe also fail on the unmodified reference boot (E2e), so rerun them with `evidence/e2-tools/rerun_flaky.sh` before counting them.
+6. **Tier 1**, only if Tier 0 passes: `bash evidence/e2-tools/tier1.sh evidence/<run> <name>`. `compare_tier1` against `nvidia-v11-k7` must say VERDICT PASS.
+7. **If Tier 0 fails on KL,** drop the output-side groups first. With FP8, `kda_o`, `mla` and `shared` carried about 3.8e-3 of E2a's 5.2e-3, and `kda_in` plus `lm_head` about 1.4e-3. So the next boot is `GLM53_INT8_W8A16=draft,kda_in,lm_head`. Then try `GLM53_INT_GROUP_SIZE=64`, which cuts the error by another 9% for 1.5% more bytes.
+8. **Memory fix alone.** Any FP8 or NVFP4 boot on the rebuilt image checks `_compact`: E2a's settings should log a target drop of about 2.2 GiB instead of 1.52.
+9. **INT4.** Worth a boot only for `draft`, which cannot change served output. It saves 27 MiB per step over NVFP4 (about 0.1 ms), which is below boot noise. Do not use it for target groups.
+10. **Record** each boot in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`, as E2 did.
+
+### Large-M prefill: dequantize to BF16, then cuBLAS (`GLM53_WQ_DEQUANT_MIN_M`)
+
+E5 measured the recipe defaults (INT8 target groups, NVFP4 drafter) on two boots, F1 and F2 (`evidence/e5-final/notes.txt`). Decode gained 23-51% over E0, but cell E prefill fell to 1164-1199 tok/s at 32k / 128k (three panels), against E0's 1331 / 1329 and E3a's 1355 / 1353 (BF16 target, same drafter). That is -11% against E0 and -12% against E3a. TTFT at 128k went from 98.4 s (E0) to 109.7 s. The serve prefills in 1152-token chunks, not the 2048 of `max_num_batched_tokens`: the F3 profile shows `execute_context_1(1152)`, and a 12,787-token prompt ran as 10 x 1152 + 1267.
+
+**Cause, measured.** The E5 microbench (`evidence/e5-final/microbench-largem/table.txt`: one rank, `glm53-sm121-v13` c9729cc0738f, checkpoint weights, CUDA-graph replay) times every target GEMM at prefill M. INT8 Marlin falls behind cuBLAS BF16 as M grows. The byte arithmetic (not a kernel trace) says it re-streams a weight that does not fit in L2 once per 64-row block. Per 1152-row chunk, count-weighted, BF16 costs 90.05 ms and INT8 210.54 ms: +120.5 ms, of which `kda_in` is +112.4 ms (93%). The LM head is faster in INT8 at the M it actually sees (-3.7 ms: logits at M = 1, the drafter's query block at M = 8). Net: +101.3 us per prefill token predicted, against +105 measured vs E3a and +92 vs E0. The Marlin GEMMs account for the whole loss.
+
+| Group (layers) | Per-rank N x K | ms per GEMM at M = 1152, BF16 / INT8 | INT8 / BF16 | Marlin gap per chunk | Dequant pass per chunk (est.) | Chunk if wrapped |
+|---|---|---|---|---|---|---|
+| `kda_in` (34) | 12576 x 4096 | 1.273 / 4.579 | 3.60x | +112.4 ms | 23.0 ms | **-89.4 ms** |
+| `kda_o` (34) | 4096 x 4096 | 0.458 / 0.555 | 1.21x | +3.3 ms | 7.5 ms | +4.2 ms |
+| `mla` (11) | `q_b` 8192 x 1536, `o` 4096 x 8192 | 0.361 / 0.490, 1.132 / 1.088 | 1.36x, 0.96x | +0.9 ms | 6.7 ms | +5.7 ms |
+| `shared` (42) | `gate_up` 2048 x 4096, `down` 4096 x 1024 | 0.221 / 0.276, 0.131 / 0.167 | 1.25x, 1.27x | +3.8 ms | 6.9 ms | +3.1 ms |
+| all four | | chunk 90.05 / 210.54 | 2.34x | +120.5 ms | 44.0 ms | -76.4 ms |
+
+- **Dequant pass.** The kernel reads the packed weight and writes BF16: 1 + 2/128 + 2 = 3.02 B/param for INT8 g128. `F.linear` then reads the BF16 workspace, which is the BF16 GEMM's own traffic, so the path costs BF16 plus the pass. For `kda_in` the estimate was 0.68 ms per GEMM at 230 GB/s, against a 3.31 ms Marlin gap at M = 1152. E6 measured 0.84 ms (about 184 GB/s), 25% over the estimate.
+- **Only `kda_in` wins.** Every other group's Marlin gap is smaller than its dequant pass at M = 1152. At 2048 they still lose, by 0.1-1.1 ms per chunk. Wrapping all four recovers 76.4 ms per chunk, while `kda_in` alone recovers 89.4. That is why `GLM53_WQ_DEQUANT_GROUPS` defaults to `kda_in`. The E6 microbench confirms it at M = 1152: dequant + cuBLAS beats Marlin on `kda_in` by 2.48 ms per GEMM, and loses 0.03-0.58 ms per GEMM on `kda_o`, `mla` and `shared`.
+- **Expected gain.** `kda_in` alone saves 89.4 ms per 1152-token chunk, which is 77.6 us per prefill token. At 32k, E5's 842.7 us/token (1187 tok/s) would become about 765 us/token, or about 1305 tok/s (E0 1331), and TTFT at 128k would fall to about 100 s. At 205 GB/s the saving is 86.6 ms per chunk. E6 measured 34 x 2.48 = 84.3 ms per chunk, or 73 us per prefill token, and a 7k prompt prefilled 9.5% faster, as predicted. At 32k and 128k most of it did not show (Result below).
+- **Threshold.** The dequant pass costs the same at every M, while the Marlin gap grows with M. For `kda_in` the gap per GEMM is 0.43 ms at M = 256 (below the 0.68 ms pass, so the path loses), 2.81 ms at 1024 and 3.31 ms at 1152. The break-even is estimated at M ≈ 400-600. A straight line between the 256 and 1024 points crosses at about 330, but the gap is not measured in between. Full chunks are 1152 rows, so any threshold from the break-even up to 1152 recovers the full-chunk saving. The threshold only decides partial chunks and prompts shorter than one chunk. E6 booted 512 without sweeping the break-even (its microbench ran M = 1152 and 2048). **The default stays `0`:** 512 missed the keep rule (Result below).
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GLM53_WQ_DEQUANT_MIN_M=<rows>` | unset | A wrapped layer whose input has at least `<rows>` rows dequantizes its weight into a shared BF16 workspace and runs `F.linear` (cuBLAS) instead of the Marlin GEMM. Smaller inputs keep Marlin. Anything but a positive integer fails the boot. |
+| `GLM53_WQ_DEQUANT_GROUPS=<groups>` | `kda_in` | Comma list of the groups whose swapped layers are wrapped (names as in the group variables). Other swapped layers keep Marlin at every M. The LM head is never wrapped, even when listed. An unknown name fails the boot with `ValueError`. Read only when `GLM53_WQ_DEQUANT_MIN_M` is set. |
+
+- **Setting it.** Use the recipe knob `PREFILL_DEQUANT_MIN_M=<rows>` (default `0`, off). `run.sh` turns it into `GLM53_WQ_DEQUANT_MIN_M=<rows>` and `GLM53_WQ_DEQUANT_GROUPS=kda_in` on both ranks, forwards it to the worker, refuses anything but `0` or an integer of at least 64 (smaller values would reach the captured decode graphs), and refuses both variables in `EXTRA_ENV`. There is no groups knob, because the table above shows no other group winning. The path only acts on layers that a group variable swapped (`kda_in` is in the default `TARGET_WEIGHT_GROUPS_INT8`). It needs v13 rebuilt from this branch, because older v13 images ignore the groups variable and wrap every swapped layer.
+- **Off.** Unset or empty wraps nothing, allocates nothing, compiles no kernel and does not read `GLM53_WQ_DEQUANT_GROUPS`. The serve runs exactly the F1 kernels.
+- **Which layers.** The swapped layers of the listed groups, never the LM head, whose input is the sampled rows only (at most `MAX_NUM_SEQS` x 8 = 16 at the defaults). In a prefill chunk, `kda_in`, `kda_o`, `mla`, `shared` and the drafter's `fc` run at full M. `fc` projects the context in `combine_hidden_states`, outside the drafter's graph. The drafter's other layers only ever see its query tokens (16 or fewer). Listing `draft` wraps all 32 drafter layers, but only `fc` ever reaches the threshold.
+- **Dequant.** One Triton kernel reads the Marlin tensors in place and writes the (N, K) BF16 weight. It inverts `gptq_marlin_repack`'s 1024-element permutation (`get_weight_perm`) and `marlin_permute_scales`, plus the NVFP4 scale swap and the S0E5M3 code. No second copy of any packed weight is kept.
+- **Exact.** Each element is the fp32 q x scale rounded once to BF16 (nearest even):
+  - INT8 / INT4: bit-equal to `dequantize_int`, and to the BF16 product that Marlin forms in registers, because grouped scales are applied in BF16 before the MMA.
+  - FP8: equal in value to `dequantize_per_channel`. The 2^120 that `fp8_fused_exponent_bias_into_scales` folds into Marlin's scale cancels exactly.
+  - NVFP4: equal in value to `dequantize_nvfp4`, in its fp32 order e2m1 x (block scale x global scale). Marlin applies the global scale to its accumulator instead, so NVFP4 outputs differ from Marlin by rounding only.
+  - Sign of zero: with the images' Triton, on the CPU interpreter and on the GPU, `tl.where(q >= 128, -w, w)` and its NVFP4 twin write +0 for the -0 codes (FP8 0x80, E2M1 nibble 8), where the references keep -0. E6 found 0 value or NaN differences, and INT8 / INT4 are bit-equal (3.55e9 `kda_in` INT8 elements on both ranks, 0 mismatches). -0 and +0 give the same products, so `DequantTest` compares FP8 and NVFP4 by value and INT8 / INT4 bit for bit.
+  - Outputs differ from Marlin's by accumulation order only, like any other GEMM.
+- **TP and layer semantics.** `apply` returns the same per-rank (M, N) shard as Marlin, and the layer's own forward still does the all-reduce (row-parallel) or keeps the shard (column-parallel). `bias` goes to `F.linear` (swapped layers have none).
+- **Workspace.** One BF16 tensor per process, allocated at swap time and sized for the largest *wrapped* layer. Swapped layers that are not wrapped do not count. At the default groups (`kda_in`) that is `kda_in` 12576 x 4096 = 98.2 MiB per rank. The drafter wraps nothing then, so it logs no dequant line and leaves the workspace alone. Only with `draft` listed does the drafter's swap free that workspace and allocate one for `fc` 4096 x 20480 (160.0 MiB). Each rank logs `GLM53_WQ_DEQUANT_MIN_M=<m> (groups <groups>): <model> <n> layers dequantize at M >= <m>; shared BF16 workspace <x> MiB`, and `torch reserved` includes it. E6: `torch reserved` rose 0.10 GiB on both ranks. MemAvailable on spark1 moves by GiB between boots, so the workspace cannot be read there.
+- **Reuse is stream-ordered.** Layers use the workspace one after another. The one swapped layer that runs on a second stream is the shared expert, on the MoE aux stream at 256 rows or fewer (`VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD`). The aux stream waits for the main stream before it starts, and the main stream waits for it right after the launch. No other swapped layer runs in between.
+
+**CUDA graphs and compile (v11 facts; `test_v11_runs_large_m_eagerly` pins them).**
+
+- `config/vllm.py` auto-enables `VLLM_USE_BREAKABLE_CUDAGRAPH=1` for `Glm5Next*` (`run.sh` leaves it unset), and then sets the compilation mode to NONE. So neither the target nor the drafter is `torch.compile`d, and `gpu_model_runner` wraps both in `BreakableCUDAGraphWrapper`.
+- `run.sh` captures 1, 2, 4, 8 and 16 tokens. `CudagraphDispatcher.dispatch` returns NONE for more than 16 tokens, and the wrapper then runs the model eagerly. Every prefill chunk above 16 tokens, mixed with decode or not, is eager, and the branch sees its real M.
+- 16 tokens or fewer, mixed batches included, pad to the next capture size and replay: the FULL key if one exists, else the relaxed PIECEWISE key. Breakable capture builds the same artifact for both. The linears see the padded size at capture and at replay, so the branch is constant per graph. With a threshold above 16, captured steps always run Marlin. A threshold of 16 or less would capture the dequant path into decode graphs, which is correct but slow.
+- With `VLLM_USE_BREAKABLE_CUDAGRAPH=0` the drafter is compiled. The wrapper takes the Marlin path whenever `torch.compiler.is_compiling()`, so a compiled graph never branches on a symbolic row count, and neither variable joins the compile-cache key.
+
+**Overheads.** At the default groups each prefill chunk adds 34 Triton launches, one per `kda_in` layer. An eager prefill chunk is GPU-bound at about 1 s (the F3 profile's chunk took 1002 ms), so the launches overlap the GPU work.
+
+**GPU validation (exclusive TP = 2 slot).**
+
+1. Build v13 from this branch on the head, then `docker save glm53-sm121-v13 | ssh spark2 docker load`.
+2. Microbench, with no serve up:
+
+   ```bash
+   docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \
+     -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
+     glm53-sm121-v13 tools/bench_fp8_marlin.py --dequant \
+     --groups kda_in,kda_o,mla,shared,draft --m 256,384,512,640,768,1024,1152 \
+     --json evidence/<run>/dq-bench.json
+   ```
+
+   - PASS needs every dequantized weight to equal its reference dequant in BF16. This is the layout check against the real `gptq_marlin_repack`, which the CPU tests can only check against vLLM's Python reference. A Triton compile error here means the kernel does not build on sm_121, so stop there.
+   - Read the per-GEMM rows. For `kda_in`, `int8 dq` should be about 675 us (230 GB/s). The smallest M at which `int8 dq+linear` beats the `int8` Marlin time is the break-even. Set the threshold at or just above it: 512 if the break-even is 512 or lower.
+   - The other groups' rows should show `dq+linear` slower than Marlin at 1152, as in the table above. A group that wins clearly there is a case for adding it to `GLM53_WQ_DEQUANT_GROUPS`, which would then need a knob.
+   - The `one prefill chunk per rank` line sums every benched group, so it describes the all-groups wrapper. For the default wrapper, rerun with `--groups kda_in`. Its `int8:` `saves` at M = 1152 should be about 89 ms. Boot only if it is clearly positive.
+3. Boot the recipe defaults with `PREFILL_DEQUANT_MIN_M=<M>` (512 unless step 2 moves it). `VALIDATE_ONLY=1` shows `GLM53_WQ_DEQUANT_MIN_M=<M> GLM53_WQ_DEQUANT_GROUPS=kda_in` in `glm53_env`. Each rank logs one dequant line, `GLM53_WQ_DEQUANT_MIN_M=<M> (groups kda_in): Glm5NextForConditionalGeneration 34 layers dequantize at M >= <M>; shared BF16 workspace 98.2 MiB`, and none for the drafter. Log `free -h` at ready: spark1 must keep 9 GiB or more for F4.
+4. Cell E at 32k and 128k. Prefill tok/s should move from F's 1164-1199 toward about 1305 (E0 1331 / 1329, E3a 1355 / 1353). TTFT at 128k should fall from 109.7 s toward about 100 s.
+5. Decode fast gate (`bench_decode.py` fast gate twice, `kit/compare.py` against F1). It must be unchanged within the cross-boot band, because captured steps never take the path.
+6. Tier 0, `quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8`, judged against the F1 / E4 cross-boot limits. The layers compute the same product with the same weights, so only prefill reduction-order noise may move it. Count-200 must stay lossless, the thinking-off smoke must pass, and needle 8k / 32k must pass.
+7. Keep it only if cell E prefill gains +5% or more at both 32k and 128k, and decode A, B, J@c1, H and T stay within ±4% of the defaults. Then set `PREFILL_DEQUANT_MIN_M` in `recipe.yaml` and run `python3 kit/render.py`. Otherwise leave it at `0`. Record the result in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`.
+
+**Result (E6, 2026-09-28): REVERT, the default stays `0`** (`evidence/e6-prefill/notes.txt`, `evidence/e6-prefill/prefill-table.txt`).
+
+- **Image.** v13 rebuilt from 2a5f224 (14f7b1066fe3 on both nodes). The microbench passed both gates: every dequantized weight matches its reference (the sign-of-zero note above aside), and `kda_in` at M = 1152 ran 4.57 ms on Marlin against 2.09 ms dequant + cuBLAS.
+- **Boot G1 (`PREFILL_DEQUANT_MIN_M=512`).** Each rank logged one dequant line for 34 layers and a 98.2 MiB workspace; the drafter logged none.
+- **Prefill.** Against F (F1 + F2b, knob off): +6.4% at 32k and +3.5% at 128k on the two planned panels, so the 128k leg misses +5%. Over all five G1 panels it was +1.0% / +2.0%, and the panels scattered 1150-1283 tok/s (F's sd was 17). A 7k prompt gained +9.5%, which matches the microbench. Clocks were flat and nothing compiled during a timed request; the length dependence is unexplained.
+- **Decode and quality.** A, B, J, H and T stayed inside ±4% of F. step_ms ran 1.3-2.8% over F and over G2 (same image, knob off), which is inside the band but unexplained, because captured steps never take the dequant branch. Tier 0 stayed inside the cross-boot A/A.
+- **Before any retry,** profile one 32k prefill with the knob on and off (`evidence/e5-final/tools/prof_prefill.py`) and find where the 34 x 2.5 ms per chunk goes.

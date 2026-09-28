@@ -102,6 +102,13 @@ class JudgeTests(unittest.TestCase):
         on = {"content": "Paris", "reasoning": "France's capital is Paris.", "finish_reason": "stop"}
         self.assertTrue(tier0.judge_kwarg_cell(on, think=True)["pass"])
         self.assertFalse(tier0.judge_kwarg_cell(on, think=False)["pass"])
+        # effort low: <think> opened, model closed it at once (live 2026-09-27); allowed only there
+        closed = {"content": "Paris", "reasoning": "", "finish_reason": "stop"}
+        self.assertFalse(tier0.judge_kwarg_cell(closed, think=True)["pass"])
+        self.assertTrue(tier0.judge_kwarg_cell(closed, think=True, reasoning_optional=True)["pass"])
+        self.assertTrue(tier0.judge_kwarg_cell(on, think=True, reasoning_optional=True)["pass"])
+        # with no reasoning, content is still checked for chain-of-thought
+        self.assertFalse(tier0.judge_kwarg_cell(leak, think=True, reasoning_optional=True)["pass"])
 
     def test_utf8(self):
         rows = "\n".join(f"| {n} | {n * n} | {n ** 3} | {tier0.chinese_numeral(n)} |" for n in range(1, 41))
@@ -115,6 +122,9 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual((r["pass"], r["fffd"], r["chinese_numeral_errors"]), (False, 1, 1))
         wrong_sq = table.replace("| 7 | 49 |", "| 7 | 48 |")
         self.assertEqual(tier0.judge_utf8({"content": wrong_sq, "finish_reason": "stop"})["square_errors"], 1)
+        # E4: a superscript first cell used to raise ValueError instead of scoring the row as missing
+        sup = table + "\n| ³ | 9 | 27 | 三 |"
+        self.assertTrue(tier0.judge_utf8({"content": sup, "finish_reason": "stop"})["pass"])
 
     def test_tool_item(self):
         item = {"id": "t", "expect": {"name": "f", "args": {"city": "Paris", "n": 2}}, "ignore": ["note"]}
@@ -149,12 +159,60 @@ class CriteriaTests(unittest.TestCase):
         rows = {r["name"]: r for r in tier0.criteria(self._nll(-0.0061), self.REF, None, set())}
         self.assertFalse(rows["nll.delta"]["pass"])
 
-    def test_stage_thresholds(self):
-        rows = {r["name"]: r for r in tier0.criteria(self._nll(0.0, top1=0.985, kl=2e-3), self.REF, "nvfp4", set())}
+    def test_stage_thresholds_absolute(self):
+        rows = {r["name"]: r for r in tier0.criteria(self._nll(0.0, top1=0.985, kl=2e-3), self.REF, "nvfp4", set(),
+                                                     absolute=True)}
         self.assertTrue(rows["nll.top1_stage"]["pass"] and rows["nll.kl_stage"]["pass"])
+        self.assertEqual((rows["nll.top1_stage"]["limit"], rows["nll.kl_stage"]["limit"]), (0.98, 3e-3))
+        self.assertIn("absolute", rows["nll.kl_stage"]["rule"])
         self.assertFalse(rows["nll.top1_rerun"]["pass"])
-        rows = {r["name"]: r for r in tier0.criteria(self._nll(0.0, top1=0.985, kl=2e-3), self.REF, "fp8", set())}
+        rows = {r["name"]: r for r in tier0.criteria(self._nll(0.0, top1=0.985, kl=2e-3), self.REF, "fp8", set(),
+                                                     absolute=True)}
         self.assertFalse(rows["nll.top1_stage"]["pass"] or rows["nll.kl_stage"]["pass"])
+
+    # e0 (nvidia 09b04e5 / v11): the reference's A/A and a same-boot compare against it.
+    E0_REF = {"nll": {"rerun": {"abs_delta": 0.000627, "top1_agree": 0.984469, "kl": 5.137e-3}},
+              "greedy": {"aa": {"hazard": 0.009589}}}
+
+    def _stage(self, stage, delta=-0.000146, top1=0.984464, kl=5.089e-3, ref=None, absolute=False):
+        rows = tier0.criteria(self._nll(delta, top1=top1, kl=kl), ref or self.E0_REF, stage, set(), absolute)
+        return {r["name"]: r for r in rows}
+
+    def test_stage_gates_are_relative_to_aa(self):
+        # Pure run-to-run noise passes both stages; the PLAN's fixed floors could never pass it.
+        for stage in ("fp8", "nvfp4"):
+            with self.subTest(stage=stage):
+                rows = self._stage(stage)
+                self.assertTrue(all(r["pass"] for r in rows.values()), rows)
+                self.assertNotIn("nll.top1_rerun", rows)  # the stage's top-1 gate replaces it
+        fp8 = self._stage("fp8")
+        self.assertEqual((fp8["nll.top1_stage"]["limit"], fp8["nll.kl_stage"]["limit"], fp8["nll.delta"]["limit"]),
+                         (0.979469, 0.006137, 0.005))
+        nv = self._stage("nvfp4")
+        self.assertEqual((nv["nll.top1_stage"]["limit"], nv["nll.kl_stage"]["limit"], nv["nll.delta"]["limit"]),
+                         (0.969469, 0.008137, 0.01))
+        absolute = self._stage("fp8", absolute=True)
+        self.assertFalse(absolute["nll.top1_stage"]["pass"] or absolute["nll.kl_stage"]["pass"])
+
+    def test_stage_margins(self):
+        # fp8: KL_AA + 1e-3, top-1 AA - 0.5 pt, |dNLL| max(3 sigma, 0.005); nvfp4: 3e-3, 1.5 pt, 0.01.
+        for kw, fp8_ok, nv_ok in (({"kl": 0.0060}, True, True), ({"kl": 0.0065}, False, True),
+                                  ({"kl": 0.0085}, False, False),
+                                  ({"top1": 0.9800}, True, True), ({"top1": 0.9780}, False, True),
+                                  ({"top1": 0.9690}, False, False),
+                                  ({"delta": -0.0049}, True, True), ({"delta": 0.0080}, False, True),
+                                  ({"delta": -0.0110}, False, False)):
+            with self.subTest(**kw):
+                self.assertEqual(all(r["pass"] for r in self._stage("fp8", **kw).values()), fp8_ok)
+                self.assertEqual(all(r["pass"] for r in self._stage("nvfp4", **kw).values()), nv_ok)
+        # sigma above the floor widens the dNLL window: 3 * 0.004 = 0.012
+        noisy = {"nll": {"rerun": {"abs_delta": 0.004, "top1_agree": 0.99, "kl": 1e-3}}}
+        self.assertEqual(self._stage("nvfp4", delta=0.0115, top1=0.99, kl=1e-3, ref=noisy)["nll.delta"]["limit"], 0.012)
+
+    def test_stage_without_aa_stats_fails(self):
+        rows = self._stage("fp8", ref={"nll": {"rerun": {"abs_delta": 0.0}}})
+        for gate in ("nll.top1_stage", "nll.kl_stage"):
+            self.assertEqual((rows[gate]["pass"], rows[gate]["limit"]), (False, None))
 
     def test_behavioural_and_skip(self):
         comps = {"tools": {"json_valid": 0.96}, "count": {"pass": True, "n_numbers": 200},
@@ -171,7 +229,7 @@ class CriteriaTests(unittest.TestCase):
         self.assertNotIn("greedy.hazard", line)
 
     def test_kwargs_split(self):
-        # today's template: only the two thinking:true cells fail (QUAL-2)
+        # a template without the thinking alias: only the two thinking:true cells fail (QUAL-2)
         cells = [{"cell": f"{n}.{s}", "pass": not n.startswith("thinking_true")}
                  for n, _, _ in tier0.KWARG_SHAPES for s in ("block", "stream")]
         rows = tier0.criteria({"kwargs": {"pass": False, "cells": cells}}, None, None, {"kwargs.thinking_alias"})
@@ -221,6 +279,20 @@ class ProbeTests(unittest.TestCase):
         sent = [b for p, b in self.s.requests if p == "/v1/chat/completions"]
         self.assertEqual(sum(1 for b in sent if b.get("stream")), 6)
         self.assertTrue(any("chat_template_kwargs" not in b and "reasoning_effort" not in b for b in sent))
+
+    def test_kwargs_matrix_effort_low_closes_thinking(self):
+        def chat(body):
+            out = probe_chat(body)
+            if body.get("reasoning_effort") == "low":
+                out["reasoning"] = ""
+            return out
+
+        s = FakeServe(chat)
+        try:
+            res = tier0.run_kwargs(common.Client(s.url), default_thinking=False)
+        finally:
+            s.close()
+        self.assertEqual((res["passed"], res["total"]), (12, 12), [x for x in res["cells"] if not x["pass"]])
 
     def test_utf8_tools_needle(self):
         self.assertTrue(tier0.run_utf8(self.c)["pass"])
@@ -281,8 +353,14 @@ class RoundTripTests(unittest.TestCase):
             code, cmp_ = self._run(worse, "compare", "--ref", "base", "--stage", "fp8")
             self.assertEqual(code, 1)
             failed = {c["name"] for c in cmp_["criteria"] if not c["pass"]}
-            self.assertTrue({"nll.delta", "nll.top1_stage", "nll.top1_rerun", "nll.kl_stage"} <= failed, failed)
+            self.assertTrue({"nll.delta", "nll.top1_stage", "nll.kl_stage"} <= failed, failed)
+            self.assertFalse(cmp_["stage_absolute"])
             self.assertTrue(cmp_["verdict"].startswith("FAIL"))
+            code, cmp_ = self._run(worse, "compare", "--ref", "base", "--stage", "fp8", "--stage-absolute")
+            self.assertEqual(code, 1)
+            failed = {c["name"] for c in cmp_["criteria"] if not c["pass"]}
+            self.assertTrue({"nll.delta", "nll.top1_stage", "nll.top1_rerun", "nll.kl_stage"} <= failed, failed)
+            self.assertTrue(cmp_["stage_absolute"])
         finally:
             worse.close()
 

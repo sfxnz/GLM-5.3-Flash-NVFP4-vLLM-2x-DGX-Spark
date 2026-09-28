@@ -1,0 +1,30 @@
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+[nll] {"docs": 96, "tokens": 184990, "mean_nll": 0.504238, "vs_ref": {"tokens": 184990, "nll_ref": 0.484849, "nll_cand": 0.504238, "delta": 0.019389, "top1_agree": 0.956176, "kl": 0.03714693, "mismatched_docs": [], "by_domain": {"chat": {"tokens": 11504, "nll_ref": 1.044623, "nll_cand": 1.056889, "delta": 0.012266, "top1_agree": 0.941064, "kl": 0.03262961}, "code": {"tokens": 36468, "nll_ref": 0.172989,
+[greedy] {"golden": {"hazard": 0.026012, "diverged": 18, "pairs": 20, "first_div": [6, 58, null, 0, 0, 23, 1, 27, 34, 112, 18, null, 6, 21, 11, 9, 23, 10, 90, 39]}, "s": 83.2}
+[count] {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop", "s": 6.6}
+[kwargs] {"pass": true, "passed": 12, "total": 12, "s": 4.1}
+[utf8] {"pass": true, "fffd": 0, "rows": 40, "complete": true, "square_errors": 0, "cube_errors": 0, "chinese_numeral_errors": 0, "finish_reason": "stop", "s": 28.6}
+[tools] {"n": 50, "json_valid": 1.0, "called": 1.0, "name_ok": 1.0, "args_ok": 0.96, "s": 41.0}
+[vision] {"pass": false, "passed": 12, "total": 13, "skipped": [], "s": 7.4}
+[needle] {"pass": true, "per_length": {"8192": 3, "32768": 3}, "s": 103.9}
+FAIL nll.delta value=0.019389 limit=0.01
+FAIL nll.top1_stage value=0.956176 limit=0.969469
+FAIL nll.kl_stage value=0.03714693 limit=0.00813701
+FAIL greedy.hazard value=0.026012 limit=0.019178
+PASS kwargs.core value=10 limit=10
+PASS kwargs.thinking_alias value=2 limit=2
+PASS count value=200 limit=200
+PASS utf8 value=0 limit=0
+FAIL vision value=12 limit=None
+PASS needle value={'8192': 3, '32768': 3} limit=>=2 each
+PASS tools.json_valid value=1.0 limit=0.98
+written: evidence/e2b-nvfp4-all/tier0.json
+FAIL tier0 compare vs nvidia-v11-k7: 6/11 criteria; failed nll.delta, nll.top1_stage, nll.kl_stage, greedy.hazard, vision
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+BrokenPipeError: [Errno 32] Broken pipe

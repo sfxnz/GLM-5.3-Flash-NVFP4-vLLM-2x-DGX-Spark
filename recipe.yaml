@@ -10,13 +10,17 @@ model:
   family: GLM-5.3-Flash
   params: 320B total / 18B active
   quant: NVFP4 W4A4 on routed experts and dense MLP (ModelOpt 0.47.0, nvfp4_experts_dense_mlp-kv_fp8_cast). Attn, shared experts, and vision stay BF16. KV scheme is kv_fp8_cast.
-  draft: incoai/GLM-5.3-Flash-DFlash2 @ 7d74cdd881ed7e32c31175984a67823127b66cfe
+  draft: incoai/GLM-5.3-Flash-DFlash2
+  # Newer DFlash2 revisions have the same config.json (weights-only updates):
+  # bf582e4eacc1810f76656d1811693ff6c6737d2a (2026-08-31), dc77ff1c99eeb2df044ee3d4f0094eb033fee410 (2026-08-28).
+  # E1b: bf582e4 moved no acceptance against 7d74cdd, so the default stays; DRAFT_REV=<full sha> picks one.
+  draft_revision: &draft_revision 7d74cdd881ed7e32c31175984a67823127b66cfe
 
 image:
   base: vllm/vllm-openai:glm53-flash-arm64-cu130
   digest: null
-  local_tag: &image glm53-sm121-v11
-  build: docker/Dockerfile.sm121-v8 -> v9 -> v10 -> v11
+  local_tag: &image glm53-sm121-v13
+  build: docker/Dockerfile.sm121-v8 -> v9 -> v10 -> v11 -> v13
 
 engine:
   name: vllm
@@ -53,6 +57,7 @@ serve:
     FORCE_UNSAFE_LINEAR: 0
     FORCE_UNSAFE_SPEC: 0
     FORCE_UNSAFE_VISION: 0
+    FORCE_UNSAFE_IMAGE: 0
     LANGUAGE_MODEL_ONLY: 0
     MM_PROCESSOR_CACHE_GB: 1
     MAX_NEW_TOKENS: 65536
@@ -66,12 +71,23 @@ serve:
     LINEAR_BACKEND: marlin
     REASONING_PARSER: glm45
     DRAFT_MODEL: incoai/GLM-5.3-Flash-DFlash2
+    DRAFT_REV: *draft_revision
     SPEC: dflash2
+    JIT_CACHE: 1
+    JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
+    # v13 switches (docker/README-v13.md). run.sh turns them into GLM53_* env on both ranks.
+    # v11 rollback: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+    DRAFT_WEIGHTS: nvfp4                 # E2e
+    TARGET_WEIGHT_GROUPS_INT8: shared,mla,kda_o,kda_in,lm_head  # E4a
+    PREFILL_DEQUANT_MIN_M: 0             # E6: 512 reverted (+6.4% / +3.5% prefill at 32k / 128k)
+    KPOOL_TAIL_FIX: 1                    # E3a
+    ADAPTIVE_VERIFY: 1                   # E3b
+    ADAPTIVE_VERIFY_TAU: 0.3             # E4b (0.2 and 0.1 cut less)
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
   defaults:
-    - Image: "`{IMAGE}` (local)"
+    - Image: "`{IMAGE}` (local; chain v8 → v9 → v10 → v11 → v13, see Build the image for the v11 rollback)"
     - Model: "`{MODEL}` (served under `SERVED_NAME`, which defaults to `$MODEL`)"
     - "`--tensor-parallel-size` / `--nnodes`": "{TP} / {NNODES}"
     - "`--max-model-len`": "{MAX_MODEL_LEN}"
@@ -86,19 +102,28 @@ readme:
     - Output ceiling: "`--override-generation-config '{\"max_new_tokens\": {MAX_NEW_TOKENS}}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag)"
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + ({NUM_SPECULATIVE_TOKENS}+1) x 1..{MAX_NUM_SEQS} (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
-    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`)"
+    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`)"
+    - Draft: "`{DRAFT_MODEL}` @ `{DRAFT_REV}` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter)"
+    - Drafter weights: "`DRAFT_WEIGHTS={DRAFT_WEIGHTS}`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off"
+    - Target INT8: "`TARGET_WEIGHT_GROUPS_INT8=\"{TARGET_WEIGHT_GROUPS_INT8}\"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. `none` keeps them BF16 (an empty value falls back to the default). FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010"
+    - Prefill dequant: "`PREFILL_DEQUANT_MIN_M={PREFILL_DEQUANT_MIN_M}` (off): a prefill input of at least this many rows dequantizes the swapped `kda_in` weight to BF16 and runs cuBLAS instead of Marlin (`GLM53_WQ_DEQUANT_MIN_M`, `GLM53_WQ_DEQUANT_GROUPS=kda_in`); `run.sh` refuses 1-63, so captured decode and verify steps (16 rows or fewer) keep Marlin. E5: the INT8 target costs 11% of prefill (1193 vs E0's 1331 tok/s at 32k), and 93% of that is `kda_in` (INT8 Marlin 3.6x BF16 at the 1152-row chunk). E6 with `512`: +9.5% at a 7k prompt but only +6.4% / +3.5% at 32k / 128k, decode within noise. It stays off until an A/B clears +5% at both 32k and 128k"
+    - Indexer tail ring: "`KPOOL_TAIL_FIX={KPOOL_TAIL_FIX}` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring"
+    - Adaptive verify: "`ADAPTIVE_VERIFY={ADAPTIVE_VERIFY}`, `ADAPTIVE_VERIFY_TAU={ADAPTIVE_VERIFY_TAU}` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a (tau 0.2): prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. E4b tau 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. Needs `SPEC=dflash2`; `0` turns it off"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
+    - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
     - API: "`http://<head>:{PORT}/v1`"
 
 measured:
   # Published decode score is prose only. Do not add structured or code rows.
+  # Each value: per boot, the mean of its two panels (bench-1 --full, bench-2 fast gate); then the mean of the three
+  # boots. tok/s, step_ms and acceptance_len are the bench's means (what kit/compare.py compares); TTFT is the panel p50.
   decode:
-    conditions: prose only; streamed greedy, thinking off, 200 completion tokens, 3-run median; LibertAIDAI pin on this image (nvidia pack unmeasured on Sparks); max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
-    units: {decode: tok/s per stream (median), aggregate: tok/s, ttft_p50: s}
+    conditions: "prose only, ruler v2 (bench_decode.py). c=1 is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off. c=2 is cell H: the same prompts as 4 waves of two distinct streams (prefix-cache hits, so its TTFT is not comparable to A's). Three boots of plain ./run.sh on 2026-09-28 (F1, F2b, G2): image glm53-sm121-v13 (F1/F2b c9729cc0738f, G2 14f7b1066fe3), DFlash2-7 drafter 7d74cdd with NVFP4 W4A16 weights (DRAFT_WEIGHTS=nvfp4), INT8 W8A16 g128 target groups shared,mla,kda_o,kda_in,lm_head (TARGET_WEIGHT_GROUPS_INT8), adaptive verify at tau 0.3 (ADAPTIVE_VERIFY=1), kpool tail fix (KPOOL_TAIL_FIX=1), PREFILL_DEQUANT_MIN_M=0, fp8_e4m3 KV pinned at 4.14 GiB, context 327680, max-num-seqs 2, CUDA graphs, warm JIT cache. E0 (the nvidia pack on glm53-sm121-v11, no v13 knobs, one boot, two panels) measured A 19.73 and H 13.87 tok/s per stream; kit/compare.py puts the three boots at A +52.3% [+51.0,+53.6] and H +49.2% [+45.2,+53.2] (evidence/e6-prefill/compare-f12g2-vs-e0.txt)."
+    units: {decode: tok/s per stream (mean), aggregate: tok/s (mean), ttft_p50: s, step_ms: ms per decode step (mean), acceptance_len: tokens per step (mean)}
     rows:
-      - {phase: prose, concurrency: 1, decode: 21.2, aggregate: 21.2, ttft_p50: 0.33, evidence: evidence/rebench-20260902T204243Z/bench.txt}
-      - {phase: prose, concurrency: 2, decode: 16.6, aggregate: 33.2, ttft_p50: 0.37, evidence: evidence/rebench-20260902T204243Z/bench.txt}
+      - {phase: prose, concurrency: 1, decode: 30.04, aggregate: 30.04, ttft_p50: 0.26, step_ms: 73.2, acceptance_len: 2.21, evidence: [evidence/e5-final/f1, evidence/e5-final/f2b, evidence/e6-prefill/g2]}
+      - {phase: prose, concurrency: 2, decode: 20.69, aggregate: 39.43, ttft_p50: 0.36, step_ms: 105.3, acceptance_len: 2.18, evidence: [evidence/e5-final/f1, evidence/e5-final/f2b, evidence/e6-prefill/g2]}
 
 links:
   model: https://huggingface.co/nvidia/GLM-5.3-Flash-NVFP4

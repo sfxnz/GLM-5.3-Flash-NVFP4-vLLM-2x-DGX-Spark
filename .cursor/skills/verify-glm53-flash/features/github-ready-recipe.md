@@ -4,16 +4,16 @@ A stranger cloning this repo can follow `README.md` to build the local image cha
 
 ## Sub-features
 
-- `recipe-files` ships `README.md`, `LICENSE`, `run.sh`, `stop.sh`, `bench_decode.py`, `smoke_vision.py`, and the v8–v11 Dockerfiles plus the patches they `COPY`.
+- `recipe-files` ships `README.md`, `LICENSE`, `run.sh`, `stop.sh`, `bench_decode.py`, `smoke_vision.py`, and the v8–v11 and v13 Dockerfiles plus the patches they `COPY`.
 - `recipe-exec` keeps `run.sh` and `stop.sh` executable.
 - `recipe-defaults` documents the same `IMAGE`, port, context, KV pin, spec, and served name that `run.sh` defaults to.
-- `recipe-images` documents the four-step `docker build` chain starting from `vllm/vllm-openai:glm53-flash-arm64-cu130` and ending at `glm53-sm121-v11`.
+- `recipe-images` documents the five-step `docker build` chain starting from `vllm/vllm-openai:glm53-flash-arm64-cu130` and ending at `glm53-sm121-v13`.
 - `recipe-license` states MIT for the scripts and CC BY-NC-ND for the DFlash2 draft.
 
 ## How to get to it (user POV)
 
 - Clone the GitHub repo and open `README.md`.
-- Run the documented `docker build -f docker/Dockerfile.sm121-v8` … `v11` commands.
+- Run the documented `docker build -f docker/Dockerfile.sm121-v8` … `v11` and `v13` commands.
 - Run `./run.sh`, the smoke `curl`, `python3 bench_decode.py`, and `./stop.sh` as written in `README.md`.
 
 ## Driving it with verify-glm53

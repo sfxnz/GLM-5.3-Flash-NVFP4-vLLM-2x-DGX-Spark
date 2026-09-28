@@ -1,0 +1,79 @@
+== head (spark1) 2026-09-27T17:36:18Z
+GLM53_ lines: 0
+fp4_gemm / JIT-debug lines: 0
+(APIServer pid=1) INFO 09-27 17:15:02 [api_utils.py:273] non-default args: {'model_tag': '/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3', 'chat_template': '/chat_template.jinja', 'default_chat_tem
+(APIServer pid=1) INFO 09-27 17:15:20 [model.py:679] Resolved architecture: DFlash2DraftModel
+(APIServer pid=1) INFO 09-27 17:15:20 [speculative.py:1256] Overriding draft model max model len from 1048576 to 327680
+(APIServer pid=1) WARNING 09-27 17:15:20 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft 
+(EngineCore pid=317) INFO 09-27 17:15:28 [core.py:122] Initializing a V1 LLM engine (v0.1.dev20051+g487ecf187) with config: model='/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3', speculative_confi
+(Worker_TP0 pid=389) WARNING 09-27 17:15:46 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(Worker_TP0 pid=389) INFO 09-27 17:15:46 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+(Worker_TP0 pid=389) INFO 09-27 17:15:46 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+(Worker_TP0 pid=389) INFO 09-27 17:27:55 [default_loader.py:430] Loading weights took 715.34 seconds
+(Worker_TP0 pid=389) INFO 09-27 17:29:04 [default_loader.py:430] Loading weights took 5.99 seconds
+(Worker_TP0 pid=389) WARNING 09-27 17:29:04 [speculator.py:195] Draft model DFlash2Qwen3ForCausalLM does not support external multimodal embeddings. Embeddings from the target model will not be passed to the drafter; using text-only draft inputs instead.
+(Worker_TP0 pid=389) INFO 09-27 17:29:12 [model_runner.py:375] Model loading took 90.36 GiB and 806.972382 seconds
+(Worker_TP0 pid=389) INFO 09-27 17:29:18 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP0 pid=389) 2026-09-27 17:29:36  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) 2026-09-27 17:29:41  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) INFO 09-27 17:31:36 [gpu_worker.py:492] Initial free memory 109.34 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization confi
+(EngineCore pid=317) INFO 09-27 17:31:36 [kv_cache_utils.py:2204] GPU KV cache size: 372,877 tokens, Maximum concurrency for 327,680 tokens per request: 1.14x
+(Worker_TP0 pid=389) 2026-09-27 17:33:36  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) 2026-09-27 17:33:42  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) 2026-09-27 17:33:43  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) 2026-09-27 17:33:51  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) 2026-09-27 17:33:52  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP0 pid=389) INFO 09-27 17:34:01 [speculator.py:137] Capturing model for DFlash2 speculator...
+(Worker_TP0 pid=389) INFO 09-27 17:34:01 [model_runner.py:1020] Graph capturing finished in 28 secs, took -0.10 GiB
+(Worker_TP0 pid=389) INFO 09-27 17:34:46 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(EngineCore pid=317) INFO 09-27 17:34:46 [core.py:363] init engine (profile, create kv cache, warmup model) took 333.33 s
+(EngineCore pid=317) WARNING 09-27 17:35:02 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(APIServer pid=1) INFO:     Application startup complete.
+(Worker_TP0 pid=389) WARNING 09-27 17:35:56 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _prepare_dflash_inputs_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0 pid=389) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _compute_local_logits_stats_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0 pid=389) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _rejection_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0 pid=389) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _resample_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+== head JIT cache sizes
+127M	033847011721/
+8.0K	logs/
+39M	033847011721/flashinfer
+2.3M	033847011721/tilelang
+86M	033847011721/triton
+204K	033847011721/vllm
+1965
+== worker (spark2) 2026-09-27T17:36:18Z
+GLM53_ lines: 0
+fp4_gemm / JIT-debug lines: 0
+INFO 09-27 17:14:58 [model.py:679] Resolved architecture: DFlash2DraftModel
+INFO 09-27 17:14:58 [speculative.py:1256] Overriding draft model max model len from 1048576 to 327680
+WARNING 09-27 17:14:58 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or de
+(Worker_TP1 pid=332) WARNING 09-27 17:15:46 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(Worker_TP1 pid=332) INFO 09-27 17:15:46 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+(Worker_TP1 pid=332) INFO 09-27 17:15:46 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+(Worker_TP1 pid=332) INFO 09-27 17:19:22 [default_loader.py:430] Loading weights took 212.51 seconds
+(Worker_TP1 pid=332) INFO 09-27 17:19:56 [default_loader.py:430] Loading weights took 3.21 seconds
+(Worker_TP1 pid=332) WARNING 09-27 17:19:56 [speculator.py:195] Draft model DFlash2Qwen3ForCausalLM does not support external multimodal embeddings. Embeddings from the target model will not be passed to the drafter; using text-only draft inputs instead.
+(Worker_TP1 pid=332) INFO 09-27 17:20:05 [model_runner.py:375] Model loading took 90.36 GiB and 259.739684 seconds
+(Worker_TP1 pid=332) INFO 09-27 17:29:15 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP1 pid=332) 2026-09-27 17:29:36  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) 2026-09-27 17:29:41  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_post_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) INFO 09-27 17:31:30 [gpu_worker.py:492] Initial free memory 111.25 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization confi
+(Worker_TP1 pid=332) 2026-09-27 17:33:35  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) 2026-09-27 17:33:41  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) 2026-09-27 17:33:42  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) 2026-09-27 17:33:51  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_fused_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) 2026-09-27 17:33:52  [TileLang:tilelang.jit.kernel:INFO] (kernel.py:129): TileLang begins to compile kernel `mhc_pre_big_fuse_with_norm_tilelang` with `out_idx=None`
+(Worker_TP1 pid=332) INFO 09-27 17:34:01 [speculator.py:137] Capturing model for DFlash2 speculator...
+(Worker_TP1 pid=332) INFO 09-27 17:34:01 [model_runner.py:1020] Graph capturing finished in 28 secs, took 0.06 GiB
+(Worker_TP1 pid=332) INFO 09-27 17:34:46 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP1 pid=332) WARNING 09-27 17:35:56 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _prepare_dflash_inputs_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=332) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _compute_local_logits_stats_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=332) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _rejection_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP1 pid=332) WARNING 09-27 17:35:57 [jit_monitor.py:135] Triton kernel JIT compilation during inference: _resample_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+== worker JIT cache sizes
+127M	033847011721/
+39M	033847011721/flashinfer
+2.3M	033847011721/tilelang
+86M	033847011721/triton
+200K	033847011721/vllm
+1964

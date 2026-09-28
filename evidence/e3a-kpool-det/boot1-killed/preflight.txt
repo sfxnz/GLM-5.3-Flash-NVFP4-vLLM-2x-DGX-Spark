@@ -1,0 +1,39 @@
+== 2026-09-28T00:51:16Z preflight; env for run.sh: IMAGE=glm53-sm121-v13 EXTRA_ENV=MAX_JOBS=2 GLM53_NVFP4_W4A16=draft GLM53_KPOOL_TAIL_FIX=1 GLM53_DETERMINISTIC_MLA_INDEX=1
+git 0308983d4a443c9a00fdf1c4538e1d6167ed603e opt/nvidia-perf-quality
+?? evidence/e3-tools/
+?? evidence/e3-v13-build/
+?? evidence/e3a-kpool-det/
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 5 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 8 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.4Gi        83Gi       125Mi        33Gi       116Gi
+Swap:           15Gi       3.7Gi        12Gi
+== spark1 image glm53-sm121-v13
+sha256:56c6084f422c4ab3ac20c0b56fe826b3c01e5dbe933c65360b17e97a225a6359
+== spark1 JIT cache
+total 16
+drwxr-xr-x  4 sfxnz sfxnz 4096 Sep 27 18:14 .
+drwxrwxr-x 13 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 27 18:15 033847011721
+drwxr-xr-x  2 sfxnz sfxnz 4096 Sep 27 19:13 logs
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+12K	/home/sfxnz/projects/data/glm53-jit-cache/logs
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.4Gi       111Gi       204Ki       7.2Gi       117Gi
+Swap:           15Gi       1.7Gi        14Gi
+== spark2 image glm53-sm121-v13
+sha256:56c6084f422c4ab3ac20c0b56fe826b3c01e5dbe933c65360b17e97a225a6359
+== spark2 JIT cache
+total 12
+drwxrwxr-x 3 sfxnz sfxnz 4096 Sep 27 18:14 .
+drwxrwxr-x 5 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 27 18:14 033847011721
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+== spark2 GPU compute apps (process list, not memory)

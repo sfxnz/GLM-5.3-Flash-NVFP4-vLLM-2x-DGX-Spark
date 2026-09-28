@@ -1,0 +1,40 @@
+rank 0: 2000 steps {'verify': 1982, 'prefill': 15, 'mixed': 1, 'decode': 2}, 2213 verify blocks, 42 MoE layers, E=288 K=8
+
+prefix curve: distinct experts per layer over the first n rows of a verify block
+ n  blocks  distinct    D(n)  ratio    dup dup_ind
+ 1    2213      8.00    8.00  1.000  0.000   0.000
+ 2    2213     13.53   15.78  0.857  0.155   0.014
+ 3    2213     17.72   23.34  0.759  0.262   0.028
+ 4    2213     20.76   30.69  0.676  0.351   0.041
+ 5    2213     22.80   37.84  0.603  0.430   0.054
+ 6    2213     24.07   44.79  0.537  0.499   0.067
+ 7    2213     24.80   51.54  0.481  0.557   0.080
+ 8    2213     25.29   58.11  0.435  0.605   0.092
+
+positions (0 = anchor): overlap with anchor, new experts vs rows < p, acceptance
+pos  blocks  overlap    new  accept
+  0    2213    1.000   8.00       -
+  1    2213    0.309   5.53   0.680
+  2    2213    0.364   4.20   0.391
+  3    2213    0.483   3.04   0.219
+  4    2213    0.626   2.04   0.124
+  5    2213    0.749   1.26   0.075
+  6    2213    0.844   0.74   0.051
+  7    2213    0.889   0.48   0.043
+
+verify steps: 1981, rows/step 8.929, reqs/step 1.116, tokens/step 2.882
+distinct/layer 27.837 (independent 63.497)
+routed-MoE per rank per step: 8.275 GB (independent 18.876 GB) = 35.978 ms at 230.0 GB/s; cross-request sharing saves 0.1157 GB
+
+SD-1 oracle (keep nsampled rows): saves 3.0406 GB = 13.22 ms/step (36.7% of routed-MoE bytes), no tokens lost
+keep  saved_GB  saved_ms tokens_kept
+   1    5.6395    24.520       0.387
+   2    3.8307    16.655       0.651
+   3    2.4618    10.703       0.802
+   4    1.4738     6.408       0.887
+   5    0.8101     3.522       0.935
+   6    0.3997     1.738       0.963
+   7    0.1590     0.691       0.983
+   8    0.0000     0.000       1.000
+
+rank0 vs rank1 routing identical: True

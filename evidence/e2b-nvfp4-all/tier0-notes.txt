@@ -1,0 +1,22 @@
+Tier 0 on E2b (NVFP4 W4A16 on draft,shared,mla,kda_o,kda_in,lm_head), compare --stage nvfp4 vs nvidia-v11-k7
+  20:15:16Z..20:22:41Z, client memguard 3.0 GiB never fired (min spark1 9.76 / spark2 14.18 GiB)
+  tool verdict: FAIL tier0 compare vs nvidia-v11-k7: 6/11 criteria; failed nll.delta, nll.top1_stage, nll.kl_stage,
+  greedy.hazard, vision
+
+                     E1a cross-boot A/A   E2b NVFP4-all  tool limit (nvfp4)   cross-boot limit (nvfp4)
+  dNLL (nats/tok)    -0.000120            +0.019389      |d| <= 0.01 FAIL     |d| <= 0.01 FAIL
+  top-1 agreement    0.983264             0.956176       >= 0.969469 FAIL     >= 0.968264 FAIL (-2.7 pt vs A/A)
+  top-20 KL          5.864e-3             3.715e-2       <= 8.137e-3 FAIL     <= 8.864e-3 FAIL (+3.1e-2 vs A/A)
+  greedy hazard      0.016716 (17/20)     0.026012 (18/20, median first divergence 23 tokens)  <= 0.019178 FAIL
+  vision             13/13                12/13: video answered 3186 (expected 3816). E0 failed the same way; this
+                                          probe sits on a model decision boundary, so it is weak evidence alone.
+  count 200, kwargs 12/12, utf8 0 errors, tools json 1.00 (args_ok 0.96), needle 3/3 at 8k and 32k: PASS.
+
+by domain KL (E1a -> E2b): chat 7.5e-3 -> 3.26e-2, code 3.9e-3 -> 2.30e-2, math 8.7e-3 -> 3.59e-2,
+  multilingual 7.7e-3 -> 4.87e-2, prose 4.6e-3 -> 3.88e-2; dNLL +0.011..+0.029 (multilingual worst).
+  Full side-by-side: tier0-table.txt.
+
+Reading: added KL is 3.1e-2 against E2a's 5.2e-3 (x6); the E1 microbench's relative weight error is 0.085 vs 0.025
+(x3.4, x11.6 squared). Every NVFP4 group has more error than its FP8 counterpart, and FP8-all already fails, so the
+planned NVFP4 bisection (lm_head -> FP8, then kda_in -> FP8) keeps shared/mla/kda_o at NVFP4 and cannot pass. The
+bisection budget goes to the FP8 side instead (task step 4, "if E2a failed too").

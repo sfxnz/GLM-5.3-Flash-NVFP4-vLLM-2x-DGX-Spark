@@ -1,0 +1,14 @@
+serve under test (boot 2)
+  run.sh / chat_template.jinja from ac45f1e (branch HEAD when run.sh started, 2026-09-27T13:41:43Z)
+  EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=0'  (boot 1 without FLASHINFER_JIT_DEBUG=0: see boot1-killed/cause.txt)
+  image glm53-sm121-v11: spark1 sha256:88173725a448...  spark2 sha256:bde907c4c44a... (separate builds; parity WARN expected, not fixed)
+  model nvidia/GLM-5.3-Flash-NVFP4 @09b04e5e74bca08ca8549fc736d4cdd8624bfde3, drafter incoai DFlash2 @7d74cdd, k=7, MAX_NUM_SEQS=2
+  args/env per rank: docker-args-*.json, docker-env-*.json (tokens redacted), docker-args-check.txt
+
+branch moved during the boot
+  2026-09-27T13:49:52Z three lane merges landed in this worktree (fac11f0 boot, e7bc97f census, 682ddce nvfp4attn); HEAD 682ddce.
+  They do not touch bench_decode.py, kit/compare.py, kit/uma_watch.py or quality/, so the tools that measured this serve are the ac45f1e tools.
+  bench.json git_sha therefore reads 682ddce (the tree at bench time), not the serve's run.sh commit.
+  682ddce run.sh makes JIT_CACHE=1 (per-image compile cache mount + FLASHINFER_WORKSPACE_BASE/VLLM_CACHE_ROOT/DG_JIT_CACHE_DIR/
+  TRITON_CACHE_DIR/TILELANG_CACHE_DIR) and WARM_SHARDS=1 the defaults. Neither was active on this serve; all vllm serve flags
+  are otherwise identical (VALIDATE_ONLY diff: only the -v/-e cache args and the three new FORWARD_ENVS).

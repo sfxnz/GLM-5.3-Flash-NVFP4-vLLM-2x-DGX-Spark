@@ -1,0 +1,26 @@
+boot 1 (EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'), killed by kit/uma_watch.py in PROFILE
+  run.sh 13:23:25Z; LOAD done 13:37:48Z (head 758.8 s, worker 273.6 s, 90.36 GiB/rank)
+  kill 13:39:06.404Z: spark1 MemAvailable 7.75 GiB < PROFILE floor 8 GiB (spark2 8.47 at the same instant)
+  kill_latency_s=3.695 (docker kill on the live GPU containers; the dummy-container test was 0.144 s)
+  both containers removed; MemAvailable back to 116 / 117 GiB
+
+cause: FLASHINFER_JIT_VERBOSE=1 turns on FlashInfer's JIT *debug* build in this image
+  flashinfer/jit/core.py:525-528 (glm53-sm121-v11):
+      # Use FLASHINFER_JIT_DEBUG if set, otherwise use FLASHINFER_JIT_VERBOSE (for backward compatibility)
+      debug_env = os.environ.get("FLASHINFER_JIT_DEBUG")
+      verbose_env = os.environ.get("FLASHINFER_JIT_VERBOSE", "0")
+      debug = (debug_env if debug_env is not None else verbose_env) == "1"
+  debug adds cuda_cflags -g -O0 --device-debug -lineinfo --ptxas-options=-v -DCUTLASS_DEBUG_TRACE_LEVEL=2
+  (instead of -DNDEBUG -O3) to every FlashInfer JIT op: topk (PROFILE), batch_mla, batch_prefill,
+  xqa, sampling (KV_READY) -- i.e. the serving kernels would be -O0 device-debug builds.
+
+evidence (compilers.tsv):
+  this boot, topk.cu ptxas: ptxas -arch sm_121a -m64 -v -g --dont-merge-basicblocks --return-at-end --generate-line-info
+      RSS 2230 -> 2486 -> 2936 -> 3244 -> 3281 MiB at 4..8 s and still growing when killed
+  iter-nvidia-linear-marlin (no verbose), same kernel: ptxas -arch sm_121a -m64 --generate-line-info
+      peak 1938 MiB at 27 s; PROFILE min 8.90 / 8.89 GiB
+  PROFILE trajectory up to the ptxas start matched the earlier boot (9.08 low at 13:38:23 vs 9.10 at 12:42:00)
+
+fix for boot 2: EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 FLASHINFER_JIT_DEBUG=0'
+  (verbose ninja output kept; FLASHINFER_JIT_DEBUG=0 takes precedence, so -DNDEBUG -O3 as before)
+  the README's EXTRA_ENV example ('MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1') has the same hazard

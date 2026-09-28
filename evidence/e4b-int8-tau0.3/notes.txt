@@ -1,0 +1,67 @@
+E4b: the E4a config (../e4a-int8/) with adaptive verify tau 0.3 instead of 0.2. One boot, the only change.
+  serve   IMAGE=glm53-sm121-v13 (c9729cc0738f) EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft
+          GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head GLM53_KPOOL_TAIL_FIX=1 GLM53_ADAPTIVE_VERIFY=1
+          GLM53_ADAPTIVE_VERIFY_TAU=0.3'. VALIDATE_ONLY: image parity OK. Served: args parity OK, image parity OK, env
+          differs only by the head's HF tokens. Booted under kit/uma_watch.py (boot.sh), boot watcher 3631247.
+  E4a stop before boot: ../e4a-int8/stop-e4a*.txt/log (watcher 3275992 killed, ./stop.sh rc=0, both nodes clean,
+          MemAvailable 116.5 / 117.4 GiB, no GPU compute process).
+
+boot  run.sh 07:19:51Z -> ready 07:35:22Z (15.5 min; warm JIT cache: init engine 35.3 s). KV pool 372,877. No
+      Traceback or ERROR. Model loading took 86.18 GiB per rank (head 768.9 s, worker 267.7 s).
+      Both ranks: GLM53_ADAPTIVE_VERIFY: tau=0.3 max=7 (k=7); kpool tail ring 16 slots; swap lines identical to E4a
+      (target torch reserved 88.96 -> 86.74 GiB, draft 89.36 -> 88.51 GiB).
+MemAvailable GiB (spark1 / spark2): LOAD min 14.38 / 15.55, PROFILE 13.92 / 13.90, KV_READY 7.02 / 12.87,
+      after ready (free, 07:35:52Z) 7.07 / 13.19 (E4a 9.79 / 13.15), SERVING min 6.70 / 13.12 through Tier 0 and
+      the probes. spark1 swap 7.2 GiB, spark2 4.1 (as E4a). spark2 matches E4a; spark1 is the noisy node.
+
+checks: count-200 200/200 (stop), thinking-off "PING", no chain-of-thought (probe-count.console.txt).
+
+ruler v2 fast gate x2 + T; kit/compare.py vs E4a (tau 0.2): compare-vs-e4a.txt, compare-T-vs-e4a.txt; per-pos.txt
+  cell   E4a tau0.2 tok/s  E4b b1 / b2 tok/s  step_ms 0.2 / 0.3   acc_len 0.2 / 0.3   tok/s change [95% CI]  verdict
+  A      28.74             30.31 / 30.17      79.2 / 73.2         2.28 / 2.22         +5.2% [+4.7,+5.7]      KEEP
+  B      44.85             47.02 / 46.51      91.8 / 88.9         4.15 / 4.19         +4.3% [+2.6,+6.0]      INCONCLUSIVE(single-boot)
+  J@c1   84.07             85.69 / 82.55      94.1 / 93.5         7.95 / 7.90         +0.1% [-4.0,+4.1]      INCONCLUSIVE(single-boot)
+  J@c2   71.67             71.81 / 72.11      111.1 / 110.6       8.00 / 8.00         +0.4% [-0.1,+0.9]      INCONCLUSIVE(single-boot)
+  H      19.31             20.80 / 20.91      114.3 / 105.7       2.21 / 2.21         +8.0% [+6.8,+9.2]      KEEP
+  T      35.07             35.79              78.7 / 74.4         2.77 / 2.67         +2.1%                  single panel
+  step_ms falls on every prose cell (A -7.5%, H -7.5%, T -5.4%) and on B (-3.1%). Acceptance: A -2.7% (paired
+  [-6.5,+1.1]), H -0.3%, B +0.8% [-2.1,+3.7], T -3.6% paired [-6.9,-0.4]: tau 0.3 starts to cut accepted drafts on
+  thinking-style text (T per_pos .688 .403 .232 .145 .091 .052 .033 vs .702 .432 .263 .153 .094 .060 .041), but the
+  shorter step more than pays for it (T +2.1%).
+  per_pos A b1 .619 .321 .153 .070 .028 .010 .004 / b2 .630 .329 .142 .057 .023 .008 .004 (E4a b1 .638 .355 .169
+  .074 .030 .011 .004); B b1 .835 .667 .530 .409 .317 .235 .169 (E4a .840 .674 .517 .397 .301 .229 .173): code keeps
+  its width.
+  Keep rule (task E4 step 7): A and H beat noise (both KEEP: the whole interval clears the +-4% cross-boot band),
+  B and T do not lose (B +4.3%, T +2.1%). => keep tau 0.3.
+
+Tier 0 compare vs nvidia-v11-k7 --stage fp8 (tier0.json, tier0-table.txt), 07:51:09Z..07:59:02Z. The nll part is
+prefill only (prompt_logprobs, max_tokens 1), so tau cannot move it; it is a second boot of the INT8 weights.
+                     E3b tau0.2   E4a tau0.2   E4b tau0.3   cross-boot limit   judged
+  dNLL               -0.000339    -0.000169    -0.000312    |d| <= 0.005       PASS
+  top-1              0.984021     0.981599     0.981740     >= 0.97826         PASS
+  KL top-20          5.172e-3     6.761e-3     6.826e-3     <= 6.864e-3        PASS (margin 0.04e-3)
+  greedy hazard      0.010728     0.014953     0.014911     <= 0.0192          PASS (16/20 diverged, as E4a)
+  count 200, kwargs 12/12, tools json 1.00 (args_ok 0.96), vision 13/13, needle 8k 3/3, 32k 3/3: PASS.
+  utf8: compare crashed the scorer on '³' again (quality/tier0.py judge_utf8, see ../e4a-int8/notes.txt).
+    rerun_flaky.sh x3: utf8 FAIL (40 rows, 8 wrong squares, finish length), FAIL (2), FAIL (8); vision 13/13 x3
+    (video right every time). ../e4-tools/rerun_utf8.sh runs 4-6: scorer crash on '³', then 15 rows / 9 wrong
+    squares twice (identical text). utf8_texts.py x3 (utf8-texts.json): crash, 8 wrong squares, 9 wrong squares.
+    0 passes in 10 attempts, 3 of them scorer crashes (E4a 1/4, E3b tau0.2 1/3 texts, E3b tau0.1 1/4, E0 1/4).
+    ../e4-tools/utf8_scan.py over every utf8-texts.json: the same failure shape on E3b tau 0.1, E3b tau 0.2 and here
+    (rows repeated after a stray word cell such as 'numerals', 'fifteen', '5 characters', 'conversational'), so this
+    is the pre-existing probe behaviour, not something tau 0.3 adds.
+  Lossless probe (E0's scripts/lossless_probe.py 600 -> probe-lossless.txt): generated tokens that are not the
+    teacher-forced target top-1: utf8 1/221 (' fifteen' at -1.03 vs ' 十' at -0.65, the near-tie that sends the
+    table off), greedy16 4/114, greedy0 0/101. E3b tau0.2: 2/221, 5/96, 4/84; E0 without adaptive verify: 7/600,
+    4/107, 2/101. Every miss is a near-tie (gap 0.25-1.1 nats). Lossless within A/A.
+  Verdict: Tier 0 sanity PASS (count, kwargs, tools, vision, needle; nll/greedy at the A/A; utf8 flaky as on every
+  boot).
+
+Verdict E4b: keep tau 0.3. A +5.2%, H +8.0% over tau 0.2 (single boot each, both clear the band), B +4.3%, T +2.1%.
+Output is lossless w.r.t. tau, so E4a's Tier 1 PASS carries over. Serve left up (see the SERVING watcher below).
+E4b vs E3b tau 0.2 (the serve E4 started from): A 23.00 -> 30.24 (+31.5%), B 37.05 -> 46.77 (+26.2%),
+H 17.02 -> 20.85 (+22.5%), T 27.97 -> 35.79 (+28.0%), J@c1 71.5 -> 84.1 (+17.7%).
+
+Serve left up: containers glm53-flash-nvfp4 on spark1 and spark2 (started 07:19:51Z, ready 07:35:22Z). Boot watcher
+3631247 stopped at 08:05:50Z (boot-watcher-stopped.txt); a setsid SERVING watcher (2 GiB floor) runs as pid 3755873,
+logs in ~/projects/data/glm53-serving-watch/20260928-e4b-int8-tau0.3/.

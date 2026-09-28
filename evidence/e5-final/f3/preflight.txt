@@ -1,0 +1,57 @@
+== 2026-09-28T11:03:32Z preflight; env for run.sh: EXTRA_ENV=GLM53_EXPERT_CENSUS=/cache/huggingface/glm53-census/census-e5f3-20260928 EXTRA_ARGS=--profiler-config {"profiler":"torch","torch_profiler_dir":"/cache/huggingface/glm53-prof","torch_profiler_with_stack":false,"ignore_frontend":true,"delay_iterations":8,"max_iterations":30}
+git 44507fe3a7deddefe952df6622e886a41d35c56f opt/nvidia-perf-quality
+ M evidence/e5-final/f3/validate-only.txt
+?? evidence/e5-final/f2b/
+?? evidence/e5-final/f3/boot.out
+?? evidence/e5-final/f3/preflight.txt
+?? evidence/e5-final/microbench-largem.console.txt
+?? evidence/e5-final/microbench-largem/
+?? evidence/e5-final/microbench-pad-n/
+?? evidence/e5-final/microbench-split-n/
+?? evidence/e5-final/tools/bench_pad_n.py
+?? evidence/e5-final/tools/largem_table.py
+?? evidence/e5-final/tools/pad_bench.sh
+?? evidence/e5-final/tools/post_ready_f2b.sh
+?? evidence/e5-final/tools/prof_prefill.py
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 6 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 8 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.8Gi       110Gi       2.4Mi       6.8Gi       115Gi
+Swap:           15Gi       4.0Gi        11Gi
+== spark1 image glm53-sm121-v13
+sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+== spark1 JIT cache
+total 24
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:57 .
+drwxrwxr-x 13 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 27 18:15 033847011721
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 01:52 56c6084f422c
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:58 c9729cc0738f
+drwxr-xr-x  2 sfxnz sfxnz 4096 Sep 27 19:13 logs
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+12K	/home/sfxnz/projects/data/glm53-jit-cache/logs
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.3Gi       108Gi       216Ki        10Gi       117Gi
+Swap:           15Gi       1.7Gi        14Gi
+== spark2 image glm53-sm121-v13
+sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+== spark2 JIT cache
+total 20
+drwxrwxr-x 5 sfxnz sfxnz 4096 Sep 28 05:57 .
+drwxrwxr-x 5 sfxnz sfxnz 4096 Sep 27 18:14 ..
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 27 18:14 033847011721
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 28 01:51 56c6084f422c
+drwxrwxr-x 6 sfxnz sfxnz 4096 Sep 28 05:57 c9729cc0738f
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+== spark2 GPU compute apps (process list, not memory)

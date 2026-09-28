@@ -1,0 +1,25 @@
+meta: {"temperature": 0.0, "seed": 20260925, "think_budget": 0, "chat_kwargs": null, "reasoning_effort": null, "model": "nvidia/GLM-5.3-Flash-NVFP4", "url": "http://127.0.0.1:8000", "ids_sha256": "cb7277af3c3750aa3461863d4a757454fe6971b0efb131064c31b62437e0209d", "label": "nvidia-v11-k7"}
+task          n correct     acc errors length pred None med tok  med s
+ifeval      150     106   0.707      0     10         0     384   27.1
+gsm8k       200     190   0.950      0      0         0     155    5.4
+mmlu_pro    280     234   0.836      0     15        10     396   18.9
+bfcl        120     114   0.950      0      0         0      28    1.7
+chartqa     100      92   0.920      0      4         0       4    1.6
+ocrbench    100      82   0.820      0      0         0      19    1.8
+mmmu         60      39   0.650      0     12        12       2    1.6
+pooled     1010     857   0.849      0
+groups: IFEval 106/150 = 0.707, GSM8K 190/200 = 0.950, MMLU-Pro 234/280 = 0.836, BFCL 114/120 = 0.950, Vision 213/260 = 0.819
+54278221c4c30e0e4f38ec385df78b98ed835823fa202e277db4856891fc112c  /home/sfxnz/projects/data/glm53-evals/tier1/nvidia-v11-k7/tier1.jsonl
+366c1384b79918633e9436728d3b9f09782a49e23b82af7186f8cf04c650727c  /home/sfxnz/projects/data/glm53-evals/tier1/nvidia-v11-k7/chartqa-rerun.jsonl
+b9dc060e2a7f36f7698e1ed28fc084268905d681960b101b752ee00b60443be5  /home/sfxnz/projects/data/glm53-evals/ref/nvidia-v11-k7.json
+
+run: quality/tier1.py run --label nvidia-v11-k7, greedy, serve default kwargs (thinking off), c=2, 1010 items, 0 errors
+  text stage  (ifeval,gsm8k,mmlu_pro,bfcl) 15:00:04Z..16:49:03Z; vision stage (chartqa,ocrbench,mmmu) 16:49:25Z..16:54:14Z
+  each stage under a client-side guard that pauses the run below 3.0 GiB MemAvailable on either node: never fired
+  MemAvailable min: text spark1 6.58 / spark2 9.52 GiB; vision spark1 4.06 / spark2 9.54 GiB (MM processor cache 1 GiB fills on the head)
+chartqa: first pass 62/100 with the old scorer; the model bolds answers ("**13**"). Scorer fixed in 00e8492 (test added);
+  offline rescore of the same stored outputs 92/100 (tier1-chartqa-rescore.txt); task re-run 16:56:16Z..16:57:52Z = 92/100,
+  rows appended to tier1.jsonl (last row per item wins; tagged "rerun"). The table above is the merged result.
+mmmu: 12/60 stop at the 64-token cap (model explains instead of answering with the letter first), scored wrong (pred None).
+  Harness budget, not a scorer bug; left as is so later runs pair item by item.
+mmlu_pro: 15 hit the 2048 cap (10 of them with no extractable letter); ifeval: 10 hit 2048. All other misses checked by hand: wrong answers, not extraction failures.

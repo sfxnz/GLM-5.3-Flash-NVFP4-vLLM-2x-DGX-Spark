@@ -1,0 +1,34 @@
+2026-09-27T13:22:45Z
+ac45f1e7cd0f3eb7f1a493711a4d2443125a75a5
+opt/nvidia-perf-quality
+== git status --short
+?? evidence/e0-nvidia-v11/
+== sudo -n
+sudo: a password is required
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 5 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 7 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.7Gi       112Gi       728Ki       5.3Gi       115Gi
+Swap:           15Gi       3.3Gi        12Gi
+== spark1 swapon / swappiness / read_ahead
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G 3.3G   -2
+60
+== spark1 image glm53-sm121-v11
+sha256:88173725a4485c8d4145212f328d00428c31e7b6caa78fa655940489ea14132a 2026-08-28T11:39:23.043148072+01:00
+== spark1 GPU processes (nvidia-smi compute-apps, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.3Gi       113Gi       208Ki       4.8Gi       117Gi
+Swap:           15Gi       1.7Gi        14Gi
+== spark2 swapon / swappiness / read_ahead
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G 1.7G   -2
+60
+== spark2 image glm53-sm121-v11
+sha256:bde907c4c44a3609b531f8594ab01b46eb726e15a5380a23bef8945e4930211e 2026-08-28T11:39:24.744344465+01:00
+== spark2 GPU processes (nvidia-smi compute-apps, not memory)

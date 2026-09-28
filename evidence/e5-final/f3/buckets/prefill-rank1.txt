@@ -1,0 +1,54 @@
+4 steps {'execute_context_1(1152)_generation_0(0)': 3, 'execute_context_1(1267)_generation_0(0)': 1}
+wall 1000.415 ms (sd 56.816), busy 988.103, idle 12.312, bucket sum 988.159
+
+bucket              ms/step      %  launches
+nccl                 88.851    8.9        91
+routed_moe          345.993   34.6       210
+linear_marlin       220.227   22.0       273
+mhc                  70.784    7.1       275
+kda                  74.920    7.5       374
+mla_indexer         105.913   10.6       130
+bf16_gemm            23.871    2.4       240
+other                47.370    4.7      1280
+lm_head_logits        1.552    0.2         7
+sampler_rejection     0.061    0.0         7
+drafter               8.617    0.9     343.2
+
+bf16_gemm by signature (module guessed from launches/step)
+     ms n/step module           kernel [grid]
+  3.209   63.0 ?                nvjet_sm121_tst_mma_64x128x64_4_64x32x64_tmaAB_bz_TNNN [40, 2, 1]
+  3.011   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [144, 1, 32]
+  2.844   51.0 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_12 [72, 4, 1]
+  2.432   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [72, 1, 32]
+  1.968   8.25 ?                nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN [48, 2, 1]
+  1.655   21.0 ?                nvjet_sm121_tst_mma_64x96x64_4_16x96x64_tmaAB_bz_TNNN [40, 2, 1]
+  1.603   8.25 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_25 [72, 2, 1]
+  1.599  19.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_12 [80, 4, 1]
+  1.107   2.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [160, 1, 32]
+  0.901   2.75 ?                nvjet_sm121_tst_mma_128x144x64_2_32x72x64_tmaAB_bz_TNNN [128, 2, 1]
+  0.883   2.75 ?                void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64 [80, 1, 32]
+  0.723   8.25 ?                nvjet_sm121_tst_mma_32x128x64_4_16x64x64_tmaAB_bz_TNNN [32, 2, 1]
+  0.686   8.25 ?                nvjet_sm121_tst_mma_96x64x64_4_48x32x64_tmaAB_bz_TNNN [144, 1, 1]
+  0.513   8.25 ?                void cutlass::Kernel2<cutlass_80_simt_sgemm_32x128_8x5_nn_align1>(cutl [9, 1, 10]
+  0.258   2.75 ?                nvjet_sm121_tst_mma_96x64x64_4_48x32x64_tmaAB_bz_TNNN [160, 1, 1]
+  0.224   2.75 ?                nvjet_sm121_tst_mma_64x64x64_6_16x64x64_tmaAB_bz_TNNN [16, 3, 1]
+  0.213   2.75 ?                void cutlass::Kernel2<cutlass_80_simt_sgemm_32x128_8x5_nn_align1>(cutl [10, 1, 9]
+  0.032   8.25 ?                void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, f [1, 72, 1]
+  0.008   2.75 ?                void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, f [1, 80, 1]
+
+top 'other' kernels (refine TARGET_BUCKETS with these)
+ 18.324 void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:
+ 10.476 void vllm::act_and_mul_kernel<c10::BFloat16, __nv_bfloat162, &(c10::BFloat16 vllm::silu_ke
+  3.565 void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctor_add<c10::BFloat1
+  2.894 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>, std::arr
+  2.520 Memcpy DtoD (Device -> Device)
+  1.587 void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Tenso
+  1.308 void at::native::reduce_kernel<128, 4, at::native::ReduceOp<c10::BFloat16, at::native::Mea
+  0.966 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, std::array
+  0.951 void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native:
+  0.923 _convert_req_index_to_global_index_kernel
+  0.700 _gather_initial_states_kernel
+  0.654 _expand_pools_and_append_tail_kernel
+  0.464 _scatter_states_kernel
+  0.306 void at::native::vectorized_gather_kernel<16, long>(char*, char*, long*, int, long, long, 
+  0.280 _fused_q_kv_rmsnorm_kernel

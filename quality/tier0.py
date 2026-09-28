@@ -25,12 +25,14 @@ Components (--only picks a subset):
   needle   fixed-salt passcode at 8k/32k (plus 128k with --long) x depth
            0.1/0.5/0.9; 2 of 3 per length.
 
-Gates (PLAN section 6): see GATES. Output tier0.json lists every criterion
-PASS/FAIL and a one-line verdict. Exit 1 on any FAIL. c<=2 always (MAX_NUM_SEQS=2);
-nll and greedy run at c=1. Never run next to a bench.
+Gates (PLAN section 6): see GATES. --stage gates are margins around the
+reference's own A/A (rerun) statistics, because the serve is not run-to-run
+deterministic; --stage-absolute restores the PLAN's fixed floors. Output
+tier0.json lists every criterion PASS/FAIL and a one-line verdict. Exit 1 on any
+FAIL. c<=2 always (MAX_NUM_SEQS=2); nll and greedy run at c=1. Never run next to a bench.
 
   python3 quality/tier0.py record --name libertai-caca4e6
-  python3 quality/tier0.py compare --ref libertai-caca4e6 [--stage fp8|nvfp4]
+  python3 quality/tier0.py compare --ref libertai-caca4e6 [--stage fp8|nvfp4 [--stage-absolute]]
 """
 from __future__ import annotations
 
@@ -58,16 +60,26 @@ COMPONENTS = ["nll", "greedy", "count", "kwargs", "utf8", "tools", "vision", "ne
 NEEDLE_LENGTHS = (8192, 32768)
 NEEDLE_LONG = 131072
 DEPTHS = (0.1, 0.5, 0.9)
-STAGES = {"fp8": {"top1": 0.99, "kl": 1e-3}, "nvfp4": {"top1": 0.98, "kl": 3e-3}}
+NLL_FLOOR = 0.005
+# --stage margins around the reference's A/A (rerun) stats. The serve is not run-to-run
+# deterministic (e0 A/A: top-1 98.45%, KL 5.1e-3), so fixed floors can never pass.
+STAGES = {"fp8": {"top1_drop": 0.005, "kl_add": 1e-3, "nll_floor": 0.005},
+          "nvfp4": {"top1_drop": 0.015, "kl_add": 3e-3, "nll_floor": 0.01}}
+ABS_STAGES = {"fp8": {"top1": 0.99, "kl": 1e-3}, "nvfp4": {"top1": 0.98, "kl": 3e-3}}  # --stage-absolute
+ABS_RULES = {
+    "nll.top1_stage": "top-1 agreement >= absolute stage floor (fp8 99%, nvfp4 98%)",
+    "nll.kl_stage": "mean top-20 KL(ref||cand) <= absolute stage ceiling (fp8 1e-3, nvfp4 3e-3)",
+}
 GATES = {
-    "nll.delta": "|mean NLL - ref| <= max(3 * sigma, 0.005) nats/token; sigma = ref rerun |delta|",
+    "nll.delta": ("|mean NLL - ref| <= max(3 * sigma, floor) nats/token; sigma = ref rerun |delta|; "
+                  "floor 0.005 (--stage nvfp4: 0.01)"),
     "nll.top1_rerun": "top-1 agreement >= ref rerun top-1 agreement - 0.5 points",
-    "nll.top1_stage": "top-1 agreement >= stage floor (fp8 99%, nvfp4 98%)",
-    "nll.kl_stage": "mean top-20 KL(ref||cand) <= stage ceiling (fp8 1e-3, nvfp4 3e-3)",
+    "nll.top1_stage": "top-1 agreement >= ref rerun (A/A) top-1 agreement - stage drop (fp8 0.5, nvfp4 1.5 points)",
+    "nll.kl_stage": "mean top-20 KL(ref||cand) <= ref rerun (A/A) KL + stage margin (fp8 1e-3, nvfp4 3e-3)",
     "greedy.hazard": "golden divergence hazard <= 2 * max(ref A/A hazard, 0.005)",
     "count": "thinking-off count is exactly 1..200",
     "kwargs.core": "the 10 kwarg-matrix cells other than thinking:true pass",
-    "kwargs.thinking_alias": "both thinking:true cells pass (known FAIL until the QUAL-2 template alias)",
+    "kwargs.thinking_alias": "both thinking:true cells pass (the template's thinking alias, QUAL-2)",
     "utf8": "zero U+FFFD, rows 1..40 present, every n^2 right, finish_reason stop",
     "tools.json_valid": "tool-call JSON-valid rate >= 0.98 over 50 calls (a missing call counts as invalid)",
     "vision": "every vision check passes (video may SKIP)",
@@ -108,6 +120,9 @@ KWARG_SHAPES = [
     ("effort_low", {"reasoning_effort": "low"}, True),
     ("effort_none", {"reasoning_effort": "none"}, False),
 ]
+# Below Max effort the template opens <think> but the model may close it at once on
+# this one-word question (live 2026-09-27: low and high both gave "</think>Paris").
+REASONING_OPTIONAL = {"effort_low"}
 COT_STARTS = ("okay", "ok,", "ok so", "let me", "let's", "hmm", "the user", "we need", "i need to",
               "first,", "alright", "wait", "so the question", "thinking")
 
@@ -220,14 +235,14 @@ def looks_like_cot(content: str) -> bool:
     return t.startswith(COT_STARTS) or "</think>" in t or "<think>" in t or len(t) > 300
 
 
-def judge_kwarg_cell(out: dict, think: bool) -> dict:
+def judge_kwarg_cell(out: dict, think: bool, reasoning_optional: bool = False) -> dict:
     content, reasoning = (out.get("content") or "").strip(), (out.get("reasoning") or "").strip()
     checks = {
         "content": bool(content),
         "answer": "paris" in content.lower(),
         "no_think_tags": "<think>" not in content and "</think>" not in content,
-        "reasoning": bool(reasoning) if think else not reasoning,
-        "no_cot": True if think else not looks_like_cot(content),
+        "reasoning": (bool(reasoning) or reasoning_optional) if think else not reasoning,
+        "no_cot": True if think and reasoning else not looks_like_cot(content),
         "finished": out.get("finish_reason") == "stop",
     }
     return {"pass": all(checks.values()), "checks": checks, "content": content[:120],
@@ -249,7 +264,7 @@ def judge_utf8(out: dict) -> dict:
     rows = {}
     for line in (out.get("content") or "").splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 4 and cells[0].isdigit():
+        if len(cells) >= 4 and cells[0].isdecimal():  # isdigit() accepts "³", which int() rejects
             rows[int(cells[0])] = cells
     sq_err = cube_err = cn_err = 0
     for n, cells in rows.items():
@@ -421,7 +436,7 @@ def run_kwargs(c: Client, default_thinking: bool) -> dict:
         name, extra, think, stream = job
         out = c.chat(KWARG_PROMPT, stream=stream, temperature=0, max_tokens=2048 if think else 128, **extra)
         return {"cell": f"{name}.{'stream' if stream else 'block'}", "thinking": think,
-                **judge_kwarg_cell(out, think)}
+                **judge_kwarg_cell(out, think, name in REASONING_OPTIONAL)}
 
     cells = pmap(one, jobs)
     return {"pass": all(x["pass"] for x in cells), "passed": sum(x["pass"] for x in cells),
@@ -481,11 +496,11 @@ def run_needle(c: Client, lengths) -> dict:
 
 # ------------------------------------------------------------------ gates
 
-def _crit(name: str, ok: bool, value, limit) -> dict:
-    return {"name": name, "pass": bool(ok), "value": value, "limit": limit, "rule": GATES[name]}
+def _crit(name: str, ok: bool, value, limit, rule: str | None = None) -> dict:
+    return {"name": name, "pass": bool(ok), "value": value, "limit": limit, "rule": rule or GATES[name]}
 
 
-def criteria(comps: dict, ref: dict | None, stage: str | None, skip: set) -> list[dict]:
+def criteria(comps: dict, ref: dict | None, stage: str | None, skip: set, absolute: bool = False) -> list[dict]:
     rows = []
     for name, comp in comps.items():
         if "error" in comp:
@@ -493,18 +508,28 @@ def criteria(comps: dict, ref: dict | None, stage: str | None, skip: set) -> lis
                          "limit": None, "rule": "component ran without an exception"})
     nll = comps.get("nll", {}).get("vs_ref")
     if nll and ref:
-        sigma = ref["nll"].get("rerun", {}).get("abs_delta")
-        lim = max(3 * (sigma or 0.0), 0.005)
+        aa = ref["nll"].get("rerun", {})  # the reference's A/A: its two captures inside record
+        rel = STAGES[stage] if stage and not absolute else None
+        lim = max(3 * (aa.get("abs_delta") or 0.0), rel["nll_floor"] if rel else NLL_FLOOR)
         rows.append(_crit("nll.delta", abs(nll["delta"]) <= lim and not nll["mismatched_docs"],
                           nll["delta"], round(lim, 6)))
-        r_top1 = ref["nll"].get("rerun", {}).get("top1_agree")
-        if r_top1 is not None:
-            rows.append(_crit("nll.top1_rerun", nll["top1_agree"] >= r_top1 - 0.005,
-                              nll["top1_agree"], round(r_top1 - 0.005, 6)))
-        if stage:
-            rows.append(_crit("nll.top1_stage", nll["top1_agree"] >= STAGES[stage]["top1"],
-                              nll["top1_agree"], STAGES[stage]["top1"]))
-            rows.append(_crit("nll.kl_stage", nll["kl"] <= STAGES[stage]["kl"], nll["kl"], STAGES[stage]["kl"]))
+        r_top1 = aa.get("top1_agree")
+        if rel:  # replaces nll.top1_rerun; a reference without A/A stats fails
+            t_lim = None if r_top1 is None else round(r_top1 - rel["top1_drop"], 6)
+            k_lim = None if aa.get("kl") is None else round(aa["kl"] + rel["kl_add"], 8)
+            rows.append(_crit("nll.top1_stage", t_lim is not None and nll["top1_agree"] >= t_lim,
+                              nll["top1_agree"], t_lim))
+            rows.append(_crit("nll.kl_stage", k_lim is not None and nll["kl"] <= k_lim, nll["kl"], k_lim))
+        else:
+            if r_top1 is not None:
+                rows.append(_crit("nll.top1_rerun", nll["top1_agree"] >= r_top1 - 0.005,
+                                  nll["top1_agree"], round(r_top1 - 0.005, 6)))
+            if stage:
+                floor = ABS_STAGES[stage]
+                rows.append(_crit("nll.top1_stage", nll["top1_agree"] >= floor["top1"], nll["top1_agree"],
+                                  floor["top1"], ABS_RULES["nll.top1_stage"]))
+                rows.append(_crit("nll.kl_stage", nll["kl"] <= floor["kl"], nll["kl"], floor["kl"],
+                                  ABS_RULES["nll.kl_stage"]))
     g = comps.get("greedy", {}).get("golden")
     if g and ref:
         lim = 2 * max(ref["greedy"]["aa"]["hazard"], 0.005)
@@ -612,7 +637,10 @@ def main(argv=None) -> int:
     ap.add_argument("mode", choices=["record", "compare"])
     ap.add_argument("--name", help="record: reference name (written to <evals>/ref/<name>.json)")
     ap.add_argument("--ref", help="compare: reference name or path")
-    ap.add_argument("--stage", choices=sorted(STAGES), help="compare: apply weight-quant stage floors")
+    ap.add_argument("--stage", choices=sorted(STAGES),
+                    help="compare: weight-quant stage gates, as margins around the reference's A/A (rerun) stats")
+    ap.add_argument("--stage-absolute", action="store_true",
+                    help="--stage uses the PLAN's fixed floors (fp8 99%% / 1e-3, nvfp4 98%% / 3e-3) instead")
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default=None, help="default: first id in /v1/models")
     ap.add_argument("--only", default=",".join(COMPONENTS), help=f"comma list from {COMPONENTS}")
@@ -631,9 +659,12 @@ def main(argv=None) -> int:
         ap.error("record needs --name")
     if args.mode == "compare" and not args.ref:
         ap.error("compare needs --ref")
+    if args.stage_absolute and not args.stage:
+        ap.error("--stage-absolute needs --stage")
     t0 = time.time()
     got = run(args)
-    rows = criteria(got["comps"], got["ref"], args.stage, set(filter(None, args.skip_gate.split(","))))
+    rows = criteria(got["comps"], got["ref"], args.stage, set(filter(None, args.skip_gate.split(","))),
+                    args.stage_absolute)
     ref_name = args.ref if args.mode == "compare" else None
     line = verdict(args.mode, ref_name, rows)
     for r in rows:
@@ -642,7 +673,8 @@ def main(argv=None) -> int:
     out = args.out or EVALS_DIR / "runs" / f"{utc_stamp()}-tier0-{args.mode}" / "tier0.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     result = {"schema": 1, "mode": args.mode, "ts": utc_stamp(), "url": args.url, "ref": ref_name,
-              "name": args.name, "stage": args.stage, "elapsed_s": round(time.time() - t0, 1),
+              "name": args.name, "stage": args.stage, "stage_absolute": args.stage_absolute,
+              "elapsed_s": round(time.time() - t0, 1),
               "criteria": rows, "verdict": line, "components": got["comps"]}
     out.write_text(json.dumps(result, indent=1, ensure_ascii=False) + "\n")
     print(f"written: {out}")

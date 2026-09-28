@@ -1,0 +1,51 @@
+E2d (bisect boot 2 of 2): FP8 W8A16 on draft + kda_in only; lm_head, kda_o, mla, shared stay BF16
+  serve   IMAGE=glm53-sm121-v13 WARM_SHARDS=0 EXTRA_ENV='MAX_JOBS=2 GLM53_FP8_W8A16=draft,kda_in'
+          (../e2-tools/cfg.sh; run.sh @ f786818), nvidia 09b04e5, drafter 7d74cdd, DFlash2-7, seqs 2, kv pin 4.14 GiB,
+          JIT cache warm. Args/image parity OK. Booted under kit/uma_watch.py (default floors).
+
+Why this config. E2c (FP8 on draft,shared,mla,kda_o) still added 3.8e-3 KL, so the three output-side groups carry most of
+E2a's 5.2e-3 and lm_head + kda_in together ~1.4e-3. The given order's step 3 (kda_o -> BF16) would keep shared and mla,
+which sit in that high-KL half. kda_in is the largest single group (7.6 of the 20.3 ms FP8 saving per step), so FP8 on
+kda_in alone had the best chance to pass while keeping E2c's speed.
+
+swap lines (both ranks identical)
+  target  kda_in[fp8]=34 layers 3340.5->1675.3 MiB; torch reserved 88.96 -> 88.67 GiB (0.29 of 1.63 GiB returned)
+  draft   draft[fp8]=32 layers 1162.0->581.3 MiB; torch reserved 91.11 -> 90.76 GiB
+  Model loading took 88.17 GiB per rank (E1a 90.36).
+
+boot  run.sh 21:07:57Z -> /v1/models 21:23:52Z (15.9 min); head Loading 716.4 s / Model 767.8 s; worker 215.7 s / 303.2 s;
+      init engine 37.3 s; KV pool 372,877.
+MemAvailable GiB (spark1 / spark2): LOAD min 14.17 / 15.43, PROFILE 10.99 / 12.01, KV_READY 5.97 / 10.28,
+  after ready 8.16 / 10.58 (E1a 8.04 / 9.90: +0.1 / +0.7), SERVING min 8.03 / 10.50.
+
+checks: count-200 200/200, thinking-off "PING". Tier 0 compare --stage fp8: FAIL 9/11 (below).
+
+ruler v2 fast gate (all cells valid) and T
+  cell   tok/s            step_ms          acc_len          per_pos p1..p7 (bench-1)
+  A      21.76 / 22.14    104.3 / 104.3    2.274 / 2.316    .634 .339 .170 .070 .028 .014 .008
+  B      37.55 / 38.46    109.3 / 109.3    4.136 / 4.220    .836 .655 .501 .388 .299 .224 .160
+  J@c1   76.29 / 74.67    104.3 / 105.2    8.000 / 7.949
+  J@c2   64.91 / 61.48    122.6 / 127.3    8.000 / 7.884
+  H      15.16 / 15.32    150.5 / 149.7    2.280 / 2.293
+  T      26.85            102.4            2.766            .703 .437 .262 .158 .095 .057 .040
+  kit/compare.py vs E0: A +11.3% [+9.3,+13.3] step -9.5% acc +0.7%; B +9.7%; J@c1 +9.6%; H +9.9%; J@c2 +12.5%
+  (compare-vs-e0.txt, compare-vs-e1a.txt). Step A 115.3 -> 104.3 ms (-11.0 ms; byte model -10.4 ms).
+
+Tier 0 (tier0.json), compare --stage fp8 vs nvidia-v11-k7, 21:44:15Z..21:52:11Z
+                     E1a cross-boot A/A   E2d          tool limit        cross-boot limit
+  dNLL               -0.000120            +0.000402    0.005 PASS        0.005 PASS
+  top-1              0.983264             0.979626     0.979469 PASS     0.978264 PASS
+  KL top-20          5.864e-3             8.263e-3     6.137e-3 FAIL     6.864e-3 FAIL (+2.4e-3 over A/A, margin 1e-3)
+  greedy hazard      0.016716 (17/20)     0.014111 (15/20)   0.019178 PASS
+  utf8               pass                 FAIL: 40/40 rows, 0 U+FFFD, 8 wrong squares (E0 notes wrong squares as the
+                                          model's own top-1 choices in 3 of 4 probe runs; flaky)
+  count 200, kwargs 12/12, tools json 1.00, vision 13/13, needle 3/3 + 3/3: PASS
+  tool verdict: FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.kl_stage, utf8
+
+KL added over the cross-boot A/A (5.864e-3), per boot; the drafter cannot change Tier-0 nll (prefill only):
+  E2a  FP8 kda_in,kda_o,mla,shared,lm_head   +5.17e-3
+  E2c  FP8 kda_o,mla,shared                  +3.80e-3
+  E2d  FP8 kda_in                            +2.40e-3
+  E2c + E2d = 6.2e-3 > E2a, so either the pieces are sub-additive or boot noise is ~1e-3. Either way no single large
+  group fits the 1e-3 fp8 margin with per-output-channel FP8 scales. Bisection budget (2 boots) used; no quantized
+  target group passes Tier 0.

@@ -1,0 +1,1182 @@
+{
+ "schema": 1,
+ "mode": "record",
+ "ts": "20260927T144525Z",
+ "url": "http://127.0.0.1:8000",
+ "ref": null,
+ "name": "nvidia-v11-k7",
+ "stage": null,
+ "elapsed_s": 725.9,
+ "criteria": [
+  {
+   "name": "kwargs.core",
+   "pass": false,
+   "value": 8,
+   "limit": 10,
+   "rule": "the 10 kwarg-matrix cells other than thinking:true pass"
+  },
+  {
+   "name": "kwargs.thinking_alias",
+   "pass": true,
+   "value": 2,
+   "limit": 2,
+   "rule": "both thinking:true cells pass (known FAIL until the QUAL-2 template alias)"
+  },
+  {
+   "name": "count",
+   "pass": true,
+   "value": 200,
+   "limit": 200,
+   "rule": "thinking-off count is exactly 1..200"
+  },
+  {
+   "name": "utf8",
+   "pass": false,
+   "value": 0,
+   "limit": 0,
+   "rule": "zero U+FFFD, rows 1..40 present, every n^2 right, finish_reason stop"
+  },
+  {
+   "name": "vision",
+   "pass": false,
+   "value": 12,
+   "limit": null,
+   "rule": "every vision check passes (video may SKIP)"
+  },
+  {
+   "name": "needle",
+   "pass": true,
+   "value": {
+    "8192": 3,
+    "32768": 3
+   },
+   "limit": ">=2 each",
+   "rule": "each length finds >= 2 of 3 depths"
+  },
+  {
+   "name": "tools.json_valid",
+   "pass": true,
+   "value": 1.0,
+   "limit": 0.98,
+   "rule": "tool-call JSON-valid rate >= 0.98 over 50 calls (a missing call counts as invalid)"
+  }
+ ],
+ "verdict": "FAIL tier0 record: 4/7 criteria; failed kwargs.core, utf8, vision",
+ "components": {
+  "nll": {
+   "docs": 96,
+   "tokens": 184990,
+   "mean_nll": 0.484849,
+   "rerun": {
+    "abs_delta": 0.000627,
+    "top1_agree": 0.984469,
+    "kl": 0.00513701,
+    "mean_nll": 0.484222
+   },
+   "s": 324.6
+  },
+  "greedy": {
+   "aa": {
+    "hazard": 0.009589,
+    "diverged": 14,
+    "pairs": 20,
+    "first_div": [
+     44,
+     null,
+     null,
+     20,
+     76,
+     null,
+     null,
+     70,
+     null,
+     128,
+     17,
+     9,
+     12,
+     26,
+     113,
+     25,
+     0,
+     null,
+     90,
+     149
+    ]
+   },
+   "s": 197.3
+  },
+  "count": {
+   "pass": true,
+   "n_numbers": 200,
+   "first_bad": null,
+   "finish_reason": "stop",
+   "s": 6.2
+  },
+  "kwargs": {
+   "pass": false,
+   "passed": 10,
+   "total": 12,
+   "cells": [
+    {
+     "cell": "default.block",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "default.stream",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "enable_thinking_false.block",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "enable_thinking_false.stream",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "enable_thinking_true.block",
+     "thinking": true,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 127,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "enable_thinking_true.stream",
+     "thinking": true,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 127,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "thinking_true.block",
+     "thinking": true,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 127,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "thinking_true.stream",
+     "thinking": true,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 127,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "effort_low.block",
+     "thinking": true,
+     "pass": false,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": false,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "effort_low.stream",
+     "thinking": true,
+     "pass": false,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": false,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "effort_none.block",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    },
+    {
+     "cell": "effort_none.stream",
+     "thinking": false,
+     "pass": true,
+     "checks": {
+      "content": true,
+      "answer": true,
+      "no_think_tags": true,
+      "reasoning": true,
+      "no_cot": true,
+      "finished": true
+     },
+     "content": "Paris",
+     "reasoning_chars": 0,
+     "finish_reason": "stop"
+    }
+   ],
+   "s": 5.1
+  },
+  "utf8": {
+   "pass": false,
+   "fffd": 0,
+   "rows": 40,
+   "complete": true,
+   "square_errors": 8,
+   "cube_errors": 0,
+   "chinese_numeral_errors": 0,
+   "finish_reason": "stop",
+   "s": 25.1
+  },
+  "tools": {
+   "n": 50,
+   "json_valid": 1.0,
+   "called": 1.0,
+   "name_ok": 1.0,
+   "args_ok": 0.96,
+   "items": [
+    {
+     "id": "t00",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "get_weather",
+       "arguments": "{\"city\": \"Wellington\", \"unit\": \"celsius\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t01",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "get_weather",
+       "arguments": "{\"city\": \"Tokyo\", \"unit\": \"fahrenheit\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t02",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "get_weather",
+       "arguments": "{\"city\": \"Berlin\", \"unit\": \"celsius\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t03",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "convert_currency",
+       "arguments": "{\"amount\": 250, \"from_currency\": \"USD\", \"to_currency\": \"EUR\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t04",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "convert_currency",
+       "arguments": "{\"amount\": 99.5, \"from_currency\": \"GBP\", \"to_currency\": \"JPY\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t05",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "convert_currency",
+       "arguments": "{\"amount\": 1200, \"from_currency\": \"NZD\", \"to_currency\": \"AUD\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t06",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "create_event",
+       "arguments": "{\"date\": \"2026-10-14\", \"duration_minutes\": 45, \"start_time\": \"15:30\", \"title\": \"Quarterly review\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t07",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "create_event",
+       "arguments": "{\"attendees\": [\"ana@example.com\", \"raj@example.com\"], \"date\": \"2026-11-02\", \"start_time\": \"09:00\", \"title\": \"Standup\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t08",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "create_event",
+       "arguments": "{\"date\": \"2027-01-05\", \"start_time\": \"08:15\", \"title\": \"Dentist\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t09",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "search_flights",
+       "arguments": "{\"date\": \"2026-12-20\", \"destination\": \"SYD\", \"origin\": \"AKL\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t10",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "search_flights",
+       "arguments": "{\"cabin\": \"business\", \"date\": \"2027-03-01\", \"destination\": \"LHR\", \"origin\": \"JFK\", \"passengers\": 2}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t11",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "search_flights",
+       "arguments": "{\"cabin\": \"economy\", \"date\": \"2026-11-11\", \"destination\": \"NRT\", \"origin\": \"SFO\", \"passengers\": 3}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t12",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "send_email",
+       "arguments": "{\"body\": \"Are you free at noon?\", \"subject\": \"Lunch\", \"to\": \"bob@example.com\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t13",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "send_email",
+       "arguments": "{\"body\": \"The backup disk is 95% full. Please take action to free up space or expand capacity as needed.\", \"cc\": [\"sre@example.com\"], \"subject\": \"Disk alert\", \"to\": \"ops@example.com\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t14",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "send_email",
+       "arguments": "{\"body\": \"Dear HR,\\n\\nI would like to request leave this Friday. Please let me know if you need any additional information or if there are any forms I need to complete.\\n\\nThank you for your consideration.\\n\\nBest regards\", \"subject\": \"Leave request\", \"to\": \"hr@example.com\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t15",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "set_thermostat",
+       "arguments": "{\"room\": \"living room\", \"temperature_c\": 21.5}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t16",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "set_thermostat",
+       "arguments": "{\"mode\": \"cool\", \"room\": \"bedroom\", \"temperature_c\": 19}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t17",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "set_thermostat",
+       "arguments": "{\"mode\": \"heat\", \"room\": \"office\", \"temperature_c\": 22}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t18",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "lookup_stock",
+       "arguments": "{\"ticker\": \"NVDA\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t19",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "lookup_stock",
+       "arguments": "{\"exchange\": \"NASDAQ\", \"ticker\": \"AAPL\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t20",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "lookup_stock",
+       "arguments": "{\"ticker\": \"MSFT\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t21",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "add_todo",
+       "arguments": "{\"task\": \"renew passport\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t22",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "add_todo",
+       "arguments": "{\"due_date\": \"2027-04-15\", \"priority\": \"high\", \"task\": \"File taxes\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t23",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "add_todo",
+       "arguments": "{\"priority\": \"low\", \"tags\": [\"groceries\", \"home\"], \"task\": \"buy milk\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t24",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "run_sql",
+       "arguments": "{\"query\": \"SELECT count(*) FROM orders\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t25",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "run_sql",
+       "arguments": "{\"limit\": 10, \"query\": \"SELECT * FROM users ORDER BY created_at DESC\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t26",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "run_sql",
+       "arguments": "{\"query\": \"SELECT COUNT(*) AS row_count FROM events\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t27",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "translate_text",
+       "arguments": "{\"target_language\": \"es\", \"text\": \"good morning, how are you?\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t28",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "translate_text",
+       "arguments": "{\"formal\": true, \"target_language\": \"de\", \"text\": \"Please sign the contract\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t29",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "translate_text",
+       "arguments": "{\"target_language\": \"ja\", \"text\": \"thank you very much\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t30",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "get_route",
+       "arguments": "{\"avoid_tolls\": true, \"end\": \"Palmerston North\", \"mode\": \"driving\", \"start\": \"Wellington\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t31",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": false,
+     "calls": [
+      {
+       "name": "get_route",
+       "arguments": "{\"end\": \"Brooklyn Bridge, New York, NY\", \"mode\": \"cycling\", \"start\": \"Central Park, New York, NY\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t32",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": false,
+     "calls": [
+      {
+       "name": "get_route",
+       "arguments": "{\"end\": \"Eiffel Tower, Paris\", \"mode\": \"walking\", \"start\": \"Louvre, Paris\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t33",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "book_restaurant",
+       "arguments": "{\"date\": \"2026-10-31\", \"party_size\": 4, \"restaurant\": \"Logan Brown\", \"time\": \"19:30\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t34",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "book_restaurant",
+       "arguments": "{\"date\": \"2026-12-24\", \"notes\": \"window seat\", \"party_size\": 2, \"restaurant\": \"Hiakai\", \"time\": \"20:00\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t35",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "book_restaurant",
+       "arguments": "{\"date\": \"2027-02-14\", \"party_size\": 6, \"restaurant\": \"Noma\", \"time\": \"18:00\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t36",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "compute_loan",
+       "arguments": "{\"annual_rate_percent\": 6.25, \"principal\": 450000, \"years\": 30}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t37",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "compute_loan",
+       "arguments": "{\"annual_rate_percent\": 4.9, \"principal\": 20000, \"years\": 5}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t38",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "compute_loan",
+       "arguments": "{\"annual_rate_percent\": 5.5, \"principal\": 1200000, \"years\": 25}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t39",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "resize_image",
+       "arguments": "{\"height\": 600, \"path\": \"/data/photos/cat.png\", \"width\": 800}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t40",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "resize_image",
+       "arguments": "{\"height\": 480, \"keep_aspect\": false, \"path\": \"/tmp/banner.jpg\", \"width\": 1920}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t41",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "resize_image",
+       "arguments": "{\"height\": 256, \"keep_aspect\": true, \"path\": \"/home/me/logo.webp\", \"width\": 256}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t42",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "get_weather",
+       "arguments": "{\"city\": \"São Paulo\", \"unit\": \"celsius\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t43",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "convert_currency",
+       "arguments": "{\"amount\": 3500, \"from_currency\": \"CHF\", \"to_currency\": \"USD\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t44",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "create_event",
+       "arguments": "{\"attendees\": [\"lee@example.com\"], \"date\": \"2026-10-20\", \"duration_minutes\": 240, \"start_time\": \"10:00\", \"title\": \"Team offsite\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t45",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "search_flights",
+       "arguments": "{\"cabin\": \"premium\", \"date\": \"2026-12-01\", \"destination\": \"FCO\", \"origin\": \"CDG\", \"passengers\": 1}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t46",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "set_thermostat",
+       "arguments": "{\"mode\": \"auto\", \"room\": \"kitchen\", \"temperature_c\": 20}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t47",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "translate_text",
+       "arguments": "{\"target_language\": \"en\", \"text\": \"où est la gare ?\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t48",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "add_todo",
+       "arguments": "{\"due_date\": \"2026-10-01\", \"priority\": \"medium\", \"task\": \"Call mum\"}"
+      }
+     ],
+     "content": ""
+    },
+    {
+     "id": "t49",
+     "n_calls": 1,
+     "json_valid": true,
+     "name_ok": true,
+     "args_ok": true,
+     "calls": [
+      {
+       "name": "lookup_stock",
+       "arguments": "{\"ticker\": \"TSLA\"}"
+      }
+     ],
+     "content": ""
+    }
+   ],
+   "s": 58.5
+  },
+  "vision": {
+   "pass": false,
+   "passed": 12,
+   "total": 13,
+   "skipped": [],
+   "checks": [
+    {
+     "name": "tokens",
+     "pass": true,
+     "answer": 258,
+     "expected": 258
+    },
+    {
+     "name": "solid.red",
+     "pass": true,
+     "answer": "Red",
+     "expected": "red"
+    },
+    {
+     "name": "solid.green",
+     "pass": true,
+     "answer": "Green",
+     "expected": "green"
+    },
+    {
+     "name": "solid.blue",
+     "pass": true,
+     "answer": "Blue",
+     "expected": "blue"
+    },
+    {
+     "name": "solid.yellow",
+     "pass": true,
+     "answer": "Yellow",
+     "expected": "yellow"
+    },
+    {
+     "name": "quadrants",
+     "pass": true,
+     "answer": "top-left=red, top-right=green, bottom-left=blue, bottom-right=yellow",
+     "expected": {
+      "top-left": "red",
+      "top-right": "green",
+      "bottom-left": "blue",
+      "bottom-right": "yellow"
+     }
+    },
+    {
+     "name": "count.3",
+     "pass": true,
+     "answer": "3",
+     "expected": 3
+    },
+    {
+     "name": "count.5",
+     "pass": true,
+     "answer": "5",
+     "expected": 5
+    },
+    {
+     "name": "ocr.7F3A91",
+     "pass": true,
+     "answer": "7F3A91",
+     "expected": "7F3A91"
+    },
+    {
+     "name": "ocr.K9P2X",
+     "pass": true,
+     "answer": "K9P2X",
+     "expected": "K9P2X"
+    },
+    {
+     "name": "order.red-blue",
+     "pass": true,
+     "answer": "First",
+     "expected": "first"
+    },
+    {
+     "name": "order.blue-red",
+     "pass": true,
+     "answer": "Second",
+     "expected": "second"
+    },
+    {
+     "name": "video",
+     "pass": false,
+     "status": "FAIL",
+     "answer": "3186",
+     "expected": "3816"
+    }
+   ],
+   "s": 8.1
+  },
+  "needle": {
+   "pass": true,
+   "per_length": {
+    "8192": 3,
+    "32768": 3
+   },
+   "cells": {
+    "8192@0.1": {
+     "found": true,
+     "code": "HWQ-6256-JT",
+     "answer": "HWQ-6256-JT",
+     "prompt_tokens": 7970,
+     "s": 6.94
+    },
+    "8192@0.5": {
+     "found": true,
+     "code": "RPC-3385-ZT",
+     "answer": "RPC-3385-ZT",
+     "prompt_tokens": 8084,
+     "s": 6.9
+    },
+    "8192@0.9": {
+     "found": true,
+     "code": "ZJR-7748-XS",
+     "answer": "ZJR-7748-XS",
+     "prompt_tokens": 8021,
+     "s": 6.66
+    },
+    "32768@0.1": {
+     "found": true,
+     "code": "KCB-1916-GQ",
+     "answer": "KCB-1916-GQ",
+     "prompt_tokens": 32100,
+     "s": 26.32
+    },
+    "32768@0.5": {
+     "found": true,
+     "code": "VCP-1385-RW",
+     "answer": "VCP-1385-RW",
+     "prompt_tokens": 32555,
+     "s": 26.72
+    },
+    "32768@0.9": {
+     "found": true,
+     "code": "MHJ-3382-XJ",
+     "answer": "MHJ-3382-XJ",
+     "prompt_tokens": 32551,
+     "s": 26.66
+    }
+   },
+   "s": 100.7
+  }
+ }
+}

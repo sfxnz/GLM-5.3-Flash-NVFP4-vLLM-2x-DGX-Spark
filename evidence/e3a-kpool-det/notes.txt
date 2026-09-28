@@ -1,0 +1,116 @@
+E3a: correctness bundle on the 6-patch v13 image. GLM53_KPOOL_TAIL_FIX=1 + GLM53_DETERMINISTIC_MLA_INDEX=1 on top of E2e.
+  serve   IMAGE=glm53-sm121-v13 (56c6084f422c, rebuilt from 0308983, ../e3-v13-build/) EXTRA_ENV='MAX_JOBS=2
+          GLM53_NVFP4_W4A16=draft GLM53_KPOOL_TAIL_FIX=1 GLM53_DETERMINISTIC_MLA_INDEX=1' (../e3-tools/cfg.sh), nvidia 09b04e5,
+          drafter 7d74cdd, DFlash2-7, seqs 2, kv pin 4.14 GiB. New image ID, so the JIT cache
+          (~/projects/data/glm53-jit-cache/56c6084f422c) was cold. VALIDATE_ONLY=1 first (validate-only.txt): image parity OK.
+          Args/image parity OK on the served containers (docker-args-check.txt; env differs only by the head's HF tokens,
+          as in E2e). Booted under kit/uma_watch.py (default floors).
+
+boot 1 (boot1-killed/): run.sh 00:51:18Z, killed 01:06:31Z by uma_watch's PROFILE slope rule on spark2:
+  14.91 -> 13.90 -> 13.07 GiB in two 0.25 s samples (floor 8 GiB). That is the same ~1.8 GiB step the profile run takes
+  about 13 s into PROFILE on every boot: E2e took it as one 1.51 GiB sample (14.38 -> 12.87) and went on to 11.74.
+  Here it fell across two samples, so the rule fired. Both ranks stopped in 3.7 s, nodes clean. Reported as a false
+  positive of the slope heuristic (kit/ is not this lane's to edit). Retried unchanged.
+boot 2 (this dir): run.sh 01:07:36Z -> /v1/models 01:27:27Z (19.9 min); head Loading 682.6 s / Model 746.3 s; worker
+  215.0 s / 293.9 s; init engine 319.8 s (E2e warm: 46.7 s; cold JIT adds ~270 s). KV pool 372,877 tokens (both ranks).
+
+GLM53_ lines (glm53-lines.txt; per rank):
+  head   GLM53_DETERMINISTIC_MLA_INDEX: kpool pools sorted per row, sparse-MLA index compaction in column order (x3 processes)
+         GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)
+         GLM53_NVFP4_W4A16: DFlash2Qwen3ForCausalLM draft[nvfp4]=32 layers 1162.0->326.8 MiB
+  worker the same three lines (DETERMINISTIC x2).
+  The Triton cache for this image holds one _convert_req_index_to_global_index_kernel build: 16 warps and no atomic in
+  its TTIR, i.e. the NUM_COLS>0 one-program-per-row path. The deterministic compaction is what served.
+
+MemAvailable GiB (spark1 / spark2), memory-by-phase.txt:
+  LOAD min 13.89 / 15.16, PROFILE 8.30 / 8.66 (cold JIT; E2e warm 10.88 / 11.74), KV_READY 4.24 / 6.47,
+  SERVING min 3.53 / 8.87 (spark1 at 01:27:51 right after ready; E2e 4.77 / 10.81). spark1 read low for the first
+  ~10 min (swap 7.0 GiB, page cache) and sat at 5.3-7.2 GiB from bench-2 on. Worst client window: Tier 0 compare
+  (spark1 3.97, spark2 9.21). Client memguard (3.0 GiB) never fired.
+
+checks: count-200 200/200 (stop), thinking-off "PING" with empty reasoning (probe-count.console.txt).
+
+Tier 0 (tier0.json), compare --long vs nvidia-v11-k7 (E0 boot, v11), 01:52:23Z..02:05:43Z
+                     E0 same-boot   E1a cross-boot   E2e          E3a          limit
+  dNLL               -0.000146      -0.000120        -0.000078    +0.000182    0.005 PASS
+  top-1              0.984464       0.983264         0.982686     0.984318     >= 0.979469 PASS
+  KL top-20          5.089e-3       5.864e-3         6.050e-3     5.270e-3     (not gated)
+  greedy hazard      0.009873       0.016716         0.016000     0.014760     <= 0.019178 PASS (16/20 diverged)
+  needle 8k/32k/128k 3/3 3/3 -      3/3 3/3 -        3/3 3/3 -    3/3 3/3 3/3  PASS
+  count 200, kwargs 12/12, utf8 PASS (0 wrong squares), tools json 1.00 (args_ok 0.96)
+  vision 12/13: video answered 3186 (expected 3816), the same answer E0's own compare and E2e gave.
+  tool verdict: FAIL 9/10 on vision (video) only, the same verdict as E0's compare against its own reference.
+  Judged against the cross-boot A/A (top-1 98.33%, KL 5.9e-3, hazard 0.0167): every nll/greedy number is at or
+  inside it (top-1 +0.10 pt, KL -0.6e-3, hazard 0.0148). Short-context quality is unchanged, as expected: below
+  index_topk = 2048 tokens every pool is selected.
+
+Determinism: within-boot A/A with GLM53_DETERMINISTIC_MLA_INDEX=1 (tier0.py record --name e3a-det --only nll,greedy,
+tier0-record.json; ref at ~/projects/data/glm53-evals/ref/e3a-det.json)
+                     E0 record (v11, no switch)   E3a record (switch on)
+  nll |dNLL|         6.27e-4                      6.37e-4
+  nll top-1          98.447% (1.55% disagree)     98.424% (1.58% disagree)
+  nll KL top-20      5.137e-3                     5.137e-3
+  greedy diverged    14/20                        14/20
+  greedy hazard      0.009589                     0.010182
+  No improvement at all. The patch served (kernel check above), so the sparse-MLA index compaction race is not the
+  main source of within-boot noise, neither in Tier 0's single-chunk prefill (as quality/README.md predicted) nor in
+  greedy decode (which it predicted would drop sharply). The noise comes from somewhere else; see the prefill A/A in
+  the probe below, which is as large as the decode-vs-prefill difference at every length.
+
+Decode vs prefill on decode-built pools (the README-v13 kpool probe; ../e3-tools/decode_prefill_probe.py,
+probe-kpool.json, probe-kpool-table.txt). Per scenario: unique-salt filler prompt (tier0 needle filler) + "retell"
+ask, chat template with thinking off; 2000 greedy tokens via /v1/completions (min_tokens=2000, logprobs=0,
+return_token_ids); then prompt+generated ids prefilled twice (prompt_logprobs=0, max_tokens=1, new cache_salt each).
+d = decode lp - prefill-1 lp; aa = prefill-2 lp - prefill-1 lp (the A/A at the same length). Positions >= 64.
+cached_tokens is not reported by this serve (no --enable-prompt-tokens-details); prompt_logprobs requests skip the
+prefix cache in this vLLM, and each pass had its own salt.
+     ctx  c  s  prompt  gen s   d mean aa mean   d p99 aa p99   d max aa max   d>.05 aa>.05  flips p1/p2
+    1500  1  0    1508     76   0.1398  0.1298   2.805  2.697   14.11  14.08   23.2%  23.2%  104/108
+    1500  2  0    1483     77   0.0551  0.0435   0.497  0.483   25.85  24.05    9.4%   9.3%  33/33
+    1500  2  1    1451     87   0.0945  0.0874   1.079  1.090   20.66  20.54   18.9%  19.6%  85/77
+   32768  1  0   32546     95   0.0088  0.0085   0.203  0.240    1.54   0.57    4.1%   4.1%  17/12
+   32768  2  0   32996    144   0.0144  0.0155   0.320  0.344    2.07   1.97    6.9%   7.4%  27/33
+   32768  2  1   33004    146   0.0188  0.0178   0.351  0.363    1.58   1.24    9.6%   8.7%  26/25
+  131072  1  0  131310    164   0.0014  0.0012   0.046  0.037    0.17   0.25    0.9%   0.6%  0/1
+  131072  2  0  130367    163   0.0075  0.0078   0.186  0.210    0.49   0.87    4.3%   3.9%  15/15
+  131072  2  1  130892    329   0.0060  0.0052   0.170  0.128    0.58   0.53    3.2%   2.8%  6/3
+  Result: with the fix, decode-built and prefill-built state agree within the prefill A/A at every length and at c=1
+  and c=2: mean |d| / mean |aa| is 0.93-1.27 over the 9 streams (median 1.08) and p99 |d| / p99 |aa| 0.85-1.33,
+  with no growth from 32k to 128k or from c=1 to c=2. The signed mean of
+  d is slightly positive at 1.5k (+0.04..+0.18) because decode picked each token as its own argmax (selection bias);
+  aa has no such bias. At 128k c=2 stream 1 prefilled behind stream 0 (gen 329 s vs 163 s), so the two decodes
+  overlapped only partly; stream 1 still decoded next to stream 0's steps for part of the run, and 32k c=2 overlapped
+  fully (144/146 s). No switch-off run exists for this image, so this shows the fixed state sits at the noise floor;
+  it does not measure how far v11's state sat above it.
+  ANOMALY (1.5k rows): the prefill A/A itself has outliers of 14-26 nats. The same ids prefilled twice give, e.g.,
+  -25.99 vs -1.93 (1.5k c=2 s0, gen pos 212) and -20.72 vs -0.18 (c=2 s1, pos 505); decode gave -0.14 / -0.06. Each
+  prefill run has 4-13 positions below -5 at different places, decode has none. The 32k and 128k rows have none
+  (max 2.1 / 0.9). At 1.5k + 2000 the sequence is ~3.5k tokens: two prefill chunks, the second one past index_topk
+  with the real top-k. The repeat test on the next boot (../e3b-av-tau0.1/prefill-repeat.*, 6 prefills of one fixed
+  3.5k sequence) shows these swings recur at the same positions and also occur inside a single <=2048-row chunk,
+  where neither the ring nor top-k runs: hypersensitive positions where the residual run-to-run noise most likely
+  flips a discrete choice (MoE top-8 routing, top-k selection; inferred, not traced). Not a kpool-state defect; decode
+  matches prefill as often as two
+  prefills match each other.
+
+ruler v2 fast gate x2 (bench-1, bench-2, all cells valid), T and E; kit/compare.py vs E2e (compare-vs-e2e.txt)
+  cell   E2e b1/b2 tok/s   E3a b1/b2 tok/s   E3a step_ms     E3a acc_len     per_pos p1..p7 (bench-1)
+  A      20.02 / 20.35     19.94 / 20.11     110.9 / 110.6   2.214 / 2.226   .613 .332 .157 .059 .023 .008 .004
+  B      36.41 / 36.15     35.16 / 35.19     116.4 / 115.9   4.115 / 4.103   .822 .654 .494 .388 .298 .217 .163
+  J@c1   71.28 / 71.62     71.56 / 71.60     111.2 / 111.2   8.000 / 8.000
+  J@c2   61.47 / 61.59     61.29 / 58.12     129.9 / 136.8   8.000 / 7.948   (b2: one wave's text diverged, as in E0)
+  H      14.23 / 14.58     14.31 / 14.06     157.1 / 156.5   2.248 / 2.201
+  T      24.88             25.40             108.7           2.762           .693 .439 .258 .149 .099 .065 .042
+  vs E2e: step_ms A -0.5% [-1.0,+0.0], B +0.2%, J@c1 -0.2%, H +0.1%, J@c2 +3.1% [-2.2,+8.3], T -0.3%; tok/s all
+    INCONCLUSIVE(single-boot) inside the +-4% band. B acceptance -2.8% (paired [-4.6,-1.0]); README-v13 expects
+    acceptance to move with a fixed draft order. No step_ms change beyond noise: the ~0.2 ms estimate for the
+    deterministic index plus the tail-slot build stays under the resolution.
+  E (bench-E; one 128-token request per size)
+                E0 (v11)                       E3a
+    E@32k       TTFT 24.7 s, 111.5 ms, 2.327   TTFT 24.2 s (1347 tok/s prefill), 116.4 ms, 2.953
+    E@128k      TTFT 98.4 s, 112.7 ms, 2.822   TTFT 96.6 s (1348 tok/s prefill), 108.4 ms, 2.490
+    One ~43-step request per cell; step_ms moves +-4% either way and acceptance follows the text. Prefill speed flat.
+
+Verdict: the bundle keeps quality at the cross-boot A/A (Tier 0 incl. 128k needle), count-200 and speed within noise,
+and the kpool probe puts decode-built state at the prefill A/A floor. The determinism switch has no measurable
+effect on within-boot noise. Stopped at 02:45Z for E3b (stop.log, stop-after.txt; both nodes clean).

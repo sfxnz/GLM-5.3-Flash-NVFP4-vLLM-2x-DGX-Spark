@@ -1,0 +1,46 @@
+                             E3b.2         E4a         E4b
+dNLL                     -0.000339   -0.000169   -0.000312
+top1_agree                0.984021    0.981599    0.981740
+KL top20                 5.172e-03   6.761e-03   6.826e-03
+greedy hazard             0.010728    0.014953    0.014911
+greedy diverged/20              14          16          16
+greedy first_div med            83          60          46
+chat dNLL                 +0.00120    +0.00187    -0.00092
+chat top1                   0.9754      0.9727      0.9742
+chat KL                  6.412e-03   8.299e-03   8.427e-03
+code dNLL                 -0.00006    -0.00025    -0.00049
+code top1                   0.9930      0.9916      0.9914
+code KL                  3.266e-03   4.425e-03   4.523e-03
+math dNLL                 +0.00046    +0.00107    +0.00049
+math top1                   0.9802      0.9778      0.9773
+math KL                  7.742e-03   9.692e-03   1.005e-02
+multilingual dNLL         -0.00107    -0.00082    -0.00105
+multilingual top1           0.9696      0.9644      0.9658
+multilingual KL          6.740e-03   8.812e-03   8.682e-03
+prose dNLL                -0.00058    -0.00049    +0.00004
+prose top1                  0.9905      0.9892      0.9888
+prose KL                 4.167e-03   5.523e-03   5.578e-03
+count                          200         200         200
+kwargs                          12          12          12
+utf8 sq_err                      5           -           -
+tools json_valid              1.00        1.00        1.00
+tools args_ok                 0.96        0.96        0.96
+vision                          12          13          13
+needle 8k                        3           3           3
+needle 32k                       3           3           3
+nll.delta                     PASS        PASS        PASS
+nll.top1_rerun                PASS           -           -
+greedy.hazard                 PASS        PASS        PASS
+kwargs.core                   PASS        PASS        PASS
+kwargs.thinking_alias         PASS        PASS        PASS
+count                         PASS        PASS        PASS
+utf8                          FAIL           -           -
+vision                        FAIL        PASS        PASS
+needle                        PASS        PASS        PASS
+tools.json_valid              PASS        PASS        PASS
+utf8.error                       -        FAIL        FAIL
+nll.top1_stage                   -        PASS        PASS
+nll.kl_stage                     -        FAIL        FAIL
+E3b.2: stage=None FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+E4a: stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed utf8.error, nll.kl_stage
+E4b: stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed utf8.error, nll.kl_stage

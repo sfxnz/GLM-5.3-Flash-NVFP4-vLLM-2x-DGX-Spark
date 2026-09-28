@@ -1,4 +1,5 @@
 # vendored from sfxnz/forge kit @ 3d294ff
+# Local change: the measured table adds step ms and acceptance length columns, and a row's evidence may be a list.
 # Regenerate the marked blocks of run.sh and README.md from recipe.yaml.
 #
 #   python3 kit/render.py            rewrite the generated blocks in place
@@ -30,8 +31,8 @@ DEFAULT_LINE = re.compile(r'^([A-Z][A-Z0-9_]*)="\$\{\1:-.*\}"$')
 PLACEHOLDER = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 DEFAULTS_HEADER = ["| Setting | Value |", "|---|---|"]
 MEASURED_HEADER = [
-    "| Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |",
-    "|---|---|---:|---:|---:|",
+    "| Phase | Concurrency | Decode tok/s per stream | Aggregate tok/s | TTFT p50 | Step ms | Acceptance length |",
+    "|---|---|---:|---:|---:|---:|---:|",
 ]
 NO_EVIDENCE = ("", "null", "~")  # BaseLoader keeps `null` as the string "null"
 
@@ -95,7 +96,8 @@ def render_readme(text, recipe):
     lines[start:stop] = DEFAULTS_HEADER + rows
     start, stop = find_block(lines, *md_markers("measured"), "README.md")
     rows = [
-        f"| {r['phase']} | {r['concurrency']} | {r['decode']} | {r['aggregate']} | {r['ttft_p50']} s |"
+        f"| {r['phase']} | {r['concurrency']} | {r['decode']} | {r['aggregate']} | {r['ttft_p50']} s"
+        f" | {r['step_ms']} | {r['acceptance_len']} |"
         for r in recipe["measured"]["decode"]["rows"]
     ]
     lines[start:stop] = MEASURED_HEADER + rows
@@ -106,11 +108,12 @@ def evidence_gaps(recipe, repo):
     none, missing = [], []
     for r in recipe["measured"]["decode"]["rows"]:
         label = f"measured.decode {r['phase']} c={r['concurrency']}"
-        path = r.get("evidence", "")
-        if path in NO_EVIDENCE:
-            none.append(label)
-        elif not (repo / path).exists():
-            missing.append(f"{label}: {path}")
+        paths = r.get("evidence", "")
+        for path in paths if isinstance(paths, list) else [paths]:
+            if path in NO_EVIDENCE:
+                none.append(label)
+            elif not (repo / path).exists():
+                missing.append(f"{label}: {path}")
     return none, missing
 
 

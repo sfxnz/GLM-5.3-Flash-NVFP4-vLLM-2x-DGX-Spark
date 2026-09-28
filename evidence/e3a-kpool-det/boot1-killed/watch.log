@@ -1,0 +1,14 @@
+2026-09-28T00:51:18.950Z ssh ControlMaster up for spark2
+2026-09-28T00:51:18.952Z watching glm53-flash-nvfp4 head=spark1 worker=spark2 phase=LOAD floors={'LOAD': 10.0, 'PROFILE': 8.0, 'KV_READY': 3.0, 'SERVING': 2.0} kill_log_regex='' kill_compiler_regex=''
+2026-09-28T00:52:40.685Z head: (Worker_TP0 pid=390) INFO 09-28 00:52:40 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-28T00:52:40.731Z worker: (Worker_TP1 pid=332) INFO 09-28 00:52:40 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-09-28T00:52:40.792Z head: (Worker_TP0 pid=390) INFO 09-28 00:52:40 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-28T00:52:40.860Z worker: (Worker_TP1 pid=332) INFO 09-28 00:52:40 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-09-28T00:57:30.330Z worker: (Worker_TP1 pid=332) INFO 09-28 00:57:30 [model_runner.py:375] Model loading took 89.55 GiB and 289.952048 seconds
+2026-09-28T01:06:18.319Z head: (Worker_TP0 pid=390) INFO 09-28 01:06:18 [model_runner.py:375] Model loading took 89.55 GiB and 817.967813 seconds
+2026-09-28T01:06:18.326Z PHASE LOAD -> PROFILE (min GiB in LOAD: spark1=14.25 spark2=15.43)
+2026-09-28T01:06:21.057Z worker: (Worker_TP1 pid=332) INFO 09-28 01:06:21 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-28T01:06:22.017Z head: (Worker_TP0 pid=390) INFO 09-28 01:06:22 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+2026-09-28T01:06:35.425Z KILL reason=spark2 PROFILE slope: 13.90 -> 13.07 GiB, second consecutive drop >= 0.75 GiB below 14 GiB | sample=2026-09-28T01:06:31.679Z node=spark2 phase=PROFILE memavail_gib=13.069 swap_used_gib=4.125 | kill_started=2026-09-28T01:06:31.680829+00:00 | kill_latency_s=3.704 (both docker kill returned, run in parallel) | stopped_confirmed_s=3.741 running_after head=false worker=false | head: rc=0 t=3.704s out='glm53-flash-nvfp4' | worker: rc=0 t=3.704s out='glm53-flash-nvfp4'
+2026-09-28T01:06:36.719Z logs saved, containers removed; watcher exiting
+2026-09-28T01:06:36.720Z exit; min MemAvailable GiB per phase/node: LOAD/spark1=14.25 LOAD/spark2=15.43 PROFILE/spark1=12.30 PROFILE/spark2=13.07

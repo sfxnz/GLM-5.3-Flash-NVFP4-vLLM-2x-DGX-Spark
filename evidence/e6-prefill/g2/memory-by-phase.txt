@@ -1,0 +1,20 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3601 min= 14.45 @ 13:26:49  first=116.55 last= 22.51  swap_first=4.13 swap_max=7.69  span=13:12:03..13:27:18
+spark1 PROFILE  n=    94 min= 13.36 @ 13:27:42  first= 22.51 last= 13.36  swap_first=7.59 swap_max=7.59  span=13:27:18..13:27:42
+spark1 KV_READY n=   241 min=  7.46 @ 13:28:41  first= 14.28 last=  8.52  swap_first=7.59 swap_max=7.59  span=13:27:42..13:28:43
+spark1 SERVING  n=   300 min=  8.27 @ 13:30:09  first=  8.51 last=  9.08  swap_first=7.38 swap_max=7.38  span=13:28:43..13:52:17
+spark2 LOAD     n=  3607 min= 15.40 @ 13:17:37  first=116.89 last= 23.39  swap_first=1.75 swap_max=4.33  span=13:12:03..13:27:18
+spark2 PROFILE  n=    94 min= 14.27 @ 13:27:42  first= 23.39 last= 14.27  swap_first=4.13 swap_max=4.13  span=13:27:18..13:27:42
+spark2 KV_READY n=   241 min= 13.34 @ 13:27:49  first= 15.08 last= 13.42  swap_first=4.13 swap_max=4.13  span=13:27:42..13:28:43
+spark2 SERVING  n=   288 min= 13.34 @ 13:30:31  first= 13.42 last= 14.29  swap_first=4.13 swap_max=4.13  span=13:28:43..13:52:20
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-09-28T13:12:03.220Z
+PROFILE  from 2026-09-28T13:27:18.463Z
+KV_READY from 2026-09-28T13:27:42.368Z
+SERVING  from 2026-09-28T13:28:43.555Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        13:29:05..13:29:11  spark1 min=8.31@13:29:06 swap 7.37->7.37 | spark2 min=13.34@13:29:06 swap 4.13->4.13
+bench-1                            13:29:11..13:45:15  spark1 min=8.27@13:30:09 swap 7.37->7.34 | spark2 min=13.34@13:30:31 swap 4.13->4.12
+bench-2                            13:45:15..13:51:48  spark1 min=9.03@13:50:45 swap 7.34->7.34 | spark2 min=14.25@13:46:02 swap 4.12->4.12
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB

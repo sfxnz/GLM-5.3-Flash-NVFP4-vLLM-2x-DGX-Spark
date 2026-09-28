@@ -1,0 +1,21 @@
+== 2026-09-27T13:21:46Z before stop (old serve up)
+== spark1 docker ps -a
+868fc5162155 glm53-sm121-v11 Up 54 minutes glm53-flash-nvfp4
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 5 days ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 7 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       114Gi       3.4Gi       2.4Gi       7.6Gi       7.6Gi
+Swap:           15Gi       8.0Gi       8.0Gi
+== spark1 swapon
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G   8G   -2
+== spark2 docker ps -a
+706e91018c23 glm53-sm121-v11 Up 54 minutes glm53-flash-nvfp4
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       110Gi       7.2Gi       2.4Gi       7.2Gi        10Gi
+Swap:           15Gi       5.3Gi        10Gi
+== spark2 swapon
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G 5.3G   -2

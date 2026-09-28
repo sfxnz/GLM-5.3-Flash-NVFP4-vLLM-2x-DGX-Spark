@@ -1,0 +1,80 @@
+E2e: NVFP4 W4A16 on the DFlash2 drafter only; every target weight as in E1a (v13, BF16 non-MoE linears)
+  serve   IMAGE=glm53-sm121-v13 WARM_SHARDS=0 EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft'
+          (../e2-tools/cfg.sh; run.sh @ f786818), nvidia 09b04e5, drafter 7d74cdd, DFlash2-7, seqs 2, kv pin 4.14 GiB,
+          JIT cache warm. Args/image parity OK. Booted under kit/uma_watch.py (default floors).
+
+Why this boot. All four target-quantized configs failed Tier 0 on KL (E2a +5.2e-3, E2b +3.1e-2, E2c +3.8e-3, E2d +2.4e-3
+over the cross-boot A/A; fp8 margin 1e-3), and the 2 bisect boots were spent. The drafter is the one group that cannot
+change served output: greedy verification keeps only target-argmax tokens, and Tier 0's nll is prefill-only. E2b showed
+NVFP4 drafter weights keep acceptance (A 2.226/2.276 vs E2a 2.224/2.299). The winning serve needed a boot anyway, so
+this one tested the only quality-neutral piece of the E2 plan, one knob against E1a.
+
+swap line (both ranks): target none (no target group selected; no log line); draft[nvfp4]=32 layers 1162.0->326.8 MiB;
+  torch reserved 91.68 -> 90.92 GiB. Model loading took 89.55 GiB per rank (E1a 90.36).
+
+boot  run.sh 21:54:12Z -> /v1/models 22:09:57Z (15.8 min); head Loading 700.3 s / Model 778.5 s; worker 217.7 s / 274.2 s;
+      init engine 46.7 s; KV pool 372,877.
+MemAvailable GiB (spark1 / spark2): LOAD min 13.84 / 14.88, PROFILE 10.88 / 11.74, KV_READY 5.06 / 10.78,
+  after ready 5.14 / 10.90 (E1a 8.04 / 9.90), SERVING min through Tier 0 4.77 / 10.81.
+  spark1 read low right after ready and during the first bench and Tier 0 (page cache, swap 6.8-7.0 GiB) and recovered
+  to 7.4-7.8 GiB by 22:40; spark2 (clean node) +1.0 GiB vs E1a for 0.82 GiB of drafter weights.
+
+checks: count-200 200/200, thinking-off "PING".
+
+ruler v2 fast gate (all cells valid) and T
+  cell   E0 b1/b2 tok/s   E2e tok/s        E2e step_ms      E2e acc_len      per_pos p1..p7 (bench-1)
+  A      19.79 / 19.66    20.02 / 20.35    111.0 / 111.5    2.230 / 2.273    .626 .323 .157 .061 .026 .012 .005
+  B      34.90 / 34.39    36.41 / 36.15    115.8 / 116.1    4.238 / 4.212    .832 .670 .533 .406 .314 .228 .163
+  J@c1   68.89 / 68.84    71.28 / 71.62    111.7 / 111.1    8.000 / 8.000
+  J@c2   55.50 / 56.90    61.47 / 61.59    129.5 / 129.3    8.000 / 8.000
+  H      13.69 / 14.04    14.23 / 14.58    157.2 / 156.0    2.239 / 2.269
+  T      -                24.88            109.0            2.717            .703 .427 .241 .146 .088 .058 .040
+  kit/compare.py vs E0 (compare-vs-e0.txt): A +2.3% [+0.6,+4.1], step -3.5% [-3.9,-3.1], acc -1.2% (paired -1.2%
+    [-4.1,+1.7]); B +4.7%, J@c1 +3.8% (step -3.6%), H +3.9%, J@c2 +9.5% KEEP; others INCONCLUSIVE(single-boot):
+    inside the +-4% cross-boot band. Step A 115.3 -> 111.3 ms (-4.0 ms; byte model -3.9 ms).
+  J@c1 text c003be4978 in all 6 waves, acc 8.000 (the baseline text).
+
+Tier 0 (tier0.json), plain compare vs nvidia-v11-k7 (the E1a gate: no target weight changed), 22:31:42Z..22:39:39Z
+                     E0 same-boot   E1a cross-boot   E2e          limit
+  dNLL               -0.000146      -0.000120        -0.000078    0.005 PASS
+  top-1              0.984464       0.983264         0.982686     >= 0.979469 PASS
+  KL top-20          5.089e-3       5.864e-3         6.050e-3     (not gated; also under the fp8 stage limit 6.137e-3)
+  greedy hazard      0.009873       0.016716         0.016000     <= 0.019178 PASS (16/20 diverged)
+  utf8               pass           pass             FAIL: 11 wrong squares, finish length
+  vision             12/13 (video)  13/13            12/13: video 3186 (expected 3816)
+  count 200, kwargs 12/12, tools json 1.00 (args_ok 0.96), needle 3/3 + 3/3: PASS
+  tool verdict: FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+
+Flaky-probe check (rerun_flaky.sh, tier0-flaky-{1,2,3}.json, same serve, --only utf8,vision):
+  run 1: utf8 FAIL (5 wrong squares, finish length) | vision 13/13
+  run 2: utf8 FAIL (9 wrong squares, finish length) | vision 12/13 (video 3186)
+  run 3: utf8 FAIL (9 wrong squares, finish stop)   | vision 13/13
+  The reference boot itself fails these probes: E0's `record` (v11, unquantized, ../e0-nvidia-v11/tier0-record.json)
+  had utf8 FAIL with 8 wrong squares, E0's probe runs failed utf8 3 of 4 times (probe-utf8.txt: 2^2 written as 2 ...),
+  and E0's compare failed video with the same 3186. The squares are the target's own greedy near-tie choices, and the
+  drafter cannot choose target tokens. The nll and greedy numbers sit at the cross-boot A/A.
+
+Verdict: quality-neutral as designed (nll/greedy at A/A level; utf8 and video fail as they do on the unmodified reference
+boot). Passes count-200. Judged a Tier-0 pass with the flaky probes discounted; the tool's own verdict is FAIL 8/10.
+Speed gain is small (A +2.3%, step -3.5%) and a single boot cannot separate it from the +-4% boot band, although step_ms
+moved -3.5% on every c=1 cell, matching the byte model.
+
+Tier 1 (tier1-summary.txt): 856/1010 (84.75%) vs nvidia-v11-k7 857/1010; pooled -0.10 pts [-1.43, +1.23], no group fails,
+  compare_tier1 VERDICT PASS. IFEval 103/150, GSM8K 192/200, MMLU-Pro 234/280, BFCL 115/120, ChartQA 91/100,
+  OCRBench 82/100, MMMU 39/60. 1 h 54 min, 0 errors, client memguard never fired (min spark1 5.51 / spark2 10.47 GiB).
+
+Winner selection (task step 5): lowest step_ms passing Tier 0 and count-200.
+  config   A step_ms   A tok/s          Tier 0 (tool)   Tier 0 judged vs cross-boot A/A     count-200
+  E2b      84.5        26.33 / 26.82    FAIL 6/11       FAIL (KL +3.1e-2, dNLL, hazard)      pass
+  E2a      93.1        23.84 / 24.54    FAIL 9/11       FAIL (KL +5.2e-3, top-1 -0.68 pt)    pass
+  E2c      103.6       21.10 / 21.56    FAIL 7/11       FAIL (KL +3.8e-3)                    pass
+  E2d      104.3       21.76 / 22.14    FAIL 9/11       FAIL (KL +2.4e-3)                    pass
+  E2e      111.3       20.02 / 20.35    FAIL 8/10       PASS (nll/greedy at A/A; utf8+video  pass
+                                                        flaky, fail on the reference boot too)
+  E1a/E0   115.3-117   19.0-19.8        PASS 10/10 (E1a)
+  Winner: E2e (NVFP4 drafter only), on the judged Tier-0 verdict; Tier 1 PASS. If the tool's strict verdict must hold,
+  no E2 config passes and the winner is the E1a serve (v13, every GLM53_* unset).
+
+Serve left up: this E2e boot (containers glm53-flash-nvfp4 on spark1 and spark2, started 21:54Z). The boot watcher
+(pid 2189710, this dir) was stopped at 00:37:46Z; a detached SERVING watcher (setsid, 2 GiB floor) runs as pid 2603685
+with its logs in ~/projects/data/glm53-serving-watch/20260928-e2e-v13-nvfp4-draft/.

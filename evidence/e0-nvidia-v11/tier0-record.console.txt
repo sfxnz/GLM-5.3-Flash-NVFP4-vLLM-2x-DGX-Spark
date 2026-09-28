@@ -1,0 +1,30 @@
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+[nll] {"docs": 96, "tokens": 184990, "mean_nll": 0.484849, "rerun": {"abs_delta": 0.000627, "top1_agree": 0.984469, "kl": 0.00513701, "mean_nll": 0.484222}, "s": 324.6}
+[greedy] {"aa": {"hazard": 0.009589, "diverged": 14, "pairs": 20, "first_div": [44, null, null, 20, 76, null, null, 70, null, 128, 17, 9, 12, 26, 113, 25, 0, null, 90, 149]}, "s": 197.3}
+[count] {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop", "s": 6.2}
+[kwargs] {"pass": false, "passed": 10, "total": 12, "s": 5.1}
+[utf8] {"pass": false, "fffd": 0, "rows": 40, "complete": true, "square_errors": 8, "cube_errors": 0, "chinese_numeral_errors": 0, "finish_reason": "stop", "s": 25.1}
+[tools] {"n": 50, "json_valid": 1.0, "called": 1.0, "name_ok": 1.0, "args_ok": 0.96, "s": 58.5}
+[vision] {"pass": false, "passed": 12, "total": 13, "skipped": [], "s": 8.1}
+[needle] {"pass": true, "per_length": {"8192": 3, "32768": 3}, "s": 100.7}
+reference written: /home/sfxnz/projects/data/glm53-evals/ref/nvidia-v11-k7.json
+FAIL kwargs.core value=8 limit=10
+PASS kwargs.thinking_alias value=2 limit=2
+PASS count value=200 limit=200
+FAIL utf8 value=0 limit=0
+FAIL vision value=12 limit=None
+PASS needle value={'8192': 3, '32768': 3} limit=>=2 each
+PASS tools.json_valid value=1.0 limit=0.98
+written: evidence/e0-nvidia-v11/tier0-record.json
+FAIL tier0 record: 4/7 criteria; failed kwargs.core, utf8, vision

@@ -1,0 +1,46 @@
+                                E0         E1a     E2a-fp8   E2b-nvfp4
+dNLL                     -0.000146   -0.000120   +0.001961   +0.019389
+top1_agree                0.984464    0.983264    0.976458    0.956176
+KL top20                 5.089e-03   5.864e-03   1.103e-02   3.715e-02
+greedy hazard             0.009873    0.016716    0.016882    0.026012
+greedy diverged/20              14          17          17          18
+greedy first_div med           110          53          43          23
+chat dNLL                 +0.00022    +0.00010    -0.00024    +0.01227
+chat top1                   0.9763      0.9743      0.9662      0.9411
+chat KL                  6.185e-03   7.499e-03   1.209e-02   3.263e-02
+code dNLL                 +0.00052    -0.00061    +0.00152    +0.01121
+code top1                   0.9925      0.9920      0.9895      0.9790
+code KL                  3.432e-03   3.879e-03   7.173e-03   2.297e-02
+math dNLL                 -0.00086    +0.00042    +0.00123    +0.01867
+math top1                   0.9814      0.9791      0.9733      0.9539
+math KL                  7.292e-03   8.728e-03   1.379e-02   3.591e-02
+multilingual dNLL         +0.00000    +0.00002    +0.00135    +0.02937
+multilingual top1           0.9705      0.9684      0.9560      0.9196
+multilingual KL          6.605e-03   7.670e-03   1.418e-02   4.870e-02
+prose dNLL                -0.00039    -0.00017    +0.00314    +0.01915
+prose top1                  0.9909      0.9903      0.9844      0.9690
+prose KL                 4.133e-03   4.597e-03   1.005e-02   3.881e-02
+count                          200         200         200         200
+kwargs                          12          12          12          12
+utf8 sq_err                      0           0           0           0
+tools json_valid              1.00        1.00        1.00        1.00
+tools args_ok                 0.96        0.96        0.96        0.96
+vision                          12          13          13          12
+needle 8k                        3           3           3           3
+needle 32k                       3           3           3           3
+nll.delta                     PASS        PASS        PASS        FAIL
+nll.top1_rerun                PASS        PASS           -           -
+greedy.hazard                 PASS        PASS        PASS        FAIL
+kwargs.core                   PASS        PASS        PASS        PASS
+kwargs.thinking_alias         PASS        PASS        PASS        PASS
+count                         PASS        PASS        PASS        PASS
+utf8                          PASS        PASS        PASS        PASS
+vision                        FAIL        PASS        PASS        FAIL
+needle                        PASS        PASS        PASS        PASS
+tools.json_valid              PASS        PASS        PASS        PASS
+nll.top1_stage                   -           -        FAIL        FAIL
+nll.kl_stage                     -           -        FAIL        FAIL
+E0: stage=None FAIL tier0 compare vs nvidia-v11-k7: 9/10 criteria; failed vision
+E1a: stage=None PASS tier0 compare vs nvidia-v11-k7: 10/10 criteria
+E2a-fp8: stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.top1_stage, nll.kl_stage
+E2b-nvfp4: stage=nvfp4 FAIL tier0 compare vs nvidia-v11-k7: 6/11 criteria; failed nll.delta, nll.top1_stage, nll.kl_stage, greedy.hazard, vision

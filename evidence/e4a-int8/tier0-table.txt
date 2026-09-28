@@ -1,0 +1,38 @@
+                                 E1a         E2a         E2e       E3b.2         E4a
+dNLL vs ref                -0.000120   +0.001961   -0.000078   -0.000339   -0.000169
+top1_agree vs ref           0.983264    0.976458    0.982686    0.984021    0.981599
+KL top20 vs ref            5.864e-03   1.103e-02   6.050e-03   5.172e-03   6.761e-03
+greedy hazard vs ref        0.016716    0.016882    0.016000    0.010728    0.014953
+greedy diverged/20                17          17          16          14          16
+A/A |dNLL| (record)                -           -           -           -           -
+A/A top1 (record)                  -           -           -           -           -
+A/A KL (record)                    -           -           -           -           -
+A/A greedy hazard                  -           -           -           -           -
+A/A greedy diverged/20             -           -           -           -           -
+count                            200         200         200         200         200
+kwargs                            12          12          12          12          12
+utf8 sq_err                        0           0          11           5           -
+tools json_valid                1.00        1.00        1.00        1.00        1.00
+tools args_ok                   0.96        0.96        0.96        0.96        0.96
+vision                            13          13          12          12          13
+needle 8192                        3           3           3           3           3
+needle 32768                       3           3           3           3           3
+needle 131072                      -           -           -           -           -
+nll.delta                       PASS        PASS        PASS        PASS        PASS
+nll.top1_rerun                  PASS           -        PASS        PASS           -
+greedy.hazard                   PASS        PASS        PASS        PASS        PASS
+kwargs.core                     PASS        PASS        PASS        PASS        PASS
+kwargs.thinking_alias           PASS        PASS        PASS        PASS        PASS
+count                           PASS        PASS        PASS        PASS        PASS
+utf8                            PASS        PASS        FAIL        FAIL           -
+vision                          PASS        PASS        FAIL        FAIL        PASS
+needle                          PASS        PASS        PASS        PASS        PASS
+tools.json_valid                PASS        PASS        PASS        PASS        PASS
+nll.top1_stage                     -        FAIL           -           -        PASS
+nll.kl_stage                       -        FAIL           -           -        FAIL
+utf8.error                         -           -           -           -        FAIL
+E1a: mode=compare stage=None PASS tier0 compare vs nvidia-v11-k7: 10/10 criteria
+E2a: mode=compare stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.top1_stage, nll.kl_stage
+E2e: mode=compare stage=None FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+E3b.2: mode=compare stage=None FAIL tier0 compare vs nvidia-v11-k7: 8/10 criteria; failed utf8, vision
+E4a: mode=compare stage=fp8 FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed utf8.error, nll.kl_stage

@@ -1,0 +1,82 @@
+E3b tau 0.1: adaptive verify on top of the E3a bundle. One knob against E3a (../e3a-kpool-det/).
+  serve   IMAGE=glm53-sm121-v13 (56c6084f422c) EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft GLM53_KPOOL_TAIL_FIX=1
+          GLM53_DETERMINISTIC_MLA_INDEX=1 GLM53_ADAPTIVE_VERIFY=1 GLM53_ADAPTIVE_VERIFY_TAU=0.1' (MAX unset = k = 7).
+          VALIDATE_ONLY first, image parity OK; args/image parity OK on the served containers. JIT cache warm from E3a.
+boot  run.sh 02:44:35Z -> ready 03:00:18Z (15.7 min); init engine 38.0 s; graph capture 4 s. KV pool 372,877.
+      No Traceback or ERROR on either rank; the usual 7 first-request JIT compiles per rank.
+
+GLM53_ lines (glm53-lines.txt), both ranks:
+  GLM53_ADAPTIVE_VERIFY: tau=0.1 max=7 (k=7); masked verify rows reuse their anchor's experts in 42 MoE layers
+  GLM53_KPOOL_TAIL_FIX: kpool tail ring 16 slots (index_kpool=4, k=7)
+  GLM53_DETERMINISTIC_MLA_INDEX: ... (x3 head, x2 worker), GLM53_NVFP4_W4A16: draft[nvfp4]=32 layers
+
+MemAvailable GiB (spark1 / spark2): LOAD 14.12 / 15.31, PROFILE 11.08 / 11.78, KV_READY 4.98 / 10.21,
+  SERVING min 5.29 / 8.71 (memory-by-phase.txt). Client memguard never fired.
+
+checks: count-200 200/200 (stop), thinking-off "PING" (probe-count.console.txt).
+
+ruler v2 fast gate x2 + T; kit/compare.py vs E3a (compare-vs-e3a.txt, compare-T-vs-e3a.txt; vs E2e in analyze.out)
+  cell   E3a b1/b2 tok/s   tau0.1 b1/b2 tok/s   step_ms E3a -> tau0.1        acc_len E3a -> tau0.1
+  A      19.94 / 20.11     21.78 / 21.34        110.8 -> 103.1 (-7.0%)       2.220 -> 2.228 (+0.4%)
+  B      35.16 / 35.19     37.22 / 37.38        116.2 -> 114.0 (-1.9%)       4.109 -> 4.282 (+4.2%)
+  J@c1   71.56 / 71.60     71.37 / 71.42        111.2 -> 111.5 (+0.3%)       8.000 -> 8.000
+  J@c2   61.29 / 58.12     60.88 / 61.23        133.4 -> 130.4 (-2.2%)       7.974 -> 8.000
+  H      14.31 / 14.06     15.65 / 15.39        156.8 -> 143.5 (-8.5%)       2.225 -> 2.226
+  K@c2   15.47 / 14.57     16.14 / 15.24        148.7 -> 133.3 (-10.4%)      2.249 -> 2.104
+  T      25.40             26.47                108.7 -> 101.9 (-6.2%)       2.762 -> 2.706 (-2.0%)
+  tok/s vs E3a: A +7.7% [+5.4,+10.0] KEEP, B +6.0% [+5.6,+6.5] KEEP, H +9.4% [+6.8,+12.1] KEEP (single boot, each
+  interval clears the +-4% band), J@c1 -0.3%, J@c2 +2.3%, T +4.2%. B's acceptance rise is text noise: E2e measured
+  4.238 / 4.212 and E3a's 4.11 was the low one; adaptive verify cannot raise acceptance.
+  per_pos p1..p7
+    A  E3a b1  .613 .332 .157 .059 .023 .008 .004     tau0.1 b1  .645 .336 .154 .066 .027 .008 .005
+                                                      tau0.1 b2  .613 .309 .151 .059 .030 .011 .004
+    B  E3a b1  .822 .654 .494 .388 .298 .217 .163     tau0.1 b1  .844 .690 .540 .423 .319 .242 .170
+                                                      tau0.1 b2  .830 .676 .533 .412 .327 .252 .178
+    H  E3a b1  .639 .337 .158 .073 .026 .008 .003     tau0.1 b1  .637 .321 .159 .071 .030 .010 .006
+    T  E3a     .693 .439 .258 .149 .099 .065 .042     tau0.1     .684 .421 .245 .145 .094 .060 .039
+  Reading: the confidence rule at tau 0.1 costs no acceptance at any position on prose, code or thinking. Positions
+  5-7 stay non-zero because m follows the drafter's confidence per step (only a fixed MAX forces them to 0). step_ms
+  falls 7 ms on prose (A), 13 ms on c=2 prose (H), 2 ms on code (B, which keeps most of its width). README-v13's
+  table predicted 94.7 / 80.9 ms for A at m=3; the observed 103 ms is short of the 0.75 ms/expert slope, so either
+  m averages above 3 or the per-expert saving is smaller.
+
+Tier 0 (tier0.json), compare vs nvidia-v11-k7, 03:24:25Z..03:31:22Z
+                     E3a          tau0.1       cross-boot A/A (E1a)   limit
+  dNLL               +0.000182    -0.000695    -0.000120              0.005 PASS
+  top-1              0.984318     0.984269     0.983264               >= 0.979469 PASS
+  KL top-20          5.270e-3     5.145e-3     5.864e-3
+  greedy hazard      0.014760     0.010769     0.016716               <= 0.019178 PASS (14/20 diverged)
+  count 200, kwargs 12/12, tools json 1.00 (args_ok 0.96), vision 13/13, needle 3/3 + 3/3
+  utf8 FAIL: 15 rows, 9 wrong squares, finish stop (tool verdict 9/10).
+  nll is prefill-only and does not see adaptive verify; greedy hazard is at the within-boot A/A (E3a record 0.0102).
+  utf8 reruns (rerun_flaky.sh -> tier0-flaky-{1,2,3}.*; utf8_texts.py -> utf8-texts.json):
+    flaky-1  utf8 FAIL: 40 rows, 2 wrong squares, finish length | vision 12/13 (video 3186)
+    flaky-2  utf8 judge raised IndexError (malformed row)       | vision 13/13
+    flaky-3  utf8 judge raised ValueError on '³'               | vision 13/13
+    texts    3 runs, 3 different greedy tables: n^2 right but the numeral column copies n^3 (二十七 for n=3; judged
+             pass, the numeral errors are not gated); 15 rows with 2^2 written as 2 and an early stop; 40 rows with
+             二十三 for n=3 (the prompt's own example) and finish length.
+    The same probe fails on the reference boot (E0 record: 8 wrong squares; E0 probe runs failed 3 of 4 with 2^2
+    written as 2) and on E2e (3 of 3 reruns). The table's early rows are near-ties for this model.
+  Lossless probe (E0's scripts/lossless_probe.py 600 -> probe-lossless.txt): generated tokens that are not the
+  teacher-forced target top-1: utf8 6/600 (1.0%), greedy16 4/107 (3.7%), greedy0 3/86 (3.5%); E0 on v11 without
+  adaptive verify: 7/600 (1.2%), 4/107, 2/101. Same rate. Some misses sit 3-5 nats below the prefill top-1 (utf8 pos
+  41: '4' at -5.38 vs '2' at -0.01), and E0 had two such as well (-4.77, -4.81); see the prefill repeat below.
+  Judged: no quality change beyond A/A. utf8 fails as on the reference boot and E2e.
+
+Prefill repeat (a diagnostic for the E3a probe anomaly; ../e3-tools/prefill_repeat.py, prefill-repeat.{json,console.txt};
+sequence ../e3-tools/prefill-seq-1500.json = 1510-token filler prompt + 2000 greedy tokens, run before the benches).
+The same ids prefilled 6 times (prompt_logprobs=0, new cache_salt each):
+  L=2040 (one chunk, no indexer top-k): generated rows median spread 0.013, p99 1.05, max 1.77. Rows with a likely token
+    (best run > -3) that swings > 5 nats between runs: 8, all in the prompt, e.g. pos 1202 spans 13.1.
+  L=3510 (two chunks): generated rows median 0.007, p99 6.4, max 16.0; swings > 5: 38 (14 prompt, 24 in rows >= 2048).
+  The swings recur at the same positions in both lengths (383, 527, 546, 888, 1202), so they are hypersensitive
+  positions, not random corruption. The likely mechanism (inferred, not traced): a small run-to-run difference flips a
+  discrete choice (MoE top-8 routing; above 2048 tokens also the indexer's top-k pool selection) and the token's
+  logprob moves by 5-15 nats. They occur in the
+  single-chunk prefill too, where neither the kpool ring nor top-k runs. This is the within-boot nondeterminism that
+  the determinism switch did not remove (E3a), amplified; it is not a kpool-state defect.
+
+Verdict: keep. Lossless within A/A (Tier 0 nll/greedy, count-200, lossless probe), acceptance unchanged per position,
+step_ms -7.0% on A, -8.5% on H, -1.9% on B; A +7.7%, B +6.0%, H +9.4% tok/s (single boot). Per-position acceptance did
+not drop anywhere, so the next boot tries the more aggressive tau 0.2. Stopped 03:39Z (stop.log, stop-after.txt).

@@ -1,0 +1,59 @@
+head   --speculative-config           {"method":"dflash","model":"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe","num_speculative_tokens":7}
+head   --compilation-config           {"cudagraph_capture_sizes":[1,2,4,8,16]}
+head   --kv-cache-memory              4445787956
+head   --max-num-seqs                 2
+head   --max-model-len                327680
+head   --moe-backend                  marlin
+head   --linear-backend               marlin
+head   --limit-mm-per-prompt          {"image":4,"video":1}
+head   --mm-processor-cache-gb        1
+head   --override-generation-config   {"max_new_tokens": 65536}
+head   --node-rank                    0
+head   env DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm
+head   env FLASHINFER_CUDA_ARCH_LIST=12.1a
+head   env FLASHINFER_DISABLE_VERSION_CHECK=1
+head   env FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer
+head   env GLM53_ADAPTIVE_VERIFY=1
+head   env GLM53_ADAPTIVE_VERIFY_TAU=0.3
+head   env GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head
+head   env GLM53_KPOOL_TAIL_FIX=1
+head   env GLM53_NVFP4_W4A16=draft
+head   env NCCL_IB_HCA=rocep1s0f1
+head   env TILELANG_CACHE_DIR=/jit-cache/tilelang
+head   env TRITON_CACHE_DIR=/jit-cache/triton
+head   env VLLM_CACHE_ROOT=/jit-cache/vllm
+head   GLM53_* env count: 5
+head   async flag present: False
+head   mounts: ['/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-nvidia/chat_template.jinja:/chat_template.jinja', '/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache']
+head   image: ['sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9', 'glm53-sm121-v13', '2026-09-28T13:12:30.200373993Z']
+worker --speculative-config           {"method":"dflash","model":"/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe","num_speculative_tokens":7}
+worker --compilation-config           {"cudagraph_capture_sizes":[1,2,4,8,16]}
+worker --kv-cache-memory              4445787956
+worker --max-num-seqs                 2
+worker --max-model-len                327680
+worker --moe-backend                  marlin
+worker --linear-backend               marlin
+worker --limit-mm-per-prompt          {"image":4,"video":1}
+worker --mm-processor-cache-gb        1
+worker --override-generation-config   {"max_new_tokens": 65536}
+worker --node-rank                    1
+worker env DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm
+worker env FLASHINFER_CUDA_ARCH_LIST=12.1a
+worker env FLASHINFER_DISABLE_VERSION_CHECK=1
+worker env FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer
+worker env GLM53_ADAPTIVE_VERIFY=1
+worker env GLM53_ADAPTIVE_VERIFY_TAU=0.3
+worker env GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head
+worker env GLM53_KPOOL_TAIL_FIX=1
+worker env GLM53_NVFP4_W4A16=draft
+worker env NCCL_IB_HCA=rocep1s0f1
+worker env TILELANG_CACHE_DIR=/jit-cache/tilelang
+worker env TRITON_CACHE_DIR=/jit-cache/triton
+worker env VLLM_CACHE_ROOT=/jit-cache/vllm
+worker GLM53_* env count: 5
+worker async flag present: False
+worker mounts: ['/home/sfxnz/.cache/huggingface:/cache/huggingface', '/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3:/jit-cache']
+worker image: ['sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9', 'glm53-sm121-v13', '2026-09-28T13:12:04.635808465Z']
+args parity (minus node-rank/host/port/chat-template/headless): OK
+env parity (minus VLLM_HOST_IP): DIFF ['HF_TOKEN=<redacted>', 'HUGGING_FACE_HUB_TOKEN=<redacted>']
+image parity: OK

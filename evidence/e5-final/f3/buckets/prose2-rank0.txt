@@ -1,0 +1,46 @@
+29 steps {'execute_context_0(0)_generation_2(16)': 29}
+wall 106.578 ms (sd 12.841), busy 102.305, idle 4.273, bucket sum 104.971
+
+bucket              ms/step      %  launches
+nccl                  5.463    5.1        91
+routed_moe           54.682   51.3       210
+linear_marlin        20.081   18.8       180
+mhc                   2.636    2.5       186
+kda                   5.534    5.2       102
+mla_indexer           0.735    0.7       109
+bf16_gemm             6.354    6.0       335
+other                 2.229    2.1       981
+lm_head_logits        1.802    1.7        14
+sampler_rejection     0.051    0.0         9
+drafter               5.404    5.1       342
+
+bf16_gemm by signature (module guessed from launches/step)
+     ms n/step module           kernel [grid]
+  1.191   79.0 ?                void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_1 [8, 32, 1]
+  1.115   84.0 shared_expert x2 void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_1 [8, 3, 8]
+  1.070   84.0 shared_expert x2 void cublasLt::splitKreduce_kernel<32, 16, int, __nv_bfloat16, __nv_bf [9, 1, 1]
+  0.967   11.0 mla              void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_1 [8, 16, 1]
+  0.793   11.0 mla              void gemmSN_NN_kernel<float, 256, 4, 2, 8, 4, 4, false, cublasGemvTens [1, 4, 1]
+  0.515   11.0 mla              void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_3 [8, 2, 32]
+  0.472   11.0 mla              void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_3 [8, 1, 32]
+  0.120   11.0 mla              void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_1 [8, 2, 8]
+  0.080   11.0 mla              void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_1 [8, 1, 8]
+  0.017   11.0 mla              void cublasLt::splitKreduce_kernel<32, 16, int, __nv_bfloat16, __nv_bf [5, 1, 1]
+  0.015   11.0 mla              void cublasLt::splitKreduce_kernel<32, 16, int, __nv_bfloat16, __nv_bf [4, 1, 1]
+
+top 'other' kernels (refine TARGET_BUCKETS with these)
+  0.628 void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native:
+  0.348 void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native:
+  0.307 void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Tenso
+  0.224 void vllm::act_and_mul_kernel<c10::BFloat16, __nv_bfloat162, &(c10::BFloat16 vllm::silu_ke
+  0.132 void at::native::vectorized_gather_kernel<16, long>(char*, char*, long*, int, long, long, 
+  0.087 void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, std::array
+  0.076 void at::native::vectorized_elementwise_kernel<4, at::native::CUDAFunctor_add<c10::BFloat1
+  0.069 memcpy32_post
+  0.033 void at::native::reduce_kernel<128, 4, at::native::ReduceOp<c10::BFloat16, at::native::Mea
+  0.031 Memcpy HtoD (Pinned -> Device)
+  0.028 Memcpy DtoD (Device -> Device)
+  0.027 triton_per_fused__to_copy_native_layer_norm_0
+  0.024 _convert_req_index_to_global_index_kernel
+  0.023 void at::native::(anonymous namespace)::indexSelectSmallIndex<c10::BFloat16, long, unsigne
+  0.021 _fused_q_kv_rmsnorm_kernel

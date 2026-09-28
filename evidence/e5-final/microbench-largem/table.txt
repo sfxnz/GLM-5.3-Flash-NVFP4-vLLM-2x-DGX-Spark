@@ -1,0 +1,67 @@
+ms per GEMM call, one rank (CUDA-graph replay, checkpoint weights, rotated copies)
+group    gemm                    n x k  cnt     M    bf16    int8     fp8   nvfp4 int8/bf16
+shared   down_proj          4096x1024    42   256   0.053   0.058   0.054   0.045      1.09
+shared   down_proj          4096x1024    42  1024   0.125   0.153   0.142   0.139      1.22
+shared   down_proj          4096x1024    42  1152   0.131   0.167   0.154   0.150      1.27
+shared   down_proj          4096x1024    42  2048   0.246   0.294   0.266   0.264      1.19
+shared   gate_up_proj       2048x4096    42   256   0.096   0.095   0.076   0.070      1.00
+shared   gate_up_proj       2048x4096    42  1024   0.227   0.255   0.226   0.225      1.12
+shared   gate_up_proj       2048x4096    42  1152   0.221   0.276   0.245   0.247      1.25
+shared   gate_up_proj       2048x4096    42  2048   0.395   0.499   0.441   0.452      1.26
+mla      o_proj             4096x8192    11   256   0.347   0.301   0.236   0.230      0.87
+mla      o_proj             4096x8192    11  1024   0.764   0.991   0.914   0.864      1.30
+mla      o_proj             4096x8192    11  1152   1.132   1.088   1.022   0.960      0.96
+mla      o_proj             4096x8192    11  2048   1.605   1.974   1.881   1.704      1.23
+mla      q_b_proj           8192x1536    11   256   0.147   0.147   0.135   0.107      1.00
+mla      q_b_proj           8192x1536    11  1024   0.340   0.433   0.398   0.372      1.27
+mla      q_b_proj           8192x1536    11  1152   0.361   0.490   0.446   0.420      1.36
+mla      q_b_proj           8192x1536    11  2048   0.603   0.831   0.749   0.736      1.38
+kda_o    o_proj             4096x4096    34   256   0.177   0.153   0.140   0.128      0.87
+kda_o    o_proj             4096x4096    34  1024   0.378   0.507   0.458   0.451      1.34
+kda_o    o_proj             4096x4096    34  1152   0.458   0.555   0.503   0.491      1.21
+kda_o    o_proj             4096x4096    34  2048   0.799   0.988   0.874   0.871      1.24
+kda_in   in_proj_qkvbfg_a  12576x4096    34   256   0.592   1.025   1.015   0.599      1.73
+kda_in   in_proj_qkvbfg_a  12576x4096    34  1024   1.239   4.049   4.000   2.213      3.27
+kda_in   in_proj_qkvbfg_a  12576x4096    34  1152   1.273   4.579   4.537   2.544      3.60
+kda_in   in_proj_qkvbfg_a  12576x4096    34  2048   2.395   8.117   7.983   4.452      3.39
+lm_head  lm_head           77440x4096     1   256   3.689   5.804   5.727   3.417      1.57
+lm_head  lm_head           77440x4096     1  1024   7.579  23.329  22.834  13.417      3.08
+lm_head  lm_head           77440x4096     1  1152   8.196  26.202  25.641  14.971      3.20
+lm_head  lm_head           77440x4096     1  2048  14.311  46.484  45.713  26.680      3.25
+
+per prefill chunk of M rows, target INT8 groups, one rank, count-weighted (ms)
+group        M     bf16     int8      fp8    nvfp4  int8-bf16 int8/bf16
+shared     256     6.26     6.44     5.44     4.83       0.18      1.03
+mla        256     5.43     4.93     4.08     3.71      -0.50      0.91
+kda_o      256     6.01     5.21     4.77     4.35      -0.80      0.87
+kda_in     256    20.12    34.85    34.51    20.35      14.72      1.73
+4 groups   256    37.82    51.43    48.80    33.24      13.61      1.36
+shared    1024    14.79    17.11    15.43    15.28       2.32      1.16
+mla       1024    12.14    15.67    14.43    13.60       3.53      1.29
+kda_o     1024    12.84    17.22    15.58    15.34       4.38      1.34
+kda_in    1024    42.11   137.66   136.00    75.24      95.55      3.27
+4 groups  1024    81.89   187.66   181.44   119.46     105.78      2.29
+shared    1152    14.79    18.61    16.75    16.67       3.82      1.26
+mla       1152    16.42    17.37    16.15    15.18       0.95      1.06
+kda_o     1152    15.56    18.87    17.09    16.69       3.32      1.21
+kda_in    1152    43.29   155.70   154.24    86.49     112.41      3.60
+4 groups  1152    90.05   210.54   204.23   135.03     120.49      2.34
+shared    2048    26.93    33.29    29.73    30.06       6.36      1.24
+mla       2048    24.29    30.85    28.93    26.84       6.56      1.27
+kda_o     2048    27.15    33.58    29.71    29.62       6.43      1.24
+kda_in    2048    81.43   275.97   271.42   151.38     194.54      3.39
+4 groups  2048   159.81   373.70   359.79   237.90     213.89      2.34
+
+lm_head per chunk: target logits M=1 int8-bf16 -2.39 ms; drafter query block M=8 (E4 microbench) -1.35 ms
+implied INT8 extra per  256-row chunk:   +13.6 (4 groups) -3.7 (lm_head) =    +9.9 ms per chunk =  +38.5 us per prefill token
+implied INT8 extra per 1024-row chunk:  +105.8 (4 groups) -3.7 (lm_head) =  +102.0 ms per chunk =  +99.6 us per prefill token
+implied INT8 extra per 1152-row chunk:  +120.5 (4 groups) -3.7 (lm_head) =  +116.8 ms per chunk = +101.3 us per prefill token
+implied INT8 extra per 2048-row chunk:  +213.9 (4 groups) -3.7 (lm_head) =  +210.2 ms per chunk = +102.6 us per prefill token
+
+measured (bench_decode cell E, server prefill tok/s at 32k / 128k; us per prefill token):
+  E0   v11, BF16 target + BF16 draft                                   1331.0 /  1329.0 tok/s =  751.3 /  752.4 us/token
+  E3a  v13, BF16 target + NVFP4 draft                                  1355.0 /  1353.0 tok/s =  738.0 /  739.1 us/token
+  F    v13 defaults, INT8 target (F1 bench-1, F2 bench-E1, bench-E2)   1186.7 /  1183.0 tok/s =  842.7 /  845.3 us/token
+  F - E0 :  +91.4 /  +92.9 us/token = +105.3 / +107.0 ms per 1152-token chunk (-10.8% / -11.0% tok/s)
+  F - E3a: +104.7 / +106.2 us/token = +120.6 / +122.4 ms per 1152-token chunk (-12.4% / -12.6% tok/s)
+  predicted at M=1152: +101.3 us/token = +116.8 ms per chunk

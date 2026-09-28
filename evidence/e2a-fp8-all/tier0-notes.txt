@@ -1,0 +1,25 @@
+Tier 0 on E2a (FP8 W8A16 on draft,shared,mla,kda_o,kda_in,lm_head), compare --stage fp8 vs nvidia-v11-k7 (E0 boot, v11)
+  19:33:55Z..19:41:28Z, client memguard 3.0 GiB never fired (min spark1 9.54 / spark2 11.98 GiB)
+  tool verdict: FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.top1_stage, nll.kl_stage
+
+The tool's --stage margins sit on the reference's SAME-boot A/A (top-1 0.984469, KL 5.137e-3). A cross-boot compare
+already carries extra boot noise: E1a (v13, every switch off) vs the same reference gave top-1 0.983264, KL 5.864e-3,
+|dNLL| 1.2e-4, hazard 0.016716. "cross-boot limit" below = the same stage margin applied to E1a's cross-boot numbers.
+
+                     E1a cross-boot A/A   E2a FP8-all   tool limit (fp8)   cross-boot limit (fp8)
+  dNLL (nats/tok)    -0.000120            +0.001961     |d| <= 0.005 PASS  |d| <= 0.005 PASS
+  top-1 agreement    0.983264             0.976458      >= 0.979469 FAIL   >= 0.978264 FAIL (-0.68 pt vs A/A; margin 0.5)
+  top-20 KL          5.864e-3             1.103e-2      <= 6.137e-3 FAIL   <= 6.864e-3 FAIL (+5.2e-3 vs A/A; margin 1e-3)
+  greedy hazard      0.016716 (17/20)     0.016882 (17/20)  <= 0.019178 PASS  (= the cross-boot A/A)
+  probes: count 200, kwargs 12/12, utf8 0 errors, tools json 1.00 (args_ok 0.96), vision 13/13 (video 3816),
+          needle 3/3 at 8k and 32k -- all PASS, same as E1a.
+
+by domain (KL; E1a -> E2a): chat 7.50e-3 -> 1.21e-2, code 3.88e-3 -> 7.17e-3, math 8.73e-3 -> 1.38e-2,
+  multilingual 7.67e-3 -> 1.42e-2, prose 4.60e-3 -> 1.01e-2. The added KL is uniform (~+4..6e-3 in every domain) and
+  dNLL moves by +0.001..+0.003 only: a spread-out logit perturbation, not a domain-specific break.
+  (tier0_table.py output for E0/E1a/E2a/E2b: ../e2b-nvfp4-all/tier0-table.txt)
+
+Reading: the FP8 failure is real, not boot noise. KL adds 5.2e-3 over the cross-boot A/A, five times the fp8 margin,
+and top-1 loses 0.68 pt. Greedy decode and every probe are unaffected. A rough logit-noise estimate for the lm_head
+alone (2.6e-2 relative weight error -> ~2.6% of the across-vocab logit spread, KL ~ Var/2) is 1.3e-3..3.2e-3, which by
+itself would exceed the 1e-3 margin; the rest comes from the 34 KDA / 11 MLA / 42 shared-expert layers.

@@ -1,0 +1,273 @@
+start 2026-09-28T11:58:02Z git 2a5f22481d386b7d872b67893546278caae92424 tests: docker/test_v13_census.py docker/test_v13_fp8.py docker/test_v13_kpool_tail.py docker/test_v13_misc.py docker/test_v13_verify.py
+test_apply_twice_is_idempotent (docker.test_v13_census.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_every_anchor_occurs_once_in_v11 (docker.test_v13_census.ApplyTests.test_every_anchor_occurs_once_in_v11) ... ok
+test_hooks_are_guarded (docker.test_v13_census.ApplyTests.test_hooks_are_guarded)
+Every runner hook sits behind `self._glm53_census is not None`. ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_census.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_touched_files_compile (docker.test_v13_census.ApplyTests.test_touched_files_compile) ... ok
+test_env_int (docker.test_v13_census.CensusModuleTests.test_env_int) ... ok
+test_host_layout_mismatch_skips_step (docker.test_v13_census.CensusModuleTests.test_host_layout_mismatch_skips_step) ... ok
+test_off_when_unset (docker.test_v13_census.CensusModuleTests.test_off_when_unset) ... ok
+test_window_segments_and_report_roundtrip (docker.test_v13_census.CensusModuleTests.test_window_segments_and_report_roundtrip) ... ok
+test_dockerfile_runs_census_patch_before_compileall (docker.test_v13_census.PatchStaticTests.test_dockerfile_runs_census_patch_before_compileall) ... ok
+test_other_v13_patches_leave_the_runner_alone (docker.test_v13_census.PatchStaticTests.test_other_v13_patches_leave_the_runner_alone)
+Dockerfile order is misc, fp8, census: the anchors see v11 text. ... ok
+test_c2_union_and_cross_request_sharing (docker.test_v13_census.ReportMathTests.test_c2_union_and_cross_request_sharing) ... ok
+test_distinct_identical_and_disjoint (docker.test_v13_census.ReportMathTests.test_distinct_identical_and_disjoint) ... ok
+test_independent_distinct (docker.test_v13_census.ReportMathTests.test_independent_distinct) ... ok
+test_position_stats (docker.test_v13_census.ReportMathTests.test_position_stats) ... ok
+test_prefix_dup_positions_and_bytes (docker.test_v13_census.ReportMathTests.test_prefix_dup_positions_and_bytes) ... ok
+test_random_routing_matches_independent_expectation (docker.test_v13_census.ReportMathTests.test_random_routing_matches_independent_expectation) ... ok
+test_synthetic_trace (docker.test_v13_census.StepBucketsTests.test_synthetic_trace) ... ok
+test_apply_switches_at_min_m (docker.test_v13_fp8.DequantTest.test_apply_switches_at_min_m) ... ok
+test_env_gates_the_wrapper_and_skips_lm_head (docker.test_v13_fp8.DequantTest.test_env_gates_the_wrapper_and_skips_lm_head)
+apply_glm53_fp8_w8a16 on a fake target: MIN_M unset leaves every ... ok
+test_every_code_matches_reference (docker.test_v13_fp8.DequantTest.test_every_code_matches_reference)
+Random packed values cover every INT byte and nibble, every finite ... FAIL
+test_fp8_matches_reference (docker.test_v13_fp8.DequantTest.test_fp8_matches_reference)
+Per-channel FP8; K = 80 makes Marlin pad K to 128. ... ok
+test_int_matches_reference (docker.test_v13_fp8.DequantTest.test_int_matches_reference)
+INT8 g128 (the recipe default), INT8 g64 and INT4, with and without N padding. ... ok
+test_nvfp4_matches_reference (docker.test_v13_fp8.DequantTest.test_nvfp4_matches_reference) ... FAIL
+test_one_workspace_sized_for_the_largest_layer (docker.test_v13_fp8.DequantTest.test_one_workspace_sized_for_the_largest_layer) ... ok
+test_tables_invert_the_permutations (docker.test_v13_fp8.DequantTest.test_tables_invert_the_permutations) ... ok
+test_v11_runs_large_m_eagerly (docker.test_v13_fp8.DequantTest.test_v11_runs_large_m_eagerly)
+Why a Python branch on the row count is safe in v11. GLM-5.3 auto- ... ok
+test_every_gemm_fits_gptq_marlin_at_tp2 (docker.test_v13_fp8.IntShapeTest.test_every_gemm_fits_gptq_marlin_at_tp2)
+Per-rank GEMM shapes from the safetensors headers at TP=2: every K is ... ok
+test_chunking_is_exact (docker.test_v13_fp8.Nvfp4ReferenceTest.test_chunking_is_exact) ... ok
+test_e2m1_grid_matches_marlin_bit_trick (docker.test_v13_fp8.Nvfp4ReferenceTest.test_e2m1_grid_matches_marlin_bit_trick) ... ok
+test_e4m3_encode_roundtrips_normals_and_rounds_half_even (docker.test_v13_fp8.Nvfp4ReferenceTest.test_e4m3_encode_roundtrips_normals_and_rounds_half_even) ... ok
+test_marlin_scale_format_keeps_normal_block_scales (docker.test_v13_fp8.Nvfp4ReferenceTest.test_marlin_scale_format_keeps_normal_block_scales)
+nvfp4_marlin_process_scales: half(s) * 2^7, zero if < 2, keep the top ... ok
+test_real_checkpoint_error (docker.test_v13_fp8.Nvfp4ReferenceTest.test_real_checkpoint_error)
+Relative Frobenius error on the first REAL_ROWS rows of one tensor ... ok
+test_roundtrip_error_bounds (docker.test_v13_fp8.Nvfp4ReferenceTest.test_roundtrip_error_bounds) ... ok
+test_search_never_loses_to_amax_over_6 (docker.test_v13_fp8.Nvfp4ReferenceTest.test_search_never_loses_to_amax_over_6) ... ok
+test_applies_then_is_idempotent (docker.test_v13_fp8.PatchTest.test_applies_then_is_idempotent) ... ok
+test_compile_factor_only_when_set (docker.test_v13_fp8.PatchTest.test_compile_factor_only_when_set) ... ok
+test_gptq_scalar_types (docker.test_v13_fp8.PatchTest.test_gptq_scalar_types)
+quantize_int stores q + 2**(bits - 1) in [0, 2**bits): the uint4b8 / ... ok
+test_hook_is_env_gated (docker.test_v13_fp8.PatchTest.test_hook_is_env_gated) ... ok
+test_marlin_api_matches (docker.test_v13_fp8.PatchTest.test_marlin_api_matches) ... ok
+test_marlin_gptq_api_matches (docker.test_v13_fp8.PatchTest.test_marlin_gptq_api_matches)
+quantize_layer_to_marlin_int repeats MarlinLinearKernel's GPTQ path ... ok
+test_marlin_nvfp4_api_matches (docker.test_v13_fp8.PatchTest.test_marlin_nvfp4_api_matches)
+quantize_layer_to_marlin_nvfp4 feeds prepare_fp4_layer_for_marlin a ... ok
+test_referenced_classes_and_attributes_exist (docker.test_v13_fp8.PatchTest.test_referenced_classes_and_attributes_exist)
+The name-based site table must match the v11 model code. ... ok
+test_refuses_drift_without_writing (docker.test_v13_fp8.PatchTest.test_refuses_drift_without_writing) ... ok
+test_refuses_foreign_module (docker.test_v13_fp8.PatchTest.test_refuses_foreign_module) ... ok
+test_touched_files_compile (docker.test_v13_fp8.PatchTest.test_touched_files_compile) ... ok
+test_chunking_is_exact (docker.test_v13_fp8.QuantizerTest.test_chunking_is_exact) ... ok
+test_collect_sites (docker.test_v13_fp8.QuantizerTest.test_collect_sites) ... ok
+test_compact_reallocates_after_empty_cache (docker.test_v13_fp8.QuantizerTest.test_compact_reallocates_after_empty_cache) ... ok
+test_dequant_groups (docker.test_v13_fp8.QuantizerTest.test_dequant_groups) ... ok
+test_int4_clip_search_never_loses_to_amax (docker.test_v13_fp8.QuantizerTest.test_int4_clip_search_never_loses_to_amax) ... ok
+test_int8_roundtrip_bound (docker.test_v13_fp8.QuantizerTest.test_int8_roundtrip_bound) ... ok
+test_int_chunking_is_exact (docker.test_v13_fp8.QuantizerTest.test_int_chunking_is_exact) ... ok
+test_int_group_size (docker.test_v13_fp8.QuantizerTest.test_int_group_size) ... ok
+test_int_pack_layout_matches_vllm_pack_rows (docker.test_v13_fp8.QuantizerTest.test_int_pack_layout_matches_vllm_pack_rows)
+qweight is vLLM's GPTQ layout: pack_rows of the biased ints, which ... ok
+test_nvfp4_chunking_is_exact (docker.test_v13_fp8.QuantizerTest.test_nvfp4_chunking_is_exact) ... ok
+test_nvfp4_matches_numpy_reference (docker.test_v13_fp8.QuantizerTest.test_nvfp4_matches_numpy_reference) ... ok
+test_parse_groups (docker.test_v13_fp8.QuantizerTest.test_parse_groups) ... ok
+test_per_channel_error_bound (docker.test_v13_fp8.QuantizerTest.test_per_channel_error_bound) ... ok
+test_real_checkpoint_int_error (docker.test_v13_fp8.QuantizerTest.test_real_checkpoint_int_error)
+Relative Frobenius error, first REAL_ROWS rows of one tensor per group. ... ok
+test_scale_survives_marlin_exponent_bias (docker.test_v13_fp8.QuantizerTest.test_scale_survives_marlin_exponent_bias)
+Marlin folds 2^120 into BF16 scales; realistic scales must stay finite. ... ok
+test_selected_modes (docker.test_v13_fp8.QuantizerTest.test_selected_modes) ... ok
+test_apply_twice_is_idempotent (docker.test_v13_kpool_tail.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_dockerfile_order_applies_and_reruns_clean (docker.test_v13_kpool_tail.ApplyTests.test_dockerfile_order_applies_and_reruns_clean)
+Every v13 patch in Dockerfile order on one tree (the .py files of ... ok
+test_every_anchor_occurs_once_in_v11 (docker.test_v13_kpool_tail.ApplyTests.test_every_anchor_occurs_once_in_v11) ... ok
+test_every_ring_access_follows_the_ring_size (docker.test_v13_kpool_tail.ApplyTests.test_every_ring_access_follows_the_ring_size)
+After the patch no kernel addresses a tail block by the pool size. ... ok
+test_indexer_edits_commute_with_misc_and_verify (docker.test_v13_kpool_tail.ApplyTests.test_indexer_edits_commute_with_misc_and_verify)
+The three patches that edit indexer.py give the same file in either order. ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_kpool_tail.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_touched_files_compile (docker.test_v13_kpool_tail.ApplyTests.test_touched_files_compile) ... ok
+test_every_mutation_is_caught (docker.test_v13_kpool_tail.KpoolTailMutationTest.test_every_mutation_is_caught) ... ok
+test_the_bound_is_exact (docker.test_v13_kpool_tail.KpoolTailMutationTest.test_the_bound_is_exact)
+R = k + kpool - 1 is enough (one less is a mutation below); the ... ok
+test_committed_state_equals_non_speculative_decoding (docker.test_v13_kpool_tail.KpoolTailSimulationTest.test_committed_state_equals_non_speculative_decoding) ... ok
+test_dockerfile_runs_this_patch_last_before_compileall (docker.test_v13_kpool_tail.PatchStaticTests.test_dockerfile_runs_this_patch_last_before_compileall) ... ok
+test_other_v13_patches_leave_these_files_alone (docker.test_v13_kpool_tail.PatchStaticTests.test_other_v13_patches_leave_these_files_alone) ... ok
+test_switch_is_read_once_and_only_as_1 (docker.test_v13_kpool_tail.PatchStaticTests.test_switch_is_read_once_and_only_as_1) ... ok
+test_off_keeps_kpool (docker.test_v13_kpool_tail.RingSizeTests.test_off_keeps_kpool) ... ok
+test_on_is_the_next_power_of_two_past_the_bound (docker.test_v13_kpool_tail.RingSizeTests.test_on_is_the_next_power_of_two_past_the_bound) ... ok
+test_off_is_v11 (docker.test_v13_kpool_tail.TailBuilderTests.test_off_is_v11) ... ok
+test_on_maps_the_real_tokens_in_place (docker.test_v13_kpool_tail.TailBuilderTests.test_on_maps_the_real_tokens_in_place) ... ok
+test_on_with_adaptive_verify_masks_rows_on_v2 (docker.test_v13_kpool_tail.TailBuilderTests.test_on_with_adaptive_verify_masks_rows_on_v2)
+With both patches the V2 builder runs adaptive verify's tail mask ... ok
+test_off_is_v11 (docker.test_v13_kpool_tail.TailSpecTests.test_off_is_v11) ... ok
+test_on_refuses_a_ring_that_does_not_divide_the_block (docker.test_v13_kpool_tail.TailSpecTests.test_on_refuses_a_ring_that_does_not_divide_the_block) ... ok
+test_on_sizes_the_ring_for_the_verify_window (docker.test_v13_kpool_tail.TailSpecTests.test_on_sizes_the_ring_for_the_verify_window) ... ok
+test_apply_twice_is_idempotent (docker.test_v13_misc.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_behaviour_is_env_gated (docker.test_v13_misc.ApplyTests.test_behaviour_is_env_gated)
+Each GLM53_* var is read, and only through os.environ lookups. ... ok
+test_draft_group_predicate (docker.test_v13_misc.ApplyTests.test_draft_group_predicate) ... ok
+test_every_edit_anchor_occurs_once_in_v11 (docker.test_v13_misc.ApplyTests.test_every_edit_anchor_occurs_once_in_v11) ... ok
+test_indexer_ws_factor (docker.test_v13_misc.ApplyTests.test_indexer_ws_factor) ... ok
+test_kda_trim_predicate_on_glm_views (docker.test_v13_misc.ApplyTests.test_kda_trim_predicate_on_glm_views) ... ok
+test_mhc_warmup_covers_every_specialisation (docker.test_v13_misc.ApplyTests.test_mhc_warmup_covers_every_specialisation) ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_misc.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_skip_prefix_filter (docker.test_v13_misc.ApplyTests.test_skip_prefix_filter) ... ok
+test_skip_prefix_matches_exactly_the_nvidia_mtp_layer (docker.test_v13_misc.ApplyTests.test_skip_prefix_matches_exactly_the_nvidia_mtp_layer) ... ok
+test_touched_files_compile (docker.test_v13_misc.ApplyTests.test_touched_files_compile) ... ok
+test_strided_kernel_is_bit_exact (docker.test_v13_misc.KdaKernelInterpreterTest.test_strided_kernel_is_bit_exact) ... ok
+test_apply_twice_is_idempotent (docker.test_v13_verify.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_census_and_verify_apply_in_either_order (docker.test_v13_verify.ApplyTests.test_census_and_verify_apply_in_either_order)
+Both edit the V2 runner; the Dockerfile runs census first. ... ok
+test_every_anchor_occurs_once_in_v11 (docker.test_v13_verify.ApplyTests.test_every_anchor_occurs_once_in_v11) ... ok
+test_hooks_are_guarded (docker.test_v13_verify.ApplyTests.test_hooks_are_guarded)
+Every call into the feature sits behind an `is not None` check. ... ok
+test_misc_and_verify_edit_the_indexer_in_either_order (docker.test_v13_verify.ApplyTests.test_misc_and_verify_edit_the_indexer_in_either_order)
+Both edit indexer.py; the Dockerfile runs misc first. ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_verify.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_touched_files_compile (docker.test_v13_verify.ApplyTests.test_touched_files_compile) ... ok
+test_masked_k7_emits_what_truncated_k_prime_emits (docker.test_v13_verify.EndToEndInterpreterTest.test_masked_k7_emits_what_truncated_k_prime_emits) ... ok
+test_masked_rows_leave_the_indexer_state_of_k_prime (docker.test_v13_verify.KpoolTailRingInterpreterTest.test_masked_rows_leave_the_indexer_state_of_k_prime) ... ok
+test_draft_mask_is_the_input_mask (docker.test_v13_verify.ModuleLogicTests.test_draft_mask_is_the_input_mask)
+-1 lands exactly on the masked input rows; rows 0..m keep their ids. ... ok
+test_nan_scores_verify_one (docker.test_v13_verify.ModuleLogicTests.test_nan_scores_verify_one) ... ok
+test_no_drafts_masks_nothing (docker.test_v13_verify.ModuleLogicTests.test_no_drafts_masks_nothing) ... ok
+test_off_when_unset (docker.test_v13_verify.ModuleLogicTests.test_off_when_unset) ... ok
+test_on_binds_every_router_the_sampler_and_the_tail_slots (docker.test_v13_verify.ModuleLogicTests.test_on_binds_every_router_the_sampler_and_the_tail_slots) ... ok
+test_prepare_marks_rows_past_the_width (docker.test_v13_verify.ModuleLogicTests.test_prepare_marks_rows_past_the_width) ... ok
+test_record_writes_widths_by_request_state (docker.test_v13_verify.ModuleLogicTests.test_record_writes_widths_by_request_state) ... ok
+test_refusals (docker.test_v13_verify.ModuleLogicTests.test_refusals) ... ok
+test_remap_reuses_anchor_experts_with_zero_weight (docker.test_v13_verify.ModuleLogicTests.test_remap_reuses_anchor_experts_with_zero_weight) ... ok
+test_verify_width (docker.test_v13_verify.ModuleLogicTests.test_verify_width) ... ok
+test_dockerfile_runs_verify_patch_after_census_before_compileall (docker.test_v13_verify.PatchStaticTests.test_dockerfile_runs_verify_patch_after_census_before_compileall) ... ok
+test_module_parses_and_is_env_gated (docker.test_v13_verify.PatchStaticTests.test_module_parses_and_is_env_gated) ... ok
+test_other_v13_patches_leave_router_and_sampler_alone (docker.test_v13_verify.PatchStaticTests.test_other_v13_patches_leave_router_and_sampler_alone) ... ok
+test_masked_rows_get_no_tail_slot (docker.test_v13_verify.TailSlotTests.test_masked_rows_get_no_tail_slot) ... ok
+test_off_is_v11 (docker.test_v13_verify.TailSlotTests.test_off_is_v11) ... ok
+
+======================================================================
+FAIL: test_every_code_matches_reference (docker.test_v13_fp8.DequantTest.test_every_code_matches_reference)
+Random packed values cover every INT byte and nibble, every finite
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/r/docker/test_v13_fp8.py", line 991, in test_every_code_matches_reference
+    self.check("fp8", (q, s), self.m.dequantize_per_channel(q, s), n, k)
+  File "/r/docker/test_v13_fp8.py", line 934, in check
+    self.assertFalse(bad.any(), f"{mode} g{gs} {n}x{k}: {int(bad.sum())} elements differ")
+AssertionError: tensor(True) is not false : fp8 gNone 320x256: 298 elements differ
+
+======================================================================
+FAIL: test_nvfp4_matches_reference (docker.test_v13_fp8.DequantTest.test_nvfp4_matches_reference)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/r/docker/test_v13_fp8.py", line 972, in test_nvfp4_matches_reference
+    self.check("nvfp4", parts, self.m.dequantize_nvfp4(*parts), 300, 512)
+  File "/r/docker/test_v13_fp8.py", line 934, in check
+    self.assertFalse(bad.any(), f"{mode} g{gs} {n}x{k}: {int(bad.sum())} elements differ")
+AssertionError: tensor(True) is not false : nvfp4 gNone 300x512: 5441 elements differ
+
+----------------------------------------------------------------------
+Ran 119 tests in 195.818s
+
+FAILED (failures=2)
+
+  kda_in   model.language_model.layers.5.self_attn.q_proj.weight (256, 4096): amax/6 0.0952, search 0.0858
+  kda_o    model.language_model.layers.5.self_attn.o_proj.weight (256, 8192): amax/6 0.0930, search 0.0856
+  mla      model.language_model.layers.3.self_attn.q_b_proj.weight (256, 1536): amax/6 0.0922, search 0.0835
+  shared   model.language_model.layers.3.mlp.shared_experts.down_proj.weight (256, 2048): amax/6 0.0920, search 0.0831
+  lm_head  lm_head.weight (256, 4096): amax/6 0.0949, search 0.0860
+  kda_in   model.language_model.layers.5.self_attn.q_proj.weight (256, 4096): int8 0.0066, int4 0.1201, int4 clip 0.1044
+  kda_o    model.language_model.layers.5.self_attn.o_proj.weight (256, 8192): int8 0.0068, int4 0.1234, int4 clip 0.1081
+  mla      model.language_model.layers.3.self_attn.q_b_proj.weight (256, 1536): int8 0.0073, int4 0.1366, int4 clip 0.1187
+  shared   model.language_model.layers.3.mlp.shared_experts.down_proj.weight (256, 2048): int8 0.0068, int4 0.1247, int4 clip 0.1075
+  lm_head  lm_head.weight (256, 4096): int8 0.0068, int4 0.1234, int4 clip 0.1088
+  stash still pos % kpool: pools differ 65/105, ring differs 32, foreign bytes 0, in place 60/60
+
+  completion reads pos % kpool: pools differ 62/105, ring differs 0, foreign bytes 0, in place 60/60
+
+  decode block id by kpool: pools differ 5/105, ring differs 32, foreign bytes 161354, in place 60/60
+
+  seed keeps v11 addressing: pools differ 5/105, ring differs 0, foreign bytes 0, in place 60/60
+
+  seed block id by kpool: pools differ 5/105, ring differs 0, foreign bytes 33527, in place 60/60
+
+  ring one short of the bound: pools differ 6/105, ring differs 5, foreign bytes 0, in place 60/60
+
+  V2 keeps the generic slots: pools differ 12/105, ring differs 29, foreign bytes 71796, in place 60/60
+
+  tail slots in a clone (FULL replay reads the row): pools differ 12/105, ring differs 29, foreign bytes 71796, in place 0/60
+
+  V2 positions off by a request: pools differ 5/105, ring differs 0, foreign bytes 0, in place 60/60
+
+  CUDA-graph padding mapped: pools differ 0/105, ring differs 0, foreign bytes 5120, in place 60/60
+
+  DFlash2 k=7, c=1
+    fix          pools differ   0/66   readable ring slots differ  0/13  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/66   readable ring slots differ  0/13  foreign bytes 0 (0 past block 0)
+    off          pools differ  18/66   readable ring slots differ 13/13  foreign bytes 28475 (8124 past block 0)
+    v11          pools differ  18/66   readable ring slots differ 13/13  foreign bytes 28475 (8124 past block 0)
+    v11-contig   pools differ  18/66   readable ring slots differ 12/13  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ   2/66   readable ring slots differ  0/13  foreign bytes 8142 (8142 past block 0)
+  DFlash2 k=7, c=2
+    fix          pools differ   0/109  readable ring slots differ  0/23  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/109  readable ring slots differ  0/23  foreign bytes 0 (0 past block 0)
+    off          pools differ  53/109  readable ring slots differ 23/23  foreign bytes 36591 (16218 past block 0)
+    v11          pools differ  53/109  readable ring slots differ 23/23  foreign bytes 36591 (16218 past block 0)
+    v11-contig   pools differ  36/109  readable ring slots differ 18/23  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ   8/109  readable ring slots differ  0/23  foreign bytes 16273 (16273 past block 0)
+  MTP k=4, c=2
+    fix          pools differ   0/104  readable ring slots differ  0/40  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/104  readable ring slots differ  0/40  foreign bytes 0 (0 past block 0)
+    off          pools differ  53/104  readable ring slots differ 40/40  foreign bytes 56870 (36498 past block 0)
+    v11          pools differ  53/104  readable ring slots differ 40/40  foreign bytes 56870 (36498 past block 0)
+    v11-contig   pools differ  22/104  readable ring slots differ 14/40  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ  11/104  readable ring slots differ  0/40  foreign bytes 36579 (36579 past block 0)
+  k=7, c=2 + GLM53_ADAPTIVE_VERIFY
+    fix          pools differ   0/95   readable ring slots differ  0/33  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/95   readable ring slots differ  0/33  foreign bytes 0 (0 past block 0)
+    off          pools differ  50/95   readable ring slots differ 33/33  foreign bytes 42657 (22305 past block 0)
+    v11          pools differ  50/95   readable ring slots differ 33/33  foreign bytes 42657 (22305 past block 0)
+    v11-contig   pools differ  17/95   readable ring slots differ  9/33  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ   9/95   readable ring slots differ  0/33  foreign bytes 22378 (22378 past block 0)
+  k=5, c=4
+    fix          pools differ   0/102  readable ring slots differ  0/27  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/102  readable ring slots differ  0/27  foreign bytes 0 (0 past block 0)
+    off          pools differ  52/102  readable ring slots differ 27/27  foreign bytes 42648 (32494 past block 0)
+    v11          pools differ  52/102  readable ring slots differ 27/27  foreign bytes 42648 (32494 past block 0)
+    v11-contig   pools differ  34/102  readable ring slots differ 18/27  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ  10/102  readable ring slots differ  0/27  foreign bytes 32540 (32540 past block 0)
+  k=7, c=2, chunked prompt next to verify
+    fix          pools differ   0/154  readable ring slots differ  0/37  foreign bytes 0 (0 past block 0)
+    fix-v1       pools differ   0/154  readable ring slots differ  0/37  foreign bytes 0 (0 past block 0)
+    off          pools differ  41/154  readable ring slots differ 37/37  foreign bytes 56859 (36498 past block 0)
+    v11          pools differ  41/154  readable ring slots differ 37/37  foreign bytes 56859 (36498 past block 0)
+    v11-contig   pools differ  30/154  readable ring slots differ 26/37  foreign bytes 0 (0 past block 0)
+    v11-nonspec  pools differ   8/154  readable ring slots differ  0/37  foreign bytes 36634 (36634 past block 0)
+
+  mHC warmup sizes @2048 on 48 SMs: [1, 8, 17, 127, 192, 256, 320, 384, 448, 576, 640, 832, 1088, 1600]
+
+  MTP bytes not read per rank: 13.84 GiB
+
+  KDA kernel bit-exact: trim-off and trim-on (token stride 103) vs v11
+
+  greedy                       all m accepted  9
+  greedy                       rejected early  15
+  sampled                      all m accepted  3
+  sampled                      rejected early  21
+  sampled+block                all m accepted  2
+  sampled+block                rejected early  22
+  sampled+block+draft_logits   all m accepted  13
+  sampled+block+draft_logits   rejected early  11
+  sampled+draft_logits         all m accepted  10
+  sampled+draft_logits         rejected early  14
+  masked k=7 == truncated k'=m on every trial and mode
+
+  masked        committed pools  83
+  masked        pool differs     0
+  masked        ring differs     0
+  unsuppressed  committed pools  83
+  unsuppressed  pool differs     35
+  unsuppressed  ring differs     15
+  masked k=7 leaves the tail ring and every committed pool as k'=m does
+rc=1 end 2026-09-28T12:01:19Z elapsed_s=197

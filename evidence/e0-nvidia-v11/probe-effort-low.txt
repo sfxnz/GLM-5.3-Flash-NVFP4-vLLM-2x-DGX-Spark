@@ -1,0 +1,10 @@
+== effort_low (as vLLM builds it) kwargs={'enable_thinking': True, 'reasoning_effort': 'low'}
+prompt tail: '[gMASK]<sop><|system|>Reasoning Effort: Low<|user|>What is the capital of France? Answer with one word.<|assistant|><think>'
+raw output: '</think>Paris'
+== enable_thinking_true kwargs={'enable_thinking': True}
+prompt tail: '[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>What is the capital of France? Answer with one word.<|assistant|><think>'
+raw output: 'The user is asking a simple factual question: what is the capital of France? They want a one-word answer.\n\nThe answer is Paris.</think>Paris'
+== effort_high kwargs={'enable_thinking': True, 'reasoning_effort': 'high'}
+prompt tail: '[gMASK]<sop><|system|>Reasoning Effort: High<|user|>What is the capital of France? Answer with one word.<|assistant|><think>'
+raw output: '</think>Paris'
+== chat reasoning_effort=low: content 'Paris' reasoning ''

@@ -63,6 +63,13 @@ class VisionScorerTests(unittest.TestCase):
         self.assertFalse(S.chartqa_correct("No", ["Yes"]))
         self.assertTrue(S.chartqa_correct("0", ["0"]))
         self.assertTrue(S.chartqa_correct("<|begin_of_box|>1,200<|end_of_box|>", ["1200"]))
+        # GLM-5.3 bolds the answer and may explain after it (live nvidia 09b04e5, 2026-09-27)
+        self.assertTrue(S.chartqa_correct("**13**", ["13"]))
+        self.assertTrue(S.chartqa_correct("**82.5** billion U.S. dollars", ["82.5"]))
+        self.assertTrue(S.chartqa_correct("**28%**\n\nThe Internet TV bar shows 21% + 7%", ["28"]))
+        self.assertTrue(S.chartqa_correct("**Eagle Ford**\n\nWith 31 rigs", ["Eagle Ford"]))
+        self.assertFalse(S.chartqa_correct("**July 2012**", ["July 2014"]))
+        self.assertFalse(S.chartqa_correct("**1.33** (52 ÷ 39 = 1.33)", ["0.75"]))
 
     def test_ocrbench(self):
         self.assertTrue(S.ocrbench_correct("The text reads CENTRE.", ["CENTRE"], "IIIT5K"))

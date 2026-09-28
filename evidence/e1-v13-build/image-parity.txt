@@ -1,0 +1,11 @@
+build   spark1 2026-09-27T17:08:04Z..17:08:06Z  docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker  (build-spark1.log, rc=0)
+        git 20df9ee; patch hashes in git-head.txt
+        patch_v13_misc:   "v13 misc patches applied (8 files written)" (7 files with n/n edits + new glm5next_mhc_warmup.py)
+        patch_v13_fp8:    "patch_v13_fp8: 3 file(s) written" (refuses with SystemExit on drift; none)
+        patch_v13_census: "v13 census patch applied (2 files written)"
+        compileall of the touched files: ok
+ship    2026-09-27T17:08:27Z..17:12:40Z  docker save glm53-sm121-v13 | ssh spark2 docker load  (ship-spark2.log, rc=0, 253 s)
+parity  spark1 glm53-sm121-v13 sha256:03384701172160dbfe74092bf01892411d4562644f234d82aa0be8bd6e3c2220
+        spark2 glm53-sm121-v13 sha256:03384701172160dbfe74092bf01892411d4562644f234d82aa0be8bd6e3c2220   => exact
+        (spark2 glm53-sm121-v11 stays its own build bde907c4c44a, spark1 v11 is 88173725a448; only v13 is shared)
+JIT cache key for both nodes: 033847011721

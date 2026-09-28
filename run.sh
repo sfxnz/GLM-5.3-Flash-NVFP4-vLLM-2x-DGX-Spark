@@ -5,7 +5,7 @@ set -euo pipefail
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-$MODEL}"
-IMAGE="${IMAGE:-glm53-sm121-v11}"
+IMAGE="${IMAGE:-glm53-sm121-v13}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -28,6 +28,7 @@ FORCE_UNSAFE_MOE="${FORCE_UNSAFE_MOE:-0}"
 FORCE_UNSAFE_LINEAR="${FORCE_UNSAFE_LINEAR:-0}"
 FORCE_UNSAFE_SPEC="${FORCE_UNSAFE_SPEC:-0}"
 FORCE_UNSAFE_VISION="${FORCE_UNSAFE_VISION:-0}"
+FORCE_UNSAFE_IMAGE="${FORCE_UNSAFE_IMAGE:-0}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
 # vLLM default is 4 GiB of processed MM tensors in the head EngineCore (UMA).
 MM_PROCESSOR_CACHE_GB="${MM_PROCESSOR_CACHE_GB:-1}"
@@ -59,11 +60,47 @@ MOE_BACKEND="${MOE_BACKEND:-marlin}"
 LINEAR_BACKEND="${LINEAR_BACKEND:-marlin}"
 REASONING_PARSER="${REASONING_PARSER:-glm45}"
 DRAFT_MODEL="${DRAFT_MODEL:-incoai/GLM-5.3-Flash-DFlash2}"
-DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
-DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
+# DFlash2 snapshot (full commit sha). bf582e4 (2026-08-31) and dc77ff1 (2026-08-28)
+# are weights-only updates with the same config.json. E1b: bf582e4 moved no acceptance.
+DRAFT_REV="${DRAFT_REV:-7d74cdd881ed7e32c31175984a67823127b66cfe}"
+DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
+DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
-# the glm53-sm121-v11 image) or mtp (GLM's native MTP head; LibertAI pack only).
+# glm53-sm121-v11 or later) or mtp (GLM's native MTP head; LibertAI pack only,
+# with ADAPTIVE_VERIFY=0).
 SPEC="${SPEC:-dflash2}"
+# JIT_CACHE=1 keeps the FlashInfer / Triton / TileLang / DeepGEMM / vLLM compile
+# caches in JIT_CACHE_DIR/<image id>/ on each node, so later boots skip those
+# JIT builds. JIT_CACHE=0 gives every boot an empty cache, as before.
+JIT_CACHE="${JIT_CACHE:-1}"
+JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
+# v13 switches (docker/README-v13.md). Each one that is on becomes GLM53_* env on
+# both ranks, and needs a glm53-sm121-v13 image. Off adds nothing. v11 rollback:
+# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+# DRAFT_WEIGHTS: bf16, or nvfp4 for the DFlash2 drafter's linears in NVFP4 W4A16
+# (GLM53_NVFP4_W4A16=draft). E2e: the target is untouched, step A -4 ms, Tier 1
+# 856 vs 857 of 1010.
+DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-nvfp4}"
+# Comma list of target groups in INT8 W8A16 (GLM53_INT8_W8A16): shared, mla,
+# kda_o, kda_in, lm_head. none keeps them BF16. E4a over E3b: step A -17 ms,
+# prose A +24.9%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010.
+TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,lm_head}"
+# Rows at or above which the swapped kda_in GEMM dequantizes to BF16 and runs
+# cuBLAS instead of Marlin (GLM53_WQ_DEQUANT_MIN_M, GLM53_WQ_DEQUANT_GROUPS=kda_in).
+# 0 is off. Values below 64 are refused: they would reach the captured decode graphs.
+# E5: INT8 Marlin kda_in is 3.6x BF16 at the 1152-row prefill chunk, 93% of the
+# -11% prefill. E6: 512 gave +6.4% / +3.5% at 32k / 128k, short of the +5% rule.
+PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-0}"
+# 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
+# rejected drafts no longer write committed pool keys. E3a: needles pass to
+# 128k, and decode-built pools match prefill within the prefill A/A.
+KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
+# 1: verify only the leading drafts whose running DFlash2 confidence is at least
+# ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU). Lossless.
+# E3b at 0.2 vs E3a: prose A +14.9%, H +20.0%, B +5.3%, T +10.1%, J flat.
+# E4b at 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%.
+ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
+ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.3}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -135,15 +172,86 @@ if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
-  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp. FORCE_UNSAFE_SPEC=1 overrides." >&2
+  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY: want exactly 0 or 1." >&2
   exit 1
 fi
+# The draft path is snapshots/<rev>, and the hub names snapshot dirs by full commit sha only.
+if [[ ! "$DRAFT_REV" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DRAFT_REV=$DRAFT_REV: want a full 40-hex commit sha (the draft path is snapshots/\$DRAFT_REV)." >&2
+  exit 1
+fi
+if [[ "$JIT_CACHE" != 0 && "$JIT_CACHE" != 1 ]]; then
+  echo "JIT_CACHE=$JIT_CACHE: want exactly 0 or 1." >&2
+  exit 1
+fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$FORCE_UNSAFE_VISION" != 1 ]]; then
   echo "LANGUAGE_MODEL_ONLY=$LANGUAGE_MODEL_ONLY hides the native GLM-5.3-Flash vision tower. The NVIDIA pack ships vision_config and processor_config.json. Leave LANGUAGE_MODEL_ONLY=0. FORCE_UNSAFE_VISION=1 overrides." >&2
+  exit 1
+fi
+if [[ "$DRAFT_WEIGHTS" != bf16 && "$DRAFT_WEIGHTS" != nvfp4 ]]; then
+  echo "DRAFT_WEIGHTS=$DRAFT_WEIGHTS: want bf16 or nvfp4." >&2
+  exit 1
+fi
+# docker/patch_v13_fp8.py GROUPS, less draft: DRAFT_WEIGHTS owns the drafter.
+# "none" keeps every target group BF16 (an empty value falls back to the default).
+int8_groups=()
+if [[ "$TARGET_WEIGHT_GROUPS_INT8" != none ]]; then
+  IFS=, read -r -a int8_groups <<<"$TARGET_WEIGHT_GROUPS_INT8"
+fi
+for group in "${int8_groups[@]}"; do
+  case "$group" in
+    shared | mla | kda_o | kda_in | lm_head) ;;
+    draft)
+      echo "TARGET_WEIGHT_GROUPS_INT8=$TARGET_WEIGHT_GROUPS_INT8 lists draft, the drafter's group. DRAFT_WEIGHTS sets the drafter's weights; list target groups only (shared,mla,kda_o,kda_in,lm_head)." >&2
+      exit 1
+      ;;
+    *)
+      echo "TARGET_WEIGHT_GROUPS_INT8=$TARGET_WEIGHT_GROUPS_INT8: unknown group '$group'. Want a comma list of shared,mla,kda_o,kda_in,lm_head (docker/patch_v13_fp8.py)." >&2
+      exit 1
+      ;;
+  esac
+done
+if [[ ! "$PREFILL_DEQUANT_MIN_M" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  echo "PREFILL_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M: want a positive integer (rows), or 0 for off." >&2
+  exit 1
+fi
+# Capture sizes reach 16 (24 on the four-way rollback); keep dequant out of decode graphs.
+if (( PREFILL_DEQUANT_MIN_M != 0 && PREFILL_DEQUANT_MIN_M < 64 )); then
+  echo "PREFILL_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M is below 64 and would dequantize inside captured decode steps. Use 0 (off) or at least 64." >&2
+  exit 1
+fi
+if [[ "$KPOOL_TAIL_FIX" != 0 && "$KPOOL_TAIL_FIX" != 1 ]]; then
+  echo "KPOOL_TAIL_FIX=$KPOOL_TAIL_FIX: want exactly 0 or 1." >&2
+  exit 1
+fi
+if [[ "$ADAPTIVE_VERIFY" != 0 && "$ADAPTIVE_VERIFY" != 1 ]]; then
+  echo "ADAPTIVE_VERIFY=$ADAPTIVE_VERIFY: want exactly 0 or 1." >&2
+  exit 1
+fi
+if [[ ! "$ADAPTIVE_VERIFY_TAU" =~ ^0?\.[0-9]*[1-9][0-9]*$ ]]; then
+  echo "ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU: want a decimal strictly between 0 and 1, e.g. 0.2." >&2
+  exit 1
+fi
+if [[ "$ADAPTIVE_VERIFY" == 1 && "$SPEC" != dflash2 ]]; then
+  echo "ADAPTIVE_VERIFY=1 needs SPEC=dflash2: the verify width comes from the DFlash2 drafter's selector scores (docker/README-v13.md). Set ADAPTIVE_VERIFY=0 with SPEC=$SPEC." >&2
+  exit 1
+fi
+# GLM53_* env for both ranks, from the knobs above.
+glm53_env=()
+if [[ "$DRAFT_WEIGHTS" == nvfp4 ]]; then glm53_env+=(GLM53_NVFP4_W4A16=draft); fi
+if (( ${#int8_groups[@]} > 0 )); then glm53_env+=("GLM53_INT8_W8A16=$TARGET_WEIGHT_GROUPS_INT8"); fi
+if [[ "$PREFILL_DEQUANT_MIN_M" != 0 ]]; then
+  glm53_env+=("GLM53_WQ_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M" GLM53_WQ_DEQUANT_GROUPS=kda_in)
+fi
+if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
+if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
+# Older images do not read GLM53_*, so a switch there would silently do nothing.
+if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
@@ -151,11 +259,16 @@ ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 # Extra container env on both ranks: space-separated NAME=VALUE pairs, e.g.
-# EXTRA_ENV='MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1'. Engine/runtime names only.
+# EXTRA_ENV='MAX_JOBS=2 NCCL_DEBUG=INFO'. Engine/runtime names only.
 EXTRA_ENV="${EXTRA_ENV:-}"
 extra_env_args=()
+jit_verbose="" jit_debug=""
 read -r -a extra_env_pairs <<<"$EXTRA_ENV"
 for pair in "${extra_env_pairs[@]}"; do
+  case "$pair" in
+    FLASHINFER_JIT_VERBOSE=*) jit_verbose="${pair#*=}" ;;
+    FLASHINFER_JIT_DEBUG=*) jit_debug="${pair#*=}" ;;
+  esac
   name="${pair%%=*}"
   [[ "$pair" == *=* ]] || name="(an entry without =)"
   if [[ "$pair" != *=* || "$name" =~ TOKEN|KEY|SECRET ]] ||
@@ -163,10 +276,59 @@ for pair in "${extra_env_pairs[@]}"; do
     echo "EXTRA_ENV refuses '$name': want NAME=VALUE with NAME matching ^(NCCL|VLLM|PYTORCH|TORCH|CUDA|OMP|FLASHINFER|TRITON|TILELANG|GLM53)_[A-Z0-9_]+\$ or MAX_JOBS, and no TOKEN, KEY or SECRET in the name." >&2
     exit 1
   fi
+  case "$name" in
+    GLM53_NVFP4_W4A16) knob=DRAFT_WEIGHTS ;;
+    GLM53_INT8_W8A16) knob=TARGET_WEIGHT_GROUPS_INT8 ;;
+    GLM53_WQ_DEQUANT_MIN_M | GLM53_WQ_DEQUANT_GROUPS) knob=PREFILL_DEQUANT_MIN_M ;;
+    GLM53_KPOOL_TAIL_FIX) knob=KPOOL_TAIL_FIX ;;
+    GLM53_ADAPTIVE_VERIFY) knob=ADAPTIVE_VERIFY ;;
+    GLM53_ADAPTIVE_VERIFY_TAU) knob=ADAPTIVE_VERIFY_TAU ;;
+    *) knob="" ;;
+  esac
+  if [[ -n "$knob" ]]; then
+    echo "EXTRA_ENV sets $name, which run.sh sets from $knob on both ranks. Set $knob instead, so one setting owns $name." >&2
+    exit 1
+  fi
   extra_env_args+=(-e "$pair")
 done
+# This image's FlashInfer reads FLASHINFER_JIT_VERBOSE=1 as FLASHINFER_JIT_DEBUG=1 when DEBUG
+# is unset (flashinfer/jit/core.py:525-528): every JIT kernel builds -O0 --device-debug.
+if [[ "$jit_verbose" == 1 && "$jit_debug" != 0 ]]; then
+  echo "EXTRA_ENV FLASHINFER_JIT_VERBOSE=1 without FLASHINFER_JIT_DEBUG=0 builds every FlashInfer JIT kernel -O0 --device-debug (flashinfer/jit/core.py:525-528). The serving kernels would be debug builds, and on 2026-09-27 the topk ptxas grew past 3.28 GiB and PROFILE fell under the 8 GiB floor. Add FLASHINFER_JIT_DEBUG=0 to keep verbose ninja output with -O3 builds." >&2
+  exit 1
+fi
 
 log() { printf '==> %s\n' "$*"; }
+
+# One mount at /jit-cache. Each engine's own cache variable points into it
+# (checked against the v11 source; the image runs as root with HOME=/root):
+#   FLASHINFER_WORKSPACE_BASE  flashinfer/jit/env.py: <base>/.cache/flashinfer, base defaults to ~
+#   VLLM_CACHE_ROOT            vllm/envs.py: torch_compile_cache, flashinfer_autotune_cache
+#   DG_JIT_CACHE_DIR           vllm/utils/deep_gemm.py defaults it to $VLLM_CACHE_ROOT/deep_gemm
+#   TRITON_CACHE_DIR           Triton default ~/.triton/cache (Triton kernels, autotune results)
+#   TILELANG_CACHE_DIR         TileLang default ~/.tilelang/cache (mHC kernels)
+jit_args=()
+set_jit_args() {
+  jit_args=()
+  [[ "$JIT_CACHE" == 1 ]] || return 0
+  jit_args=(
+    -v "$1:/jit-cache"
+    -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer
+    -e VLLM_CACHE_ROOT=/jit-cache/vllm
+    -e DG_JIT_CACHE_DIR=/jit-cache/vllm/deep_gemm
+    -e TRITON_CACHE_DIR=/jit-cache/triton
+    -e TILELANG_CACHE_DIR=/jit-cache/tilelang
+  )
+}
+
+# Keyed by this node's image ID (first 12 hex digits), so a new image never
+# reuses kernels built by an old one.
+jit_cache_host_dir() {
+  local id
+  id="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
+  id="${id#sha256:}"
+  printf '%s/%s\n' "$JIT_CACHE_DIR" "${id:0:12}"
+}
 
 host_short() { hostname -s | tr '[:upper:]' '[:lower:]'; }
 
@@ -219,7 +381,7 @@ maybe_drop_caches() {
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v11 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
+    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v13 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
     exit 1
   fi
 }
@@ -246,8 +408,8 @@ ensure_weights() {
     log "Using pinned draft snapshot $DRAFT_SNAPSHOT"
   elif [[ -n "$HF" ]]; then
     export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
-    log "Downloading $DRAFT_MODEL (resumes under $HF_CACHE)"
-    "$HF" download "$DRAFT_MODEL"
+    log "Downloading $DRAFT_MODEL @ $DRAFT_REV (resumes under $HF_CACHE)"
+    "$HF" download "$DRAFT_MODEL" --revision "$DRAFT_REV"
   else
     # The dflash config points at the pinned snapshot path inside the
     # container, so vLLM cannot pull it on demand.
@@ -278,6 +440,14 @@ start_local() {
   local serve_model
   serve_model="$(resolve_model)"
 
+  if [[ "$JIT_CACHE" == 1 ]]; then
+    local jit_dir
+    jit_dir="$(jit_cache_host_dir)"
+    mkdir -p "$jit_dir"
+    log "JIT cache $jit_dir -> /jit-cache"
+    set_jit_args "$jit_dir"
+  fi
+
   local tok
   tok="$(token_env || true)"
   local env_args=(
@@ -301,10 +471,15 @@ start_local() {
   if [[ -n "${VLLM_USE_BREAKABLE_CUDAGRAPH}" ]]; then
     env_args+=(-e "VLLM_USE_BREAKABLE_CUDAGRAPH=$VLLM_USE_BREAKABLE_CUDAGRAPH")
   fi
+  local pair
+  for pair in "${glm53_env[@]}"; do
+    env_args+=(-e "$pair")
+  done
   env_args+=("${extra_env_args[@]}")
   local host_ip="$HEAD_IP"
   if [[ "$rank" != "0" ]]; then
-    host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    # || true: under pipefail a missing IFACE would exit here before the fallback below.
+    host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
     host_ip="${host_ip:-10.100.8.2}"
   fi
   env_args+=(-e "VLLM_HOST_IP=$host_ip")
@@ -363,6 +538,7 @@ start_local() {
     --ulimit memlock=-1:-1 \
     "${vol_args[@]}" \
     "${env_args[@]}" \
+    "${jit_args[@]}" \
     "$IMAGE" \
     "$serve_model" \
     --tensor-parallel-size "$TP" \
@@ -425,10 +601,11 @@ wait_ready() {
 FORWARD_ENVS=(
   MODEL SERVED_NAME IMAGE CONTAINER_NAME PORT MASTER_PORT HEAD_IP WORKER_HOST IFACE HCA TP NNODES
   MAX_MODEL_LEN MAX_NUM_SEQS UTIL KV_CACHE_DTYPE NUM_SPECULATIVE_TOKENS MAX_NUM_BATCHED_TOKENS
-  FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION
+  FORCE_UNSAFE_CTX FORCE_UNSAFE_MOE FORCE_UNSAFE_LINEAR FORCE_UNSAFE_SPEC FORCE_UNSAFE_VISION FORCE_UNSAFE_IMAGE
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
-  DRAFT_MODEL SPEC
+  DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR
+  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
@@ -465,9 +642,18 @@ check_image_parity() {
 }
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
+  printf '==> validate-only spec=%s seqs=%s spec_tokens=%s eager=%s compilation=%s snapshot=%s draft_rev=%s moe=%s linear=%s served=%s mm_cache_gb=%s max_new_tokens=%s\n' \
     "$SPEC" "$MAX_NUM_SEQS" "$NUM_SPECULATIVE_TOKENS" "$ENFORCE_EAGER" "$COMPILATION_CONFIG" \
-    "$SNAPSHOT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+    "$SNAPSHOT_REV" "$DRAFT_REV" "$MOE_BACKEND" "$LINEAR_BACKEND" "$SERVED_NAME" "$MM_PROCESSOR_CACHE_GB" "$MAX_NEW_TOKENS"
+  # The real key is each node's own image ID; validate-only does not call docker.
+  set_jit_args "$JIT_CACHE_DIR/<image-id>"
+  printf '==> jit_cache=%s args: %s\n' "$JIT_CACHE" "${jit_args[*]}"
+  # Every GLM53_* the containers get: the knobs' first, then EXTRA_ENV's.
+  shown=("${glm53_env[@]}")
+  for pair in "${extra_env_pairs[@]}"; do
+    if [[ "$pair" == GLM53_* ]]; then shown+=("$pair"); fi
+  done
+  printf '==> glm53_env: %s\n' "${shown[*]}"
   printf '==> worker command: %s' "$(worker_command)"
   echo
   if [[ "$ORCHESTRATE" == auto && "$(detect_role)" == head ]] && worker_ssh_ok; then

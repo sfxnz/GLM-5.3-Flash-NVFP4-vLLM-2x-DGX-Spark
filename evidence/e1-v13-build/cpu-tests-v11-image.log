@@ -1,0 +1,74 @@
+start 2026-09-27T17:08:58Z git=20df9eee2d13dc5333c26f0b17453864d7c09864 image=sha256:88173725a4485c8d4145212f328d00428c31e7b6caa78fa655940489ea14132a
+extra docker args: 
+test_chunking_is_exact (docker.test_v13_fp8.Nvfp4ReferenceTest.test_chunking_is_exact) ... ok
+test_e2m1_grid_matches_marlin_bit_trick (docker.test_v13_fp8.Nvfp4ReferenceTest.test_e2m1_grid_matches_marlin_bit_trick) ... ok
+test_e4m3_encode_roundtrips_normals_and_rounds_half_even (docker.test_v13_fp8.Nvfp4ReferenceTest.test_e4m3_encode_roundtrips_normals_and_rounds_half_even) ... ok
+test_marlin_scale_format_keeps_normal_block_scales (docker.test_v13_fp8.Nvfp4ReferenceTest.test_marlin_scale_format_keeps_normal_block_scales)
+nvfp4_marlin_process_scales: half(s) * 2^7, zero if < 2, keep the top ... ok
+test_real_checkpoint_error (docker.test_v13_fp8.Nvfp4ReferenceTest.test_real_checkpoint_error)
+Relative Frobenius error on the first REAL_ROWS rows of one tensor ... skipped 'checkpoint not at /root/.cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3'
+test_roundtrip_error_bounds (docker.test_v13_fp8.Nvfp4ReferenceTest.test_roundtrip_error_bounds) ... ok
+test_search_never_loses_to_amax_over_6 (docker.test_v13_fp8.Nvfp4ReferenceTest.test_search_never_loses_to_amax_over_6) ... ok
+test_applies_then_is_idempotent (docker.test_v13_fp8.PatchTest.test_applies_then_is_idempotent) ... ok
+test_compile_factor_only_when_set (docker.test_v13_fp8.PatchTest.test_compile_factor_only_when_set) ... ok
+test_hook_is_env_gated (docker.test_v13_fp8.PatchTest.test_hook_is_env_gated) ... ok
+test_marlin_api_matches (docker.test_v13_fp8.PatchTest.test_marlin_api_matches) ... ok
+test_marlin_nvfp4_api_matches (docker.test_v13_fp8.PatchTest.test_marlin_nvfp4_api_matches)
+quantize_layer_to_marlin_nvfp4 feeds prepare_fp4_layer_for_marlin a ... ok
+test_referenced_classes_and_attributes_exist (docker.test_v13_fp8.PatchTest.test_referenced_classes_and_attributes_exist)
+The name-based site table must match the v11 model code. ... ok
+test_refuses_drift_without_writing (docker.test_v13_fp8.PatchTest.test_refuses_drift_without_writing) ... ok
+test_refuses_foreign_module (docker.test_v13_fp8.PatchTest.test_refuses_foreign_module) ... ok
+test_touched_files_compile (docker.test_v13_fp8.PatchTest.test_touched_files_compile) ... ok
+test_chunking_is_exact (docker.test_v13_fp8.QuantizerTest.test_chunking_is_exact) ... ok
+test_collect_sites (docker.test_v13_fp8.QuantizerTest.test_collect_sites) ... ok
+test_nvfp4_chunking_is_exact (docker.test_v13_fp8.QuantizerTest.test_nvfp4_chunking_is_exact) ... ok
+test_nvfp4_matches_numpy_reference (docker.test_v13_fp8.QuantizerTest.test_nvfp4_matches_numpy_reference) ... ok
+test_parse_groups (docker.test_v13_fp8.QuantizerTest.test_parse_groups) ... ok
+test_per_channel_error_bound (docker.test_v13_fp8.QuantizerTest.test_per_channel_error_bound) ... ok
+test_scale_survives_marlin_exponent_bias (docker.test_v13_fp8.QuantizerTest.test_scale_survives_marlin_exponent_bias)
+Marlin folds 2^120 into BF16 scales; realistic scales must stay finite. ... ok
+test_selected_modes (docker.test_v13_fp8.QuantizerTest.test_selected_modes) ... ok
+test_apply_twice_is_idempotent (docker.test_v13_misc.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_behaviour_is_env_gated (docker.test_v13_misc.ApplyTests.test_behaviour_is_env_gated)
+Each GLM53_* var is read, and only through os.environ lookups. ... ok
+test_draft_group_predicate (docker.test_v13_misc.ApplyTests.test_draft_group_predicate) ... ok
+test_every_edit_anchor_occurs_once_in_v11 (docker.test_v13_misc.ApplyTests.test_every_edit_anchor_occurs_once_in_v11) ... ok
+test_indexer_ws_factor (docker.test_v13_misc.ApplyTests.test_indexer_ws_factor) ... ok
+test_kda_trim_predicate_on_glm_views (docker.test_v13_misc.ApplyTests.test_kda_trim_predicate_on_glm_views) ... ok
+test_mhc_warmup_covers_every_specialisation (docker.test_v13_misc.ApplyTests.test_mhc_warmup_covers_every_specialisation) ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_misc.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_skip_prefix_filter (docker.test_v13_misc.ApplyTests.test_skip_prefix_filter) ... ok
+test_skip_prefix_matches_exactly_the_nvidia_mtp_layer (docker.test_v13_misc.ApplyTests.test_skip_prefix_matches_exactly_the_nvidia_mtp_layer) ... skipped 'no nvidia ckpt'
+test_touched_files_compile (docker.test_v13_misc.ApplyTests.test_touched_files_compile) ... ok
+test_strided_kernel_is_bit_exact (docker.test_v13_misc.KdaKernelInterpreterTest.test_strided_kernel_is_bit_exact) ... ok
+test_apply_twice_is_idempotent (docker.test_v13_census.ApplyTests.test_apply_twice_is_idempotent) ... ok
+test_every_anchor_occurs_once_in_v11 (docker.test_v13_census.ApplyTests.test_every_anchor_occurs_once_in_v11) ... ok
+test_hooks_are_guarded (docker.test_v13_census.ApplyTests.test_hooks_are_guarded)
+Every runner hook sits behind `self._glm53_census is not None`. ... ok
+test_refuses_on_drift_and_writes_nothing (docker.test_v13_census.ApplyTests.test_refuses_on_drift_and_writes_nothing) ... ok
+test_touched_files_compile (docker.test_v13_census.ApplyTests.test_touched_files_compile) ... ok
+test_env_int (docker.test_v13_census.CensusModuleTests.test_env_int) ... ok
+test_host_layout_mismatch_skips_step (docker.test_v13_census.CensusModuleTests.test_host_layout_mismatch_skips_step) ... ok
+test_off_when_unset (docker.test_v13_census.CensusModuleTests.test_off_when_unset) ... ok
+test_window_segments_and_report_roundtrip (docker.test_v13_census.CensusModuleTests.test_window_segments_and_report_roundtrip) ... ok
+test_dockerfile_runs_census_patch_before_compileall (docker.test_v13_census.PatchStaticTests.test_dockerfile_runs_census_patch_before_compileall) ... ok
+test_other_v13_patches_leave_the_runner_alone (docker.test_v13_census.PatchStaticTests.test_other_v13_patches_leave_the_runner_alone)
+Dockerfile order is misc, fp8, census: the anchors see v11 text. ... ok
+test_c2_union_and_cross_request_sharing (docker.test_v13_census.ReportMathTests.test_c2_union_and_cross_request_sharing) ... ok
+test_distinct_identical_and_disjoint (docker.test_v13_census.ReportMathTests.test_distinct_identical_and_disjoint) ... ok
+test_independent_distinct (docker.test_v13_census.ReportMathTests.test_independent_distinct) ... ok
+test_position_stats (docker.test_v13_census.ReportMathTests.test_position_stats) ... ok
+test_prefix_dup_positions_and_bytes (docker.test_v13_census.ReportMathTests.test_prefix_dup_positions_and_bytes) ... ok
+test_random_routing_matches_independent_expectation (docker.test_v13_census.ReportMathTests.test_random_routing_matches_independent_expectation) ... ok
+test_synthetic_trace (docker.test_v13_census.StepBucketsTests.test_synthetic_trace) ... ok
+
+----------------------------------------------------------------------
+Ran 54 tests in 11.368s
+
+OK (skipped=2)
+
+  mHC warmup sizes @2048 on 48 SMs: [1, 8, 17, 127, 192, 256, 320, 384, 448, 576, 640, 832, 1088, 1600]
+
+  KDA kernel bit-exact: trim-off and trim-on (token stride 103) vs v11
+rc=0 elapsed_s=14

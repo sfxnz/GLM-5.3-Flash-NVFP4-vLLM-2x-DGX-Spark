@@ -1,0 +1,77 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3219 min= 13.89 @ 01:21:04  first=116.18 last= 20.17  swap_first=3.95 swap_max=7.33  span=01:07:36..01:21:14
+spark1 PROFILE  n=   539 min=  8.30 @ 01:21:59  first= 20.14 last=  9.92  swap_first=7.28 swap_max=7.28  span=01:21:14..01:23:31
+spark1 KV_READY n=   926 min=  4.24 @ 01:27:25  first= 10.06 last=  5.24  swap_first=7.27 swap_max=7.27  span=01:23:31..01:27:27
+spark1 SERVING  n=   910 min=  3.53 @ 01:27:51  first=  5.24 last=  7.09  swap_first=6.99 swap_max=6.99  span=01:27:27..02:43:30
+spark2 LOAD     n=  3223 min= 15.16 @ 01:13:33  first=117.20 last= 20.89  swap_first=1.71 swap_max=4.12  span=01:07:36..01:21:14
+spark2 PROFILE  n=   540 min=  8.66 @ 01:21:59  first= 20.87 last= 11.62  swap_first=3.95 swap_max=3.95  span=01:21:14..01:23:31
+spark2 KV_READY n=   928 min=  6.47 @ 01:25:57  first= 12.75 last= 10.47  swap_first=3.95 swap_max=3.95  span=01:23:31..01:27:27
+spark2 SERVING  n=   926 min=  8.87 @ 01:28:18  first= 10.47 last= 10.14  swap_first=3.94 swap_max=3.95  span=01:27:27..02:43:28
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-09-28T01:07:36.732Z
+PROFILE  from 2026-09-28T01:21:14.682Z
+KV_READY from 2026-09-28T01:23:31.733Z
+SERVING  from 2026-09-28T01:27:27.312Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        01:28:17..01:28:24  spark1 min=3.80@01:28:21 swap 6.99->6.99 | spark2 min=8.87@01:28:18 swap 3.95->3.95
+bench-1                            01:28:24..01:37:54  spark1 min=3.79@01:29:33 swap 6.99->6.98 | spark2 min=8.88@01:30:16 swap 3.95->3.94
+bench-2                            01:37:54..01:47:17  spark1 min=5.61@01:40:25 swap 6.98->6.97 | spark2 min=10.48@01:38:12 swap 3.94->3.94
+bench-T                            01:47:17..01:50:04  spark1 min=5.59@01:48:07 swap 6.97->6.97 | spark2 min=10.47@01:47:56 swap 3.94->3.94
+bench-E                            01:50:04..01:52:23  spark1 min=5.32@01:50:10 swap 6.97->6.91 | spark2 min=10.19@01:50:09 swap 3.94->3.94
+tier0-compare                      01:52:23..02:05:43  spark1 min=3.97@01:57:50 swap 6.91->6.90 | spark2 min=9.21@01:58:04 swap 3.94->3.93
+tier0-record                       02:05:43..02:14:13  spark1 min=7.05@02:10:59 swap 6.90->6.90 | spark2 min=10.14@02:05:44 swap 3.93->3.93
+probe-kpool                        02:14:13..02:43:31  spark1 min=6.95@02:37:58 swap 6.90->6.89 | spark2 min=10.13@02:43:02 swap 3.93->3.93
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+spark1 deep_gemm                                                          pids=  30 rows=   30 01:21:39..01:57:46 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=  312 peak_sum=  318
+spark1 flashinfer:batch_mla_attention_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_ pids=   7 rows=   38 01:23:37..01:23:44 phases=['KV_READY'] peak_proc=    3 peak_sum=   13
+spark1 flashinfer:batch_prefill_with_kv_cache_dtype_q_bf16_dtype_kv_e4m3_dtype pids=  21 rows=  198 01:23:45..01:24:31 phases=['KV_READY'] peak_proc=    3 peak_sum=   13
+spark1 flashinfer:other                                                   pids= 119 rows=  450 01:21:53..01:26:27 phases=['PROFILE', 'KV_READY'] peak_proc= 1406 peak_sum= 1791
+spark1 flashinfer:sampling                                                pids=   7 rows=  149 01:25:52..01:26:27 phases=['KV_READY'] peak_proc=    3 peak_sum=   13
+spark1 flashinfer:topk                                                    pids=   7 rows=  331 01:21:52..01:23:30 phases=['PROFILE'] peak_proc=    3 peak_sum=   13
+spark1 flashinfer:xqa_input_bf16_kv_cache_e4m3_output_bf16_page_size_64_head_d pids=   7 rows=   28 01:25:17..01:25:24 phases=['KV_READY'] peak_proc=    3 peak_sum=   12
+spark1 nvcc-child:batch_mla_run                                           pids=   2 rows=    4 01:23:41..01:23:42 phases=['KV_READY'] peak_proc=  128 peak_sum=  130
+spark1 nvcc-child:batch_prefill_paged_kernel_mask_0                       pids=   2 rows=    4 01:23:49..01:23:50 phases=['KV_READY'] peak_proc=   85 peak_sum=   86
+spark1 nvcc-child:batch_prefill_paged_kernel_mask_1                       pids=   2 rows=    4 01:23:55..01:23:56 phases=['KV_READY'] peak_proc=  141 peak_sum=  142
+spark1 nvcc-child:batch_prefill_paged_kernel_mask_2                       pids=   2 rows=    4 01:24:02..01:24:03 phases=['KV_READY'] peak_proc=  108 peak_sum=  110
+spark1 nvcc-child:batch_prefill_paged_kernel_mask_3                       pids=   2 rows=    4 01:24:10..01:24:11 phases=['KV_READY'] peak_proc=  106 peak_sum=  107
+spark1 nvcc-child:batch_prefill_ragged_kernel_mask_0                      pids=   2 rows=    2 01:23:49..01:23:49 phases=['KV_READY'] peak_proc=   92 peak_sum=   93
+spark1 nvcc-child:batch_prefill_ragged_kernel_mask_1                      pids=   2 rows=    2 01:23:56..01:23:56 phases=['KV_READY'] peak_proc=   93 peak_sum=   94
+spark1 nvcc-child:batch_prefill_ragged_kernel_mask_2                      pids=   2 rows=    4 01:24:02..01:24:03 phases=['KV_READY'] peak_proc=   86 peak_sum=   88
+spark1 nvcc-child:batch_prefill_ragged_kernel_mask_3                      pids=   2 rows=    2 01:24:10..01:24:10 phases=['KV_READY'] peak_proc=   81 peak_sum=   83
+spark1 nvcc-child:renorm                                                  pids=   2 rows=    4 01:26:02..01:26:04 phases=['KV_READY'] peak_proc=  158 peak_sum=  160
+spark1 nvcc-child:sampling                                                pids=   2 rows=   18 01:26:14..01:26:22 phases=['KV_READY'] peak_proc=  473 peak_sum=  475
+spark1 nvcc-child:topk                                                    pids=   2 rows=   55 01:22:55..01:23:23 phases=['PROFILE'] peak_proc= 1892 peak_sum= 1893
+spark1 other                                                              pids=  22 rows=   22 01:21:44..01:58:13 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=  234 peak_sum=  235
+spark1 tilelang                                                           pids=  10 rows=   10 01:21:44..01:58:13 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=    3 peak_sum=    3
+spark1 triton                                                             pids=  16 rows=   16 01:23:32..01:26:31 phases=['KV_READY'] peak_proc=  112 peak_sum=  112
+spark2 deep_gemm                                                          pids=  39 rows=   41 01:21:39..01:58:08 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=  309 peak_sum=  315
+spark2 flashinfer:batch_mla_attention_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_ pids=   7 rows=   38 01:23:37..01:23:44 phases=['KV_READY'] peak_proc=    3 peak_sum=   13
+spark2 flashinfer:batch_prefill_with_kv_cache_dtype_q_bf16_dtype_kv_e4m3_dtype pids=  21 rows=  190 01:23:45..01:24:28 phases=['KV_READY'] peak_proc=    4 peak_sum=   13
+spark2 flashinfer:other                                                   pids= 138 rows=  442 01:21:53..01:26:28 phases=['PROFILE', 'KV_READY'] peak_proc= 1410 peak_sum= 1795
+spark2 flashinfer:sampling                                                pids=   7 rows=  148 01:25:53..01:26:28 phases=['KV_READY'] peak_proc=    4 peak_sum=   13
+spark2 flashinfer:topk                                                    pids=   7 rows=  313 01:21:53..01:23:24 phases=['PROFILE'] peak_proc=    3 peak_sum=   13
+spark2 flashinfer:xqa_input_bf16_kv_cache_e4m3_output_bf16_page_size_64_head_d pids=   7 rows=   25 01:25:17..01:25:23 phases=['KV_READY'] peak_proc=    3 peak_sum=   13
+spark2 nvcc-child:batch_mla_run                                           pids=   2 rows=    2 01:23:42..01:23:42 phases=['KV_READY'] peak_proc=   80 peak_sum=   81
+spark2 nvcc-child:batch_prefill_paged_kernel_mask_0                       pids=   2 rows=    2 01:23:50..01:23:50 phases=['KV_READY'] peak_proc=   89 peak_sum=   90
+spark2 nvcc-child:batch_prefill_paged_kernel_mask_1                       pids=   2 rows=    4 01:23:55..01:23:56 phases=['KV_READY'] peak_proc=  141 peak_sum=  143
+spark2 nvcc-child:batch_prefill_paged_kernel_mask_2                       pids=   2 rows=    2 01:24:02..01:24:02 phases=['KV_READY'] peak_proc=  101 peak_sum=  103
+spark2 nvcc-child:batch_prefill_paged_kernel_mask_3                       pids=   2 rows=    4 01:24:08..01:24:09 phases=['KV_READY'] peak_proc=  101 peak_sum=  102
+spark2 nvcc-child:batch_prefill_ragged_kernel_mask_0                      pids=   2 rows=    2 01:23:49..01:23:49 phases=['KV_READY'] peak_proc=   76 peak_sum=   78
+spark2 nvcc-child:batch_prefill_ragged_kernel_mask_1                      pids=   2 rows=    2 01:23:56..01:23:56 phases=['KV_READY'] peak_proc=   84 peak_sum=   86
+spark2 nvcc-child:batch_prefill_ragged_kernel_mask_2                      pids=   2 rows=    4 01:24:02..01:24:03 phases=['KV_READY'] peak_proc=   86 peak_sum=   88
+spark2 nvcc-child:batch_prefill_ragged_kernel_mask_3                      pids=   2 rows=    2 01:24:09..01:24:09 phases=['KV_READY'] peak_proc=   86 peak_sum=   88
+spark2 nvcc-child:mha                                                     pids=   2 rows=    2 01:25:18..01:25:18 phases=['KV_READY'] peak_proc=   69 peak_sum=   71
+spark2 nvcc-child:renorm                                                  pids=   2 rows=    4 01:26:02..01:26:03 phases=['KV_READY'] peak_proc=  159 peak_sum=  160
+spark2 nvcc-child:sampling                                                pids=   2 rows=   18 01:26:15..01:26:23 phases=['KV_READY'] peak_proc=  473 peak_sum=  475
+spark2 nvcc-child:topk                                                    pids=   2 rows=   58 01:22:48..01:23:16 phases=['PROFILE'] peak_proc= 1923 peak_sum= 1925
+spark2 nvcc-child:tvm_kernels                                             pids=   2 rows=    2 01:27:42..01:27:42 phases=['SERVING'] peak_proc=   34 peak_sum=   36
+spark2 other                                                              pids=  17 rows=   17 01:21:44..01:58:13 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=  232 peak_sum=  233
+spark2 tilelang                                                           pids=   9 rows=    9 01:21:44..01:58:13 phases=['PROFILE', 'KV_READY', 'SERVING'] peak_proc=    3 peak_sum=    3
+spark2 triton                                                             pids=   8 rows=    8 01:23:35..01:28:18 phases=['KV_READY', 'SERVING'] peak_proc=   32 peak_sum=   32
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB
+spark1 PROFILE  busy_s=  100 peak_sum_rss= 1902
+spark1 KV_READY busy_s=  119 peak_sum_rss= 1804
+spark1 SERVING  busy_s=   11 peak_sum_rss=  238
+spark2 PROFILE  busy_s=   94 peak_sum_rss= 1933
+spark2 KV_READY busy_s=  108 peak_sum_rss= 1808
+spark2 SERVING  busy_s=   15 peak_sum_rss=  279

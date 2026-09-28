@@ -1,0 +1,43 @@
+E1a: glm53-sm121-v13 with every GLM53_* unset (P3.0 gate), cold JIT cache, head shard warmer
+  serve   run.sh @ 20df9ee, IMAGE=glm53-sm121-v13 EXTRA_ENV=MAX_JOBS=2, JIT_CACHE=1 (first boot on 033847011721), WARM_SHARDS=1
+          nvidia 09b04e5, drafter 7d74cdd (default), DFlash2-7, seqs 2, kv pin 4.14 GiB; args/env parity OK (docker-args-check.txt)
+          image parity exact: 033847011721 on both ranks (E0 ran two different v11 builds)
+  P3.0    GLM53_ lines in both ranks' logs: 0; GLM53_* env: 0; fp4_gemm / device-debug builds: 0 (backend.txt)
+
+boot (UTC)                    E0 (v11, no cache, no warmer)   E1a (v13, cold cache, warmer)
+  run.sh -> /v1/models        13:41:43 -> 14:01:54  20.2 min  17:14:23 -> 17:35:35  21.2 min
+  LOAD / PROFILE / KV_READY   849 s / 133 s / 235 s           889 s / 138 s / 245 s
+  head Loading weights        685.95 s                        715.34 s
+  head Model loading          740.58 s                        806.97 s
+  worker Loading / Model      217.16 s / 277.29 s             212.51 s / 259.74 s
+  init engine                 316.29 s                        333.33 s (graph capture 28 s)
+  shard progress (head)       33/33 at 11:25                  33/33 at 11:54 (same curve to shard 20, then lags; warmer advised 32 shards, shard_warm-spark1.log)
+
+MemAvailable minima GiB (spark1 / spark2)      E0              E1a
+  LOAD                                         14.48 / 15.56   14.27 / 15.44
+  PROFILE                                       9.06 /  9.99   10.36 /  8.57 (spark2 transient at +45 s, topk ptxas)
+  KV_READY                                      4.91 /  7.70    6.53 /  5.65
+  SERVING (probes, 3 benches, Tier 0)                           8.00 /  8.92
+  spark1 swap during boot 3.26 -> 8.52 GiB (E0 3.50 -> 6.77); TP0 had 2.6 GiB in swap after bench-1 (swap-notes.txt)
+
+compiler census (compilers.tsv, memory-by-phase.txt): same set as E0 -- FlashInfer topk (PROFILE); batch_mla, batch_prefill,
+  xqa, sampling (KV_READY); DeepGEMM; TileLang mHC; Triton. Busy sample-seconds PROFILE 101/94, KV_READY 110/107;
+  peak summed compiler RSS 1.96 / 1.90 GiB. JIT cache after all workloads: 131 MB, 2060 files per node
+  (flashinfer 39M, triton 87M, tilelang 5.3M, vllm 0.9M incl. deep_gemm) -- jit-cache-final.txt.
+  Serving: first c=2 structured wave paid a TileLang mhc compile (J@c2 TTFT 8.7 s in bench-1).
+
+checks: count 200/200 and thinking-off "PING" (probe-count.console.txt); Tier 0 PASS 10/10 (tier0-notes.txt)
+
+fast gate (bench-1 cell A INVALID: local swap +162 MiB; bench-3-A reruns cell A only)
+  cell   E0 b1/b2 tok/s   E1a tok/s             E1a step_ms          E1a acc_len
+  A      19.79 / 19.66    (19.22) 19.05 18.94   (120.6) 117.4 116.9  (2.316) 2.241 2.221
+  B      34.90 / 34.39    33.16 / 33.68         126.9 / 122.1        4.230 / 4.130
+  J@c1   68.89 / 68.84    66.06 / 67.40         120.5 / 116.6        8.000 / 7.949
+  J@c2   55.50 / 56.90    48.34 / 57.49         166.2 / 137.8        7.820 / 7.961
+  H      13.69 / 14.04    13.67 / 13.63         165.5 / 167.2        2.261 / 2.277
+  kit/compare.py vs E0 (compare-vs-e0.txt): A -3.7% [-4.5,-2.9] REVERT (step +1.6%, acc -2.1%, paired acc -2.1% [-4.5,+0.4]);
+  B -3.5% REVERT; J@c1 -3.1% REVERT; H -1.6% REVERT; J@c2, K@c1, K@c2 INCONCLUSIVE.
+  Reading: both arms are one boot each, and the two panels per arm are same-boot repeats, so the z-interval has no
+  boot-to-boot term and the REVERTs are not attributable to v13. E1b (same image, same code path, only drafter weights
+  differ) is back at E0's step times (J@c1 116.0/115.8 ms vs E0 115.5/115.6; A 115.4 on its first panel), so the
+  E1a slowdown is boot variance (spark1 swap 8 GiB, TP0 2.6 GiB swapped), not the v13 layer.

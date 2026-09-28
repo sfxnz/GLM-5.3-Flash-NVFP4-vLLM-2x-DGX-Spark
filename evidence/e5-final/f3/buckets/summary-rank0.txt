@@ -1,0 +1,19 @@
+step_buckets.py, rank 0, ms per step (F3: census + torch-profiler boot; not a perf number)
+prose/code/structured: c=1 verify steps (8 rows); prose2: c=2 verify steps (16 rows); prefill: prefill-chunk steps (3 x 1152 + 1 x 1267 tokens)
+                          prose         code   structured       prose2      prefill
+steps                        29           29           29           29            4
+wall_ms                   79.36        84.81        97.89       106.58      1001.65
+busy_ms                   73.86        80.03        92.71       102.31       989.53
+idle_ms                    5.50         4.77         5.19         4.27        12.12
+bucket_sum_ms             76.37        82.52        95.28       104.97       989.54
+nccl                  3.81   5%    3.87   5%    4.74   5%    5.46   5%   82.75   8%
+routed_moe           33.57  42%   40.14  47%   50.56  52%   54.68  51%  349.40  35%
+linear_marlin        18.58  23%   18.53  22%   18.86  19%   20.08  19%  221.28  22%
+mhc                   2.04   3%    2.01   2%    2.14   2%    2.64   2%   71.98   7%
+kda                   2.33   3%    2.30   3%    2.41   2%    5.53   5%   75.87   8%
+mla_indexer           0.74   1%    0.75   1%    0.88   1%    0.73   1%  106.57  11%
+bf16_gemm             6.30   8%    6.26   7%    6.47   7%    6.35   6%   23.96   2%
+other                 2.08   3%    2.06   2%    2.20   2%    2.23   2%   47.45   5%
+lm_head_logits        1.64   2%    1.64   2%    1.67   2%    1.80   2%    1.53   0%
+sampler_rejection     0.05   0%    0.05   0%    0.05   0%    0.05   0%    0.05   0%
+drafter               5.24   7%    4.92   6%    5.31   5%    5.40   5%    8.69   1%

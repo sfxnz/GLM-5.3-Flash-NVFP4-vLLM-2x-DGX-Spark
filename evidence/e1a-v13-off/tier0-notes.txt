@@ -1,0 +1,18 @@
+Tier 0 on E1a (glm53-sm121-v13, every GLM53_* unset, nvidia 09b04e5, drafter 7d74cdd, JIT_CACHE=1 cold, WARM_SHARDS=1)
+  compare 18:02:02Z..18:11:05Z vs ~/projects/data/glm53-evals/ref/nvidia-v11-k7.json (E0 boot, v11)
+  PASS 10/10 criteria (tier0.json); client memguard 3.0 GiB never fired (min spark1 8.35 / spark2 8.96 GiB)
+
+This is a CROSS-BOOT compare (different boot, different image build on rank 1). E0's numbers were same-boot.
+
+                     E0 ref A/A (record)   E0 compare (same boot)   E1a compare (cross boot)   limit
+  dNLL (nats/tok)    |0.000627|            -0.000146                -0.000120                  0.005
+  top-1 agreement    0.984469              0.984464                 0.983264 (-0.12 pt)        >= 0.979469
+  top-20 KL          5.137e-3              5.089e-3                 5.864e-3 (+14%)            (not gated)
+  greedy hazard      0.009589 (14/20)      0.009873 (14/20)         0.016716 (17/20)           <= 0.019178
+  count / kwargs / utf8 / tools / needle   pass                     pass (12/12 kwargs, tools json 1.0, args_ok 0.96, needle 3/3+3/3)
+  vision             12/13 (video flaky)   12/13                    13/13 (video 3816 this time)
+
+Reading: v13 with every switch off behaves like v11. dNLL is inside the A/A sigma; top-1 and KL sit a little
+outside the same-boot A/A, and greedy hazard is 1.7x the same-boot A/A but inside the 2x gate. There is no
+same-image cross-boot A/A yet, so this row is the first cross-boot floor: top-1 98.33%, KL 5.9e-3, hazard 0.017.
+Later fp8/nvfp4 stages compared across boots should be judged against these cross-boot numbers, not E0's same-boot A/A.

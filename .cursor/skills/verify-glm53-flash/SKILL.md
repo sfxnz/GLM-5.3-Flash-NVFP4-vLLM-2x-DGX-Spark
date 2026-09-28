@@ -5,7 +5,7 @@ description: Drive the GLM-5.3-Flash NVFP4 vLLM recipe (GitHub clone → image c
 
 # Verify GLM-5.3-Flash NVFP4 recipe
 
-This repo is a GitHub-ready local-model recipe plus a live OpenAI-compatible serve on two DGX Sparks. There is no web UI. The user surfaces are `README.md` + `run.sh`/`stop.sh` + `docker/Dockerfile.sm121-v8`…`v11`, then `http://127.0.0.1:8000/v1`, then `python3 bench_decode.py`.
+This repo is a GitHub-ready local-model recipe plus a live OpenAI-compatible serve on two DGX Sparks. There is no web UI. The user surfaces are `README.md` + `run.sh`/`stop.sh` + `docker/Dockerfile.sm121-v8`…`v11` and `v13`, then `http://127.0.0.1:8000/v1`, then `python3 bench_decode.py`.
 
 Repo root: parent of `.cursor/`. Helpers live in `.cursor/skills/verify-glm53-flash/scripts/`. Feature recipes: `features/`. Defaults (`IMAGE`, `PORT`, `CONTAINER_NAME`, KV pin, spec, …) live in `run.sh`; do not restate them here.
 
@@ -28,7 +28,7 @@ mkdir -p "$STATE"
 printf 'started %s host=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname -s)" >"$STATE/started"
 ```
 
-`./run.sh` on the head (`spark1`) SSHes to `spark2`, starts rank 1, waits 25s, starts rank 0, then blocks in `wait_ready`. Needs Docker, the local `glm53-sm121-v11` image (stock `vllm/vllm-openai` is refused), and the pinned HF snapshots under `~/.cache/huggingface` (or `hf` on PATH). Worker-only: `ROLE=worker ./run.sh`.
+`./run.sh` on the head (`spark1`) SSHes to `spark2`, starts rank 1, waits 25s, starts rank 0, then blocks in `wait_ready`. Needs Docker, the local `glm53-sm121-v13` image (stock `vllm/vllm-openai` is refused), and the pinned HF snapshots under `~/.cache/huggingface` (or `hf` on PATH). Worker-only: `ROLE=worker ./run.sh`.
 
 ## Doctor
 
