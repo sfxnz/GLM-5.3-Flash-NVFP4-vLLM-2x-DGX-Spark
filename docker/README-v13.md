@@ -5,7 +5,7 @@
 - `patch_v13_misc.py` (this file documents it)
 - `patch_v13_fp8.py` (FP8, NVFP4, INT8 and INT4 weight-only Marlin; this file documents it)
 
-Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off by default. With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. One Triton kernel in `patch_v13_misc.py` changes signature even with every switch off, so it compiles to a different binary:
+Each behaviour is gated by a `GLM53_*` environment variable, and all of them are off in the image. The recipe turns four on through its knobs (Forwarding, below). With no `GLM53_*` set, v13 computes the same results as v11, but its hot path is not v11's code. One Triton kernel in `patch_v13_misc.py` changes signature even with every switch off, so it compiles to a different binary:
 
 - The `fused_recurrent_kda` kernel (every KDA layer on every verify step) takes four token-stride arguments and the `STRIDED_QKVB` constexpr, which is False while `GLM53_KDA_TRIM` is unset.
 
@@ -136,6 +136,7 @@ DFlash2-7 verifies 8 rows per request per step, and every row pulls its own top-
 | `GLM53_ADAPTIVE_VERIFY_TAU=<f>` | `0.1` | Verify width m = the number of leading drafts whose running product of DFlash2 top probabilities is ≥ tau. `0` turns the confidence rule off. |
 | `GLM53_ADAPTIVE_VERIFY_MAX=<n>` | k | Fixed per-request cap in 1..k. With `TAU=0`, every step verifies min(n, drafts) positions. |
 
+- The Default column is the image's. The recipe sets `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU=0.3` (`ADAPTIVE_VERIFY=1`, `ADAPTIVE_VERIFY_TAU=0.3`) and leaves `MAX` at k.
 - m is always in [1, MAX], so at least one draft is verified.
 - The DFlash2 probability of draft step i is the maximum of the softmax over the selector walk's realized scores (`_selector_scores`). These are the same top-K scores the probabilistic draft path uses as q.
 - `TAU` needs DFlash2. `TAU=0` with `MAX<k` works with any V2 drafter.
@@ -236,7 +237,7 @@ The step model:
 - **c=2 Marlin block spill.** At 8-16 rows Marlin uses 8-row blocks (`marlin_moe.py:333`). An anchor expert shared by both requests can pass 8 rows and be read twice. The expected count is about 8·8/288 ≈ 0.22 experts per layer, at most ~65 MB per step per rank.
 - **Metrics.** Masked drafts count as drafted and rejected, so the acceptance rate drops by construction, and per-position acceptance past m is 0. Judge by acceptance_len and step_ms.
 - **Census.** It records the ids after the remap: masked rows copy the anchor. That is the intended measurement.
-- **No GPU run yet.** Everything above comes from the v11 source and the CPU tests. The plan below does not cover async scheduling, which the recipe keeps off.
+- **GPU runs.** E3b measured tau 0.1 and 0.2 against off, and E4b tau 0.3 against 0.2 (`evidence/e3b-av-tau0.2/notes.txt`, `evidence/e4b-int8-tau0.3/notes.txt`). tau 0.3 is the recipe default. The sections above are the pre-GPU design and estimates.
 
 ### GPU validation (exclusive TP=2 slot, one switch per boot)
 
@@ -278,6 +279,8 @@ Under speculative decoding, v11's DSA indexer builds committed pool keys from re
 | Env var | Default | Meaning |
 |---|---|---|
 | `GLM53_KPOOL_TAIL_FIX=1` | off | Give each request's tail ring enough slots for the verify window, and on V2 its own tail block. Write the tail slots in place, and write the prefill seed through the tail view's real strides. Off keeps every v11 address. |
+
+The recipe sets it (`KPOOL_TAIL_FIX=1`).
 
 ```bash
 GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_kpool_tail.py   # CPU; torch adds the builder tests, triton the kernel simulation (~3 min)
@@ -426,7 +429,7 @@ Each trial runs its prompts, then verify steps with random acceptance (every a i
 - **The in-place write** assumes that every call hands the builder the tail group's own slot-mapping row. Both runners' target builds and the V2 speculators do. V1's EAGLE proposer builds every draft group from one metadata object, but it cannot host GLM-5-Next's MTP layer: that layer's MLA and tail sit in different KV groups, and its `validate_same_kv_cache_group` asserts they share one (read from the v11 source, not run).
 - **PD connectors** transfer the tail block by its unpadded page, now 8 KB instead of 2 KB. The recipe does not use PD.
 - **Stale docstrings.** v11's docstrings (the seed kernel, `KpoolTailSpec`, `Glm5NextTailCache`, `KpoolTailManager`) and adaptive verify's module docstring still describe a kpool-slot ring addressed `pos % kpool`.
-- **No GPU run yet.** Everything above comes from the v11 source and the CPU test.
+- **GPU run.** E3a booted it on the E2e settings: needles 3/3 at 8k, 32k and 128k, decode-built pools at the prefill A/A floor, step time within noise (`evidence/e3a-kpool-det/notes.txt`). It is the recipe default.
 
 ### GPU validation (exclusive TP=2 slot, one switch per boot)
 
@@ -466,7 +469,7 @@ The nvidia pack keeps every non-MoE linear in BF16, and so does the DFlash2 draf
 | `GLM53_INT4_W4A16=<groups>` | unset | symmetric INT4 (`uint4b8`), per-group BF16 scale chosen by clip search, GPTQ-Marlin GEMM |
 | `GLM53_INT_GROUP_SIZE=64\|128` | 128 | INT group size along K. Any other value fails the boot. |
 
-- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. The recipe sets `GLM53_NVFP4_W4A16=draft` from `DRAFT_WEIGHTS=nvfp4` and `GLM53_INT8_W8A16` from `TARGET_WEIGHT_GROUPS_INT8`, for example `TARGET_WEIGHT_GROUPS_INT8=shared,mla,kda_o,kda_in,lm_head`. `GLM53_FP8_W8A16`, `GLM53_INT4_W4A16` and `GLM53_INT_GROUP_SIZE` go through `EXTRA_ENV`, which `run.sh` forwards to both ranks.
+- **Syntax.** `<groups>` is a comma list of `draft`, `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. A group may appear in one variable only, or the boot fails with `ValueError`. The recipe sets `GLM53_NVFP4_W4A16=draft` from `DRAFT_WEIGHTS=nvfp4` and `GLM53_INT8_W8A16` from `TARGET_WEIGHT_GROUPS_INT8` (default `shared,mla,kda_o,kda_in,lm_head`). `GLM53_FP8_W8A16`, `GLM53_INT4_W4A16` and `GLM53_INT_GROUP_SIZE` go through `EXTRA_ENV`, which `run.sh` forwards to both ranks.
 - **Off.** With all four group variables unset, `process_weights_after_loading` and the compile-cache key are exactly v11's. When set, the variables and `GLM53_INT_GROUP_SIZE` join the compile-cache key, because the drafter is `torch.compile`d.
 - **Images built before this change** carry the FP8 and NVFP4 modes only. Rebuild v13 for INT8, INT4 and the memory fix below.
 
@@ -531,6 +534,7 @@ Relative Frobenius error `||W_hat - W|| / ||W||`, averaged over 512 rows of one 
 - Tier 0 `--stage fp8` allows the reference A/A's KL + 1e-3 and top-1 - 0.5 points. Against the cross-boot A/A that is KL <= 6.864e-3 and top-1 >= 0.97826.
 - The byte model held: every step_ms moved by the E1 microbench's saving within about 2 ms. The drafter cannot change served output, so only target groups move Tier 0.
 - **Expectation for INT8.** Added KL grew as about error^1.5 between E2a and E2b (3.3x the error gave 6x the KL). INT8's kernel-side error is 0.27x FP8's, which scales E2a's +5.2e-3 to about +0.7e-3 (+0.4e-3 if quadratic, +1.4e-3 if linear). That is inside the 1e-3 margin, but not by much more than the ~1e-3 boot-to-boot noise (E2c + E2d added more than E2a). The speed should match E2a within 1-2%: 4.678 against 4.608 GB, if GPTQ-Marlin reaches FP8 Marlin's GB/s. The bench checks that before any boot.
+- **Measured (E4a).** INT8 g128 on the five target groups: step A -17 ms against E3b (the microbench predicted -17.2), KL top-20 6.761e-3 (+0.71e-3 over E2e, inside the 6.864e-3 limit), top-1 0.9816, and Tier 1 863 vs 857 of 1010 (`evidence/e4a-int8/notes.txt`). It is the recipe default.
 
 ### Memory after the swap
 
