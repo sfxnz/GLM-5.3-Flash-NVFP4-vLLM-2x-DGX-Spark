@@ -92,15 +92,19 @@ class PatchTest(unittest.TestCase):
         self.assertIsInstance(last, ast.If)
         self.assertEqual(
             ast.unparse(last.test),
-            "_os.environ.get('GLM53_FP8_W8A16', '').strip() or "
-            "_os.environ.get('GLM53_NVFP4_W4A16', '').strip()",
+            "any((_os.environ.get(_v, '').strip() for _v in ('GLM53_FP8_W8A16', "
+            "'GLM53_NVFP4_W4A16', 'GLM53_INT8_W8A16', 'GLM53_INT4_W4A16')))",
         )
         self.assertIn("apply_glm53_fp8_w8a16(model, target_device)", ast.unparse(last))
 
     def test_compile_factor_only_when_set(self):
         text = (self.root / "envs.py").read_text()
         self.assertEqual(text.count("factors[_glm53] = "), 1)
-        self.assertIn('for _glm53 in ("GLM53_FP8_W8A16", "GLM53_NVFP4_W4A16"):', text)
+        loop = next(n for n in ast.walk(ast.parse(text))
+                    if isinstance(n, ast.For) and ast.unparse(n.target) == "_glm53")
+        self.assertEqual(ast.literal_eval(loop.iter), (
+            "GLM53_FP8_W8A16", "GLM53_NVFP4_W4A16", "GLM53_INT8_W8A16",
+            "GLM53_INT4_W4A16", "GLM53_INT_GROUP_SIZE"))
         self.assertIn('if os.getenv(_glm53, "").strip():', text)
 
     def test_refuses_drift_without_writing(self):
@@ -209,6 +213,62 @@ class PatchTest(unittest.TestCase):
             self.assertIn(needle, text)
         kernel = (SRC / "model_executor/kernels/linear/nvfp4/marlin.py").read_text()
         self.assertIn("weight_global_scale=layer.weight_global_scale,", kernel)
+
+    def test_marlin_gptq_api_matches(self):
+        """quantize_layer_to_marlin_int repeats MarlinLinearKernel's GPTQ path
+        (no act-order, no zero points); these are the v11 facts it relies on."""
+        text = (SRC / "model_executor/layers/quantization/utils/marlin_utils.py").read_text()
+        fns = {n.name: [a.arg for a in n.args.args]
+               for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)}
+        self.assertEqual(fns["marlin_padded_nk"], ["size_n", "size_k", "group_size"])
+        self.assertEqual(fns["marlin_pad_qweight"],
+                         ["qweight", "size_n", "size_k", "padded_n", "padded_k"])
+        self.assertEqual(fns["marlin_pad_scales"],
+                         ["scales", "size_n", "size_k", "padded_n", "padded_k", "group_size"])
+        self.assertEqual(fns["marlin_permute_scales"],
+                         ["s", "size_k", "size_n", "group_size", "is_a_8bit"])
+        self.assertEqual(fns["marlin_make_workspace_new"],
+                         ["device", "max_blocks_per_sm", "existing"])
+        self.assertEqual(fns["apply_gptq_marlin_linear"], [
+            "input", "weight", "weight_scale", "weight_zp", "g_idx", "g_idx_sort_indices",
+            "workspace", "wtype", "output_size_per_partition", "input_size_per_partition",
+            "is_k_full", "input_global_scale", "bias", "use_fp32_reduce", "input_dtype"])
+        self.assertIn("MARLIN_SUPPORTED_GROUP_SIZES = [-1, 32, 64, 128]", text)
+        self.assertIn("res = [scalar_types.uint4b8, scalar_types.uint8b128]", text)
+        # The padded K/N the GEMM runs with come back from the repacked shape.
+        self.assertIn("padded_n, padded_k = marlin_repacked_nk(weight, wtype.size_bits)", text)
+        ops = (SRC / "_custom_ops.py").read_text()
+        repack = next(n for n in ast.parse(ops).body
+                      if isinstance(n, ast.FunctionDef) and n.name == "gptq_marlin_repack")
+        self.assertEqual([a.arg for a in repack.args.args],
+                         ["b_q_weight", "perm", "size_k", "size_n", "num_bits", "is_a_8bit"])
+        kernel = (SRC / "model_executor/kernels/linear/mixed_precision/marlin.py").read_text()
+        for needle in (
+            # GPTQ layout: (K / pack, N) int32, packed along K.
+            "permute_param_layout_(x, input_dim=0, output_dim=1, packed_dim=0)",
+            "x.data.contiguous(), size_n, size_k, padded_n, padded_k",
+            "perm=layer.g_idx_sort_indices,",
+            "num_bits=c.weight_type.size_bits,",
+            "x.data = marlin_permute_scales(",
+            "padded_n, padded_k = marlin_padded_nk(size_n, size_k, c.group_size)",
+            "setattr(layer, self.w_zp_name, marlin_make_empty_g_idx(device))",
+            "is_k_full=self.is_k_full,",
+        ):
+            self.assertIn(needle, kernel)
+
+    def test_gptq_scalar_types(self):
+        """quantize_int stores q + 2**(bits - 1) in [0, 2**bits): the uint4b8 /
+        uint8b128 encodings (scalar_type.py is stdlib-only)."""
+        spec = importlib.util.spec_from_file_location("v11_scalar_type", SRC / "scalar_type.py")
+        st = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = st  # dataclasses resolves the module by name
+        try:
+            spec.loader.exec_module(st)
+        finally:
+            del sys.modules[spec.name]
+        for t, bits in ((st.scalar_types.uint8b128, 8), (st.scalar_types.uint4b8, 4)):
+            self.assertEqual((t.size_bits, t.bias), (bits, 2 ** (bits - 1)))
+            self.assertEqual((t.min(), t.max()), (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1))
 
 
 def load_module(root: Path):
@@ -342,6 +402,15 @@ def read_rows(headers: dict, name: str, rows: int):
     return bf16_bits_to_f32(np.frombuffer(buf, np.uint16).reshape(-1, c))
 
 
+def v11_functions(rel: str, names: set, env: dict) -> dict:
+    """Exec the named top-level functions of a v11 source file into env."""
+    tree = ast.parse((SRC / rel).read_text())
+    body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert {n.name for n in body} == names, names
+    exec(compile(ast.Module(body, []), str(SRC / rel), "exec"), env)
+    return env
+
+
 def synthetic_weight(n=300, k=512, seed=0):
     rng = np.random.default_rng(seed)
     w = (rng.standard_normal((n, k)) * 0.02).astype(np.float32)
@@ -435,6 +504,40 @@ class Nvfp4ReferenceTest(unittest.TestCase):
                   end="")
             self.assertLess(best, 0.09, name)
             self.assertLess(best, base * 0.95, name)
+
+
+DRAFT_CKPT = CKPT.parents[2] / (
+    "models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe")
+
+
+@unittest.skipUnless(SRC.is_dir(), "set GLM53_V11_SRC to the v11 vLLM source")
+@unittest.skipUnless(CKPT.is_dir() and DRAFT_CKPT.is_dir(), "checkpoints not in the HF cache")
+class IntShapeTest(unittest.TestCase):
+    def test_every_gemm_fits_gptq_marlin_at_tp2(self):
+        """Per-rank GEMM shapes from the safetensors headers at TP=2: every K is
+        a multiple of both INT group sizes, so row-parallel shards split on
+        group boundaries and no layer falls back to BF16; marlin_padded_nk
+        never pads K, and pads N only for kda_in (12576 -> 12608, as FP8 does)."""
+        spec = importlib.util.spec_from_file_location(
+            "bench_fp8_marlin", HERE.parent / "tools/bench_fp8_marlin.py")
+        bench = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bench)
+        quiet = type("Logger", (), {"warning_once": staticmethod(lambda *a, **k: None)})()
+        env = v11_functions("utils/math_utils.py", {"round_up"}, {})
+        env = v11_functions("model_executor/layers/quantization/utils/marlin_utils.py",
+                            {"marlin_padded_nk"}, {**env, "math": __import__("math"),
+                                                   "logger": quiet})
+        gemms = bench.build_gemms(CKPT, DRAFT_CKPT, 2, 0)
+        self.assertEqual({m["group"] for m in gemms}, set(bench.GROUPS))
+        padded = set()
+        for m in gemms:
+            for gs in (64, 128):
+                self.assertEqual(m["k"] % gs, 0, m["name"])
+                pn, pk = env["marlin_padded_nk"](m["n"], m["k"], gs)
+                self.assertEqual(pk, m["k"], m["name"])
+                if pn != m["n"]:
+                    padded.add((m["group"], m["name"], m["n"], pn))
+        self.assertEqual(padded, {("kda_in", "in_proj_qkvbfg_a", 12576, 12608)})
 
 
 @unittest.skipUnless(SRC.is_dir(), "set GLM53_V11_SRC to the v11 vLLM source")
@@ -566,6 +669,104 @@ class QuantizerTest(unittest.TestCase):
             self.m.selected_modes({"GLM53_FP8_W8A16": "mla", "GLM53_NVFP4_W4A16": "mla"})
         with self.assertRaisesRegex(ValueError, "GLM53_NVFP4_W4A16: unknown"):
             self.m.selected_modes({"GLM53_NVFP4_W4A16": "attn"})
+        env = {"GLM53_INT8_W8A16": "kda_in,lm_head", "GLM53_INT4_W4A16": "draft",
+               "GLM53_FP8_W8A16": "shared"}
+        self.assertEqual(self.m.selected_modes(env), {
+            "kda_in": "int8", "lm_head": "int8", "draft": "int4", "shared": "fp8"})
+        with self.assertRaisesRegex(ValueError, "mla set in both GLM53_NVFP4_W4A16 and "
+                                                "GLM53_INT8_W8A16"):
+            self.m.selected_modes({"GLM53_INT8_W8A16": "mla", "GLM53_NVFP4_W4A16": "mla"})
+        with self.assertRaisesRegex(ValueError, "both GLM53_INT8_W8A16 and GLM53_INT4_W4A16"):
+            self.m.selected_modes({"GLM53_INT8_W8A16": "draft", "GLM53_INT4_W4A16": "draft"})
+
+    def test_int_group_size(self):
+        self.assertEqual(self.m.int_group_size({}), 128)
+        self.assertEqual(self.m.int_group_size({"GLM53_INT_GROUP_SIZE": " 64 "}), 64)
+        for bad in ("32", "256", "-1", "abc"):
+            with self.assertRaisesRegex(ValueError, "GLM53_INT_GROUP_SIZE"):
+                self.m.int_group_size({"GLM53_INT_GROUP_SIZE": bad})
+
+    def test_int_pack_layout_matches_vllm_pack_rows(self):
+        """qweight is vLLM's GPTQ layout: pack_rows of the biased ints, which
+        MarlinLinearKernel hands to gptq_marlin_repack."""
+        env = v11_functions("model_executor/layers/quantization/utils/quant_utils.py",
+                            {"get_pack_factor", "pack_rows"}, {"numpy": np, "torch": torch})
+        w = self.weight(n=192, k=512, seed=3)
+        for bits in (8, 4):
+            for gs in (64, 128):
+                qweight, scale = self.m.quantize_int(w, bits, gs)
+                self.assertEqual((qweight.dtype, tuple(qweight.shape)),
+                                 (torch.int32, (512 * bits // 32, 192)))
+                self.assertEqual((scale.dtype, tuple(scale.shape)), (torch.bfloat16, (512 // gs, 192)))
+                s = scale.float().repeat_interleave(gs, 0)  # (K, N)
+                q = torch.round(w.float().T / s).clamp(-(2 ** (bits - 1)), 2 ** (bits - 1) - 1)
+                ref = env["pack_rows"](q.int() + 2 ** (bits - 1), bits, 512, 192)
+                self.assertTrue(torch.equal(qweight, ref), (bits, gs))
+
+    def test_int8_roundtrip_bound(self):
+        w = self.weight()
+        for gs in (64, 128):
+            qweight, scale = self.m.quantize_int(w, 8, gs)
+            deq = self.m.dequantize_int(qweight, scale, 8)
+            s = scale.float().repeat_interleave(gs, 0).T
+            err = (deq - w.float()).abs()
+            # Half a step; the BF16-rounded scale can clip amax by < 127 * 2^-9 steps.
+            self.assertTrue((err <= 0.5 * s * (1 + 2**-7)).all(), float((err / s).max()))
+            self.assertTrue((deq[9] == 0).all())
+            amax = w.float().abs().unflatten(1, (-1, gs)).amax(-1).T
+            self.assertTrue(torch.allclose(scale.float(), amax / 127, rtol=2**-8, atol=1e-30))
+            q = (qweight.unsqueeze(1) >> torch.arange(0, 32, 8).view(1, -1, 1)) & 255
+            self.assertTrue(((q >= 1) & (q <= 255)).all())  # symmetric: -128 unused
+        # Gaussian weights (no outlier row): INT8 g128 ~0.0066, FP8 per-channel ~0.026.
+        g = (torch.randn(256, 1024, generator=torch.Generator().manual_seed(4)) * 0.02)
+        g = g.to(torch.bfloat16)
+        rel = lambda d: float((d - g.float()).norm() / g.float().norm())  # noqa: E731
+        int8 = rel(self.m.dequantize_int(*self.m.quantize_int(g, 8, 128), 8))
+        fp8 = rel(self.m.dequantize_per_channel(*self.m.quantize_per_channel(g)))
+        self.assertLess(int8, 0.008)
+        self.assertLess(int8, 0.3 * fp8)
+
+    def test_int4_clip_search_never_loses_to_amax(self):
+        w = self.weight(seed=2)
+        base = self.m.dequantize_int(*self.m.quantize_int(w, 4, 128), 4)
+        qweight, scale = self.m.quantize_int(w, 4, 128, self.m.INT_CLIP_RATIOS["int4"])
+        best = self.m.dequantize_int(qweight, scale, 4)
+        blk = lambda d: (d - w.float()).square().unflatten(1, (-1, 128)).sum(-1)  # noqa: E731
+        self.assertTrue((blk(best) <= blk(base)).all())
+        self.assertLess(float(blk(best).sum()), float(blk(base).sum()))
+        q = (qweight.unsqueeze(1) >> torch.arange(0, 32, 4).view(1, -1, 1)) & 15
+        self.assertTrue((q == 0).any())  # clipping reaches -8
+
+    def test_int_chunking_is_exact(self):
+        w = self.weight(n=257, k=256, seed=1)
+        for bits, ratios in ((8, (1.0,)), (4, self.m.INT_CLIP_RATIOS["int4"])):
+            a = self.m.quantize_int(w, bits, 64, ratios)
+            for chunk in (3 * 256, 1):
+                b = self.m.quantize_int(w, bits, 64, ratios, chunk_elems=chunk)
+                self.assertTrue(torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]))
+        with self.assertRaises(ValueError):
+            self.m.quantize_int(torch.zeros(4, 192, dtype=torch.bfloat16), 8, 128)
+
+    @unittest.skipIf(np is None, "numpy not importable")
+    @unittest.skipUnless(CKPT.is_dir(), f"checkpoint not at {CKPT}")
+    def test_real_checkpoint_int_error(self):
+        """Relative Frobenius error, first REAL_ROWS rows of one tensor per group.
+        Measured 2026-09-28 on 09b04e5: INT8 g128 0.0066-0.0073 (FP8 per-channel
+        0.024-0.029), INT4 g128 amax 0.120-0.135, clip search 0.103-0.118 (NVFP4
+        0.083-0.086): uniform INT4 does not beat NVFP4."""
+        headers = read_headers(CKPT)
+        for group, name in REAL_TENSORS.items():
+            w = torch.from_numpy(read_rows(headers, name, REAL_ROWS)).to(torch.bfloat16)
+            rel = lambda d: float((d - w.float()).norm() / w.float().norm())  # noqa: E731
+            e8 = rel(self.m.dequantize_int(*self.m.quantize_int(w, 8, 128), 8))
+            e4 = rel(self.m.dequantize_int(*self.m.quantize_int(w, 4, 128), 4))
+            e4c = rel(self.m.dequantize_int(
+                *self.m.quantize_int(w, 4, 128, self.m.INT_CLIP_RATIOS["int4"]), 4))
+            print(f"\n  {group:8} {name} {tuple(w.shape)}: int8 {e8:.4f}, int4 {e4:.4f}, "
+                  f"int4 clip {e4c:.4f}", end="")
+            self.assertLess(e8, 0.008, name)
+            self.assertLess(e4c, 0.12, name)
+            self.assertLess(e4c, e4 * 0.95, name)
 
     @unittest.skipIf(np is None, "numpy not importable")
     def test_nvfp4_matches_numpy_reference(self):
