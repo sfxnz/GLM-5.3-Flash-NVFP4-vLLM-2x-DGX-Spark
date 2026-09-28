@@ -4,7 +4,7 @@ Serve [nvidia/GLM-5.3-Flash-NVFP4](https://huggingface.co/nvidia/GLM-5.3-Flash-N
 
 320B total / 18B active. Official NVIDIA ModelOpt 0.47.0 NVFP4 W4A4 on routed experts and dense MLP (`nvfp4_experts_dense_mlp-kv_fp8_cast`, ~190.5 GiB). Attention, shared experts, and vision stay BF16. Checkpoint KV scheme is `kv_fp8_cast`. Native context is 1,048,576. This recipe serves `--max-model-len` 327680 with the DFlash2 block-diffusion drafter (7 speculative tokens, two sequences). Vision is on (`LANGUAGE_MODEL_ONLY=0`). Do not copy the NVIDIA card's TP=4 / expert-parallel / 32-sequence / 8192 batched-token flags onto 2× Spark.
 
-Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v11` first.
+Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v13` first.
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
@@ -44,9 +44,11 @@ docker build -f docker/Dockerfile.sm121-v8 -t glm53-sm121-v8 docker
 docker build -f docker/Dockerfile.sm121-v9 -t glm53-sm121-v9 docker
 docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
 docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
+docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker
+docker save glm53-sm121-v13 | ssh spark2 docker load
 ```
 
-Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits. Prefer building on the head and copying it with `docker save glm53-sm121-v11 | ssh spark2 docker load`. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
+Build once on the head and copy the image to the worker with `docker save | docker load` as above. That took 253 s in E1 and gave both nodes the same image ID (`evidence/e1-v13-build/`). Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits; E0 ran two different v11 builds. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
 
 The v8 Dockerfile starts from `vllm/vllm-openai:glm53-flash-arm64-cu130` and applies the sm_121 patches (NoPE FA2 backend, FlashInfer 0.6.18, NCCL 2.30.7, PDL off, indexer init, fp8 tile cap). `run.sh` refuses the stock tag.
 
@@ -55,6 +57,12 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 - v9 backports DFlash2 support, vLLM PR [#52816](https://github.com/vllm-project/vllm/pull/52816), missing from the image's vLLM snapshot.
 - v10 teaches the fork-only Glm5Next model to capture aux hidden states for the drafter (the mHC stream contraction follows the reference integration, sglang [#36708](https://github.com/sgl-project/sglang/pull/36708)).
 - v11 adds a dedicated draft KV group to the GLM5 bespoke KV layout so the draft's sliding-window layers share the pool.
+
+v13 adds Python-only runtime patches on top of v11 (misc, fp8, census, verify, kpool_tail; [`docker/README-v13.md`](docker/README-v13.md)). Every one is off unless its `GLM53_*` variable is set; with none set, v13 serves like v11 (E1a passed Tier 0 against the v11 reference). The recipe sets them from the knobs `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `KPOOL_TAIL_FIX` and `ADAPTIVE_VERIFY` / `ADAPTIVE_VERIFY_TAU` (see Defaults), passes them to both ranks, and refuses any knob that is on unless `IMAGE` is a `glm53-sm121-v13*` tag (`FORCE_UNSAFE_IMAGE=1` overrides). v11 stays the rollback:
+
+```bash
+IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 ./run.sh
+```
 
 ## DFlash2 drafter
 
@@ -132,7 +140,7 @@ Stop both ranks from the head:
 <!-- BEGIN generated defaults from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Setting | Value |
 |---|---|
-| Image | `glm53-sm121-v13` (local) |
+| Image | `glm53-sm121-v13` (local; chain v8 → v9 → v10 → v11 → v13, see Build the image for the v11 rollback) |
 | Model | `nvidia/GLM-5.3-Flash-NVFP4` (served under `SERVED_NAME`, which defaults to `$MODEL`) |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
@@ -185,7 +193,7 @@ Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two of them are DOWN. Unpinned NCC
 
 ## JIT and compile cache
 
-With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` at `/jit-cache`. `JIT_CACHE_DIR` defaults to `~/projects/data/glm53-jit-cache`, and `<image id>` is the first 12 hex digits of that node's own `docker image inspect -f '{{.Id}}' glm53-sm121-v11`. `run.sh` points each engine's cache variable into the mount:
+With `JIT_CACHE=1` (the default), each node mounts `JIT_CACHE_DIR/<image id>/` at `/jit-cache`. `JIT_CACHE_DIR` defaults to `~/projects/data/glm53-jit-cache`, and `<image id>` is the first 12 hex digits of that node's own `docker image inspect -f '{{.Id}}' $IMAGE` (`glm53-sm121-v13` by default). `run.sh` points each engine's cache variable into the mount:
 
 - `FLASHINFER_WORKSPACE_BASE`
 - `VLLM_CACHE_ROOT`, which covers torch.compile, the FlashInfer autotune file and DeepGEMM
@@ -200,7 +208,7 @@ The container runs as root, so the cached files are root-owned. To clear a cache
 ```bash
 ls ~/projects/data/glm53-jit-cache/                                # one directory per image ID
 sudo rm -rf ~/projects/data/glm53-jit-cache/<id>                   # one image
-docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v11 -rf /c/<id>   # no sudo
+docker run --rm -v ~/projects/data/glm53-jit-cache:/c --entrypoint rm glm53-sm121-v13 -rf /c/<id>   # no sudo
 ```
 
 ## Repeat the decode bench
