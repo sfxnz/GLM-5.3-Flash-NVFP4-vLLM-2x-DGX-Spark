@@ -8,13 +8,17 @@ Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the 
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
-Published decode is prose only. Do not score decode from structured, code, or other cells. The table is greedy, but a request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`), so default-path speed and quality are unmeasured. Streamed greedy, thinking off, `max_tokens` 200, 3-run median. These cells are the 2026-09-02 rebench (`evidence/rebench-20260902T204243Z/`): the LibertAIDAI pin on `glm53-sm121-v11`, with the old prose prompt that stops near 98 tokens (cell K of today's ruler) and none of the v13 switches. They are not a measurement of the current defaults (nvidia pack, v13, the switches below). The nvidia pack has ruler-v2 receipts in `evidence/` (E0 on v11, E1-E3 on v13); a final measurement of the defaults will replace this table. `max-num-seqs=2`, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs. Prose is the low-acceptance regime (free text); structured (count 1→200) stays `--phase structured` for occupancy / acceptance only.
+Published decode is prose only. Do not score decode from structured, code, or other cells. The table is ruler v2 (`bench_decode.py`) on the current defaults (see Defaults). c=1 is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off. c=2 is cell H: the same prompts as two distinct streams; its TTFT includes prefix-cache hits, so it is not comparable to A's. Each value is the mean of three boots of plain `./run.sh` on 2026-09-28 (F1, F2b, G2), with each boot's two panels averaged first. Step ms and acceptance length are per verify step.
+
+E0, the nvidia pack on `glm53-sm121-v11` without the v13 knobs, measured A 19.73 and H 13.87 tok/s per stream. `kit/compare.py` puts the three boots at A +52.3% [+51.0, +53.6] and H +49.2% [+45.2, +53.2] ([`evidence/e6-prefill/compare-f12g2-vs-e0.txt`](evidence/e6-prefill/compare-f12g2-vs-e0.txt)).
+
+A request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`). Cell G (A's prompts sampled that way) ran 28.44 / 28.46 tok/s on F1 / G2. Quality on that path is unmeasured. Prose is the low-acceptance regime. Structured (cell J, count 1→200) measures occupancy and acceptance only.
 
 <!-- BEGIN generated measured from recipe.yaml — edit recipe.yaml and run kit/render.py -->
-| Phase | Concurrency | Decode tok/s (median per stream) | Aggregate tok/s | TTFT p50 |
-|---|---|---:|---:|---:|
-| prose | 1 | 21.2 | 21.2 | 0.33 s |
-| prose | 2 | 16.6 | 33.2 | 0.37 s |
+| Phase | Concurrency | Decode tok/s per stream | Aggregate tok/s | TTFT p50 | Step ms | Acceptance length |
+|---|---|---:|---:|---:|---:|---:|
+| prose | 1 | 30.04 | 30.04 | 0.26 s | 73.2 | 2.21 |
+| prose | 2 | 20.69 | 39.43 | 0.36 s | 105.3 | 2.18 |
 <!-- END generated measured -->
 
 Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. `MAX_NUM_SEQS=3` at DFlash2-7 does not starve the third stream, but structured c=2 fell 59.5 → 50.7. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). `ENFORCE_EAGER=1` is the rollback; it slowed structured c=1 68.1 → 65.0. Adding capture size 3 to the ladder was inside noise. Capture size 24 at two sequences was unused and stayed inside noise. `VLLM_USE_BREAKABLE_CUDAGRAPH=0` slowed structured c=2 59.7 → 52.1. Leave the engine auto-on. Async scheduling is already on: this vLLM auto-enables it for DFlash with the `mp` executor, so passing `--async-scheduling` was a no-op and every cell stayed inside noise. Do not pass `--no-async-scheduling`. Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476). Tony's 3.0 GiB KV pin cannot boot `--max-model-len` 327680 (vLLM wants 3.62 GiB). The displayed 3.62 GiB pin (3886945403) still estimates max len 327168 and refuses. A 4.0 GiB pin boots but structured c=2 fell 59.5 → 52.4.
