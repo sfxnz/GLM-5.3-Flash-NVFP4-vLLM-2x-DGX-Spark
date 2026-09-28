@@ -10,7 +10,7 @@ ARTIFACTS="$SKILL_DIR/artifacts"
 
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
-IMAGE="${IMAGE:-glm53-sm121-v11}"
+IMAGE="${IMAGE:-glm53-sm121-v13}"
 SERVED_NAME="${SERVED_NAME:-nvidia/GLM-5.3-Flash-NVFP4}"
 WORKER_HOST="${WORKER_HOST:-spark2}"
 API="http://127.0.0.1:${PORT}/v1"

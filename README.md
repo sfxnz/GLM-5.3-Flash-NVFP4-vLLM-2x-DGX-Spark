@@ -60,10 +60,10 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 
 [incoai/GLM-5.3-Flash-DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) is a 1B block-diffusion draft model that predicts a whole block per pass. Upstream reports it beating GLM's native MTP on acceptance length across every task they measured. Decoding is lossless; our greedy outputs matched MTP's byte for byte.
 
-DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well:
+DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well, and `ADAPTIVE_VERIFY=0`, because adaptive verify reads DFlash2's selector scores:
 
 ```bash
-MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ./run.sh
+MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 ./run.sh
 ```
 
 `run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16 that are not in the quant ignore list, so they cannot load (NVFP4 params expected) or fit (~6.9 GiB per rank). LibertAI's MTP experts are NVFP4.
@@ -132,7 +132,7 @@ Stop both ranks from the head:
 <!-- BEGIN generated defaults from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Setting | Value |
 |---|---|
-| Image | `glm53-sm121-v11` (local) |
+| Image | `glm53-sm121-v13` (local) |
 | Model | `nvidia/GLM-5.3-Flash-NVFP4` (served under `SERVED_NAME`, which defaults to `$MODEL`) |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
@@ -147,7 +147,7 @@ Stop both ranks from the head:
 | Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp`) |
+| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`) |
 | Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |

@@ -5,7 +5,7 @@ set -euo pipefail
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-$MODEL}"
-IMAGE="${IMAGE:-glm53-sm121-v11}"
+IMAGE="${IMAGE:-glm53-sm121-v13}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -66,7 +66,8 @@ DRAFT_REV="${DRAFT_REV:-7d74cdd881ed7e32c31175984a67823127b66cfe}"
 DRAFT_SNAPSHOT="${HF_CACHE}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 DRAFT_SNAPSHOT_IN_CONTAINER="${HF_HOME_IN_CONTAINER}/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/${DRAFT_REV}"
 # SPEC picks the drafter: dflash2 (incoai DFlash2 block-diffusion draft, needs
-# the glm53-sm121-v11 image) or mtp (GLM's native MTP head; LibertAI pack only).
+# glm53-sm121-v11 or later) or mtp (GLM's native MTP head; LibertAI pack only,
+# with ADAPTIVE_VERIFY=0).
 SPEC="${SPEC:-dflash2}"
 # JIT_CACHE=1 keeps the FlashInfer / Triton / TileLang / DeepGEMM / vLLM compile
 # caches in JIT_CACHE_DIR/<image id>/ on each node, so later boots skip those
@@ -74,18 +75,23 @@ SPEC="${SPEC:-dflash2}"
 JIT_CACHE="${JIT_CACHE:-1}"
 JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # v13 switches (docker/README-v13.md). Each one that is on becomes GLM53_* env on
-# both ranks, and needs a glm53-sm121-v13 image. Off adds nothing.
+# both ranks, and needs a glm53-sm121-v13 image. Off adds nothing. v11 rollback:
+# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
 # DRAFT_WEIGHTS: bf16, or nvfp4 for the DFlash2 drafter's linears in NVFP4 W4A16
-# (GLM53_NVFP4_W4A16=draft).
-DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-bf16}"
+# (GLM53_NVFP4_W4A16=draft). E2e: the target is untouched, step A -4 ms, Tier 1
+# 856 vs 857 of 1010.
+DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-nvfp4}"
 # Comma list of target groups in INT8 W8A16 (GLM53_INT8_W8A16): shared, mla,
-# kda_o, kda_in, lm_head. Empty keeps them BF16.
+# kda_o, kda_in, lm_head. Empty keeps them BF16 (E4 measures INT8).
 TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-}"
-# 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX).
-KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-0}"
+# 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
+# rejected drafts no longer write committed pool keys. E3a: needles pass to
+# 128k, and decode-built pools match prefill within the prefill A/A.
+KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # 1: verify only the leading drafts whose running DFlash2 confidence is at least
-# ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU).
-ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-0}"
+# ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU). Lossless.
+# E3b at 0.2 vs E3a: prose A +14.9%, H +20.0%, B +5.3%, T +10.1%, J flat.
+ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
 ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.2}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
@@ -158,7 +164,7 @@ if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
-  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp. FORCE_UNSAFE_SPEC=1 overrides." >&2
+  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
@@ -350,7 +356,7 @@ maybe_drop_caches() {
 ensure_image() {
   log "Ensuring image $IMAGE"
   if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v11 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
+    echo "Image $IMAGE not found. Build the local image chain through glm53-sm121-v13 first (see README). Do not use stock vllm/vllm-openai on sm_121." >&2
     exit 1
   fi
 }

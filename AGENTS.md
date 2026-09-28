@@ -1,6 +1,6 @@
 # AGENTS.md — GLM-5.3-Flash-NVFP4 · 2× DGX Spark
 
-Serve `nvidia/GLM-5.3-Flash-NVFP4` at TP=2. Local image chain through `glm53-sm121-v11`. Checkpoint `09b04e5`. Default drafter is DFlash2-7 (`SPEC=dflash2`). MTP-4 rollback is the LibertAI pack plus `SPEC=mtp` (`MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp`); `run.sh` refuses `SPEC=mtp` on the nvidia pack. Vision is on (`LANGUAGE_MODEL_ONLY=0`).
+Serve `nvidia/GLM-5.3-Flash-NVFP4` at TP=2. Local image chain through `glm53-sm121-v11`. Checkpoint `09b04e5`. Default drafter is DFlash2-7 (`SPEC=dflash2`). MTP-4 rollback is the LibertAI pack plus `SPEC=mtp` (`MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0`); `run.sh` refuses `SPEC=mtp` on the nvidia pack. Vision is on (`LANGUAGE_MODEL_ONLY=0`).
 
 Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq recipe. Do not copy those flags onto 2× Spark. LibertAI's GB10 recipe is a different stack (MTP-3, eager, 64K). Rollback: `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177`.
 

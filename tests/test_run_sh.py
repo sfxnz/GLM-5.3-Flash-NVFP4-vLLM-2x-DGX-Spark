@@ -81,7 +81,7 @@ class Guards(RunShCase):
 
     def test_spec_mtp_refused_on_nvidia(self):
         self.assertRefused(self.run_sh(SPEC="mtp"), "FORCE_UNSAFE_SPEC=1")
-        self.assertAccepted(self.run_sh(SPEC="mtp", **LIBERTAI))
+        self.assertAccepted(self.run_sh(SPEC="mtp", ADAPTIVE_VERIFY="0", **LIBERTAI))
 
     def test_language_model_only_must_be_0_or_1(self):
         self.assertRefused(self.run_sh(LANGUAGE_MODEL_ONLY="2"), "want exactly 0 or 1")
@@ -237,6 +237,13 @@ class V13Knobs(RunShCase):
                   "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"]
     V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
 
+    def test_defaults_are_the_validated_v13_switches(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        self.assertEqual(glm53_env(proc.stdout), ["GLM53_NVFP4_W4A16=draft", "GLM53_KPOOL_TAIL_FIX=1",
+                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.2"])
+        self.assertIn("IMAGE=glm53-sm121-v13", shell_words(worker_command(proc.stdout)))
+
     def test_knobs_resolve_to_glm53_env(self):
         proc = self.run_sh(**self.V13, **self.ALL_ON, EXTRA_ENV="MAX_JOBS=2 GLM53_ROUTER_FP32=1")
         self.assertAccepted(proc)
@@ -285,7 +292,7 @@ class V13Knobs(RunShCase):
                     self.assertRefused(proc, "DRAFT_WEIGHTS sets the drafter's weights")
                 else:
                     self.assertAccepted(proc)
-                    self.assertEqual(glm53_env(proc.stdout), [f"GLM53_INT8_W8A16={group}"])
+                    self.assertIn(f"GLM53_INT8_W8A16={group}", glm53_env(proc.stdout))
         target = ",".join(g for g in groups if g != "draft")
         self.assertAccepted(self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8=target))
 
@@ -354,7 +361,7 @@ class StubbedLaunch(RunShCase):
     def launch(self, **extra):
         env = self.base_env(**{
             "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
-            "IMAGE": "glm53-test-stub-image", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
+            "IMAGE": "glm53-sm121-v13-test-stub", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
             "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
         del env["VALIDATE_ONLY"]
         return subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
@@ -366,7 +373,7 @@ class StubbedLaunch(RunShCase):
         self.assertTrue(jit.is_dir())
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"-v {jit}:/jit-cache -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", run)
-        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-test-stub-image ", run)
+        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-sm121-v13-test-stub ", run)
 
     def test_jit_cache_0(self):
         proc = self.launch(JIT_CACHE="0")
@@ -390,8 +397,7 @@ class StubbedLaunch(RunShCase):
         for role in ("head", "worker"):
             with self.subTest(role=role):
                 self.log.unlink(missing_ok=True)
-                proc = self.launch(ROLE=role, JIT_CACHE="0", IMAGE="glm53-sm121-v13-test-stub", EXTRA_ENV="MAX_JOBS=2",
-                                   **V13Knobs.ALL_ON)
+                proc = self.launch(ROLE=role, JIT_CACHE="0", EXTRA_ENV="MAX_JOBS=2", **V13Knobs.ALL_ON)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
                 self.assertIn(want, run)
@@ -437,8 +443,8 @@ class ImageParity(RunShCase):
     def test_mismatch_warns_with_sync_command(self):
         proc = self.run_auto("sha256:aaa", "sha256:bbb")
         self.assertAccepted(proc)
-        self.assertIn("WARN image glm53-sm121-v11 differs", proc.stderr)
-        self.assertIn("docker save glm53-sm121-v11 | ssh worker.invalid docker load", proc.stderr)
+        self.assertIn("WARN image glm53-sm121-v13 differs", proc.stderr)
+        self.assertIn("docker save glm53-sm121-v13 | ssh worker.invalid docker load", proc.stderr)
         self.assertNotIn("docker run", self.log.read_text())
 
     def test_orchestrate_0_never_sshes(self):

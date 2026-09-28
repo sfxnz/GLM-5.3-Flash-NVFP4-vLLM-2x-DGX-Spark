@@ -123,7 +123,7 @@ def main() -> int:
             failures.append(f"README missing {snippet!r}")
 
     expected = {
-        "IMAGE": "glm53-sm121-v11",
+        "IMAGE": "glm53-sm121-v13",
         "PORT": "8000",
         "MAX_MODEL_LEN": "327680",
         "MAX_NUM_SEQS": "2",
