@@ -1,4 +1,4 @@
-"""Opt-in weight-only Marlin (FP8 W8A16 or NVFP4 W4A16) for the BF16 non-MoE linears.
+"""Opt-in weight-only Marlin (FP8/INT8 W8A16, NVFP4/INT4 W4A16) for the BF16 non-MoE linears.
 
 Every verify step streams ~8.3 GB/rank of BF16 projection weights that the
 nvidia pack (and the DFlash2 drafter) keep unquantized: KDA in/out projections,
@@ -7,13 +7,17 @@ drafter itself. This patch lets the recipe store selected groups as FP8 e4m3
 with one scale per output channel and run them through vLLM's Marlin FP8 GEMM
 (BF16 activations, in-register dequant), halving those bytes; or as NVFP4
 (E2M1 with an e4m3 scale per 16 elements and an fp32 tensor scale) through
-vLLM's Marlin NVFP4 W4A16 GEMM, cutting them to 0.28x.
+vLLM's Marlin NVFP4 W4A16 GEMM, cutting them to 0.28x; or as symmetric INT8 /
+INT4 with one BF16 scale per 128 (or 64) elements along K through vLLM's
+GPTQ-Marlin GEMM (uint8b128 / uint4b8), 0.51x / 0.26x.
 
-GLM53_FP8_W8A16 and GLM53_NVFP4_W4A16 are comma lists of groups: draft,
-shared, mla, kda_o, kda_in, lm_head. A group may be in one list only. Both
-unset or empty skips the new code entirely (v11 behaviour). The swap runs at
-the end of model_loader.utils.process_weights_after_loading, once per loaded
-model (target, then drafter), and frees each BF16 weight it replaces.
+GLM53_FP8_W8A16, GLM53_NVFP4_W4A16, GLM53_INT8_W8A16 and GLM53_INT4_W4A16 are
+comma lists of groups: draft, shared, mla, kda_o, kda_in, lm_head. A group may
+be in one list only. GLM53_INT_GROUP_SIZE (64 or 128, default 128) sets the
+INT group size. All four unset or empty skips the new code entirely (v11
+behaviour). The swap runs at the end of
+model_loader.utils.process_weights_after_loading, once per loaded model
+(target, then drafter), and frees each BF16 weight it replaces.
 
 Stays BF16 by construction: indexer, router gate, mHC, embeddings, kv_b
 (absorbed into the MLA BMMs), fused_qkv_a, KDA f_b/g_b/conv, vision tower.
@@ -34,13 +38,13 @@ MODULE = "model_executor/layers/quantization/glm53_fp8_w8a16.py"
 
 MODULE_SRC = '''\
 # SPDX-License-Identifier: Apache-2.0
-"""GLM53_FP8_W8A16 / GLM53_NVFP4_W4A16: opt-in weight-only Marlin for BF16 linears.
+"""GLM53_{FP8,INT8}_W8A16 / GLM53_{NVFP4,INT4}_W4A16: opt-in weight-only Marlin for BF16 linears.
 
 Installed by the GLM-5.3-Flash 2x DGX Spark recipe (docker/patch_v13_fp8.py).
 model_loader.utils.process_weights_after_loading calls
-apply_glm53_fp8_w8a16() only when either variable is set.
+apply_glm53_fp8_w8a16() only when one of the four variables is set.
 
-Groups (comma list; a group may be in one of the two variables only):
+Groups (comma list; a group may be in one of the four variables only):
   kda_in   KDA in_proj_qkvbfg_a (merged q|k|v|b|f_a|g_a)
   kda_o    KDA o_proj
   mla      MLA q_b_proj and o_proj
@@ -59,6 +63,15 @@ rounds W/scale to the nearest E2M1 value and keeps the lowest squared error.
 Block scales stay in the e4m3 normal range, because Marlin zeroes subnormal
 ones. The packing (low nibble = even k) and scale layout are what vLLM's
 MarlinNvFp4LinearKernel takes from a ModelOpt NVFP4 checkpoint.
+
+INT8 / INT4 (W8A16 / W4A16): symmetric round-to-nearest with one scale per
+GLM53_INT_GROUP_SIZE elements along K of the per-rank shard, so no group
+straddles a TP shard. The scale is ratio * amax / qmax (qmax 127 or 7) rounded
+to BF16; INT_CLIP_RATIOS lists the ratios tried per group, and the lowest
+squared error wins. Values are stored with bias 128 / 8 (uint8b128, uint4b8)
+in GPTQ layout, then go through the same pad, gptq_marlin_repack and
+marlin_permute_scales steps as vLLM's MarlinLinearKernel. A layer whose K is
+not a multiple of the group size stays BF16.
 """
 
 import os
@@ -67,6 +80,14 @@ import torch
 
 ENV = "GLM53_FP8_W8A16"
 ENV_NVFP4 = "GLM53_NVFP4_W4A16"
+ENV_INT8 = "GLM53_INT8_W8A16"
+ENV_INT4 = "GLM53_INT4_W4A16"
+ENV_INT_GROUP = "GLM53_INT_GROUP_SIZE"
+MODE_ENVS = {"fp8": ENV, "nvfp4": ENV_NVFP4, "int8": ENV_INT8, "int4": ENV_INT4}
+INT_BITS = {"int8": 8, "int4": 4}
+INT_GROUP_SIZES = (64, 128)
+# Scale candidates per group, as fractions of amax / qmax; 1.0 first so ties keep it.
+INT_CLIP_RATIOS = {"int8": (1.0,), "int4": (1.0, 0.95, 0.9, 0.85)}
 GROUPS = ("draft", "shared", "mla", "kda_o", "kda_in", "lm_head")
 FP8_MAX = 448.0
 E2M1_GRID = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
@@ -101,13 +122,21 @@ def parse_groups(value: str, env: str = ENV) -> list[str]:
 
 
 def selected_modes(environ=os.environ) -> dict[str, str]:
-    """group -> "fp8" or "nvfp4", from GLM53_FP8_W8A16 and GLM53_NVFP4_W4A16."""
-    fp8 = parse_groups(environ.get(ENV, ""))
-    nvfp4 = parse_groups(environ.get(ENV_NVFP4, ""), ENV_NVFP4)
-    both = sorted(set(fp8) & set(nvfp4))
-    if both:
-        raise ValueError(f"{both} set in both {ENV} and {ENV_NVFP4}")
-    return {**dict.fromkeys(fp8, "fp8"), **dict.fromkeys(nvfp4, "nvfp4")}
+    """group -> "fp8", "nvfp4", "int8" or "int4", from the four MODE_ENVS."""
+    modes: dict[str, str] = {}
+    for mode, env in MODE_ENVS.items():
+        for group in parse_groups(environ.get(env, ""), env):
+            if group in modes:
+                raise ValueError(f"{group} set in both {MODE_ENVS[modes[group]]} and {env}")
+            modes[group] = mode
+    return modes
+
+
+def int_group_size(environ=os.environ) -> int:
+    value = environ.get(ENV_INT_GROUP, "").strip() or "128"
+    if value not in {str(g) for g in INT_GROUP_SIZES}:
+        raise ValueError(f"{ENV_INT_GROUP}={value!r}; valid: {INT_GROUP_SIZES}")
+    return int(value)
 
 
 def quantize_per_channel(
@@ -198,6 +227,63 @@ def dequantize_nvfp4(
     return (v * (scale.float() * gscale).unsqueeze(-1)).flatten(1)
 
 
+def quantize_int(
+    weight: torch.Tensor,
+    bits: int,
+    group_size: int,
+    ratios: tuple[float, ...] = (1.0,),
+    chunk_elems: int = 1 << 22,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Symmetric per-group INT8/INT4 quantization of an (N, K) weight along K.
+
+    Returns (qweight, scale) in GPTQ layout: qweight is int32 (K * bits / 32, N),
+    element k of column n sits in bits [bits * (k % p), bits * (k % p + 1)) of
+    row k // p (p = 32 / bits), stored as q + 2**(bits - 1); scale is
+    (K / group_size, N) in weight.dtype, and weight ~= q * scale. Rows go in
+    chunks so the fp32 transients stay at a few chunk_elems * 4 bytes.
+    """
+    n, k = weight.shape
+    if k % group_size:
+        raise ValueError(f"INT{bits} needs K % {group_size} == 0, got K={k}")
+    pack, qmax = 32 // bits, 2 ** (bits - 1) - 1
+    dev = weight.device
+    qweight = torch.empty((k // pack, n), dtype=torch.int32, device=dev)
+    scale = torch.empty((k // group_size, n), dtype=weight.dtype, device=dev)
+    tiny = torch.finfo(weight.dtype).tiny  # keeps all-zero groups at q = 0
+    rows = max(1, chunk_elems // k)
+    for i in range(0, n, rows):
+        w = weight[i : i + rows].float().unflatten(1, (k // group_size, group_size))
+        amax = w.abs().amax(-1, keepdim=True)
+        best = None
+        for ratio in ratios:
+            s = (amax * (ratio / qmax)).to(weight.dtype).float().clamp_min_(tiny)
+            q = torch.round(w / s).clamp_(-qmax - 1, qmax)
+            err = (q * s - w).square_().sum(-1, keepdim=True)
+            if best is None:
+                best, best_q, best_s = err, q, s
+            else:
+                better = err < best
+                best = torch.where(better, err, best)
+                best_q = torch.where(better, q, best_q)
+                best_s = torch.where(better, s, best_s)
+        u = (best_q.to(torch.int32) + qmax + 1).flatten(1).unflatten(1, (k // pack, pack))
+        packed = u[..., 0].clone()
+        for j in range(1, pack):
+            packed |= u[..., j] << (bits * j)
+        qweight[:, i : i + rows] = packed.T
+        scale[:, i : i + rows] = best_s.flatten(1).T.to(weight.dtype)
+    return qweight, scale
+
+
+def dequantize_int(qweight: torch.Tensor, scale: torch.Tensor, bits: int) -> torch.Tensor:
+    """(N, K) fp32 weights from quantize_int's (qweight, scale)."""
+    shifts = torch.arange(0, 32, bits, dtype=torch.int32, device=qweight.device)
+    u = (qweight.unsqueeze(1) >> shifts.view(1, -1, 1)) & (2**bits - 1)
+    q = u.flatten(0, 1) - 2 ** (bits - 1)
+    group = q.shape[0] // scale.shape[0]
+    return (q.float() * scale.float().repeat_interleave(group, 0)).T
+
+
 class Fp8MarlinW8A16Method:
     """Replacement quant_method: Marlin FP8 weight-only GEMM, BF16 activations.
 
@@ -235,6 +321,31 @@ class Fp4MarlinW4A16Method(Fp8MarlinW8A16Method):
             workspace=layer.workspace,
             size_n=layer.output_size_per_partition,
             size_k=layer.input_size_per_partition,
+            bias=None,
+        )
+        return out if bias is None else out + bias
+
+
+class IntMarlinA16Method(Fp8MarlinW8A16Method):
+    """GPTQ-Marlin INT8/INT4 weight-only GEMM; the call MarlinLinearKernel makes."""
+
+    def __init__(self, gemm, wtype) -> None:
+        super().__init__(gemm)
+        self._wtype = wtype
+
+    def apply(self, layer, x: torch.Tensor, bias: torch.Tensor | None = None):
+        out = self._gemm(
+            input=x,
+            weight=layer.weight,
+            weight_scale=layer.weight_scale,
+            weight_zp=layer.weight_zp,
+            g_idx=layer.g_idx,
+            g_idx_sort_indices=layer.g_idx_sort_indices,
+            workspace=layer.workspace,
+            wtype=self._wtype,
+            output_size_per_partition=layer.output_size_per_partition,
+            input_size_per_partition=layer.input_size_per_partition,
+            is_k_full=True,
             bias=None,
         )
         return out if bias is None else out + bias
@@ -282,6 +393,63 @@ def quantize_layer_to_marlin_fp8(layer: torch.nn.Module) -> None:
     layer.orig_dtype = scale.dtype
     prepare_fp8_layer_for_marlin(layer, size_k_first=False)
     layer.quant_method = Fp8MarlinW8A16Method(apply_fp8_marlin_linear)
+
+
+def quantize_layer_to_marlin_int(layer: torch.nn.Module, mode: str, group_size: int) -> None:
+    """Swap one bias-free BF16 (N, K) linear or LM head to GPTQ-Marlin INT8/INT4 in place."""
+    from vllm import _custom_ops as ops
+    from vllm.model_executor.layers.quantization.utils.marlin_utils import (
+        apply_gptq_marlin_linear,
+        marlin_make_workspace_new,
+        marlin_pad_qweight,
+        marlin_pad_scales,
+        marlin_padded_nk,
+        marlin_permute_scales,
+    )
+    from vllm.model_executor.utils import replace_parameter
+    from vllm.scalar_type import scalar_types
+
+    _set_partition_sizes(layer)
+    bits = INT_BITS[mode]
+    n, k = layer.weight.shape
+    qweight, scale = quantize_int(layer.weight.data, bits, group_size, INT_CLIP_RATIOS[mode])
+    replace_parameter(layer, "weight", qweight)  # drops the BF16 weight
+    del qweight
+    pn, pk = marlin_padded_nk(n, k, group_size)
+    empty = torch.empty(0, dtype=torch.int, device=scale.device)
+    marlin_qweight = ops.gptq_marlin_repack(
+        marlin_pad_qweight(layer.weight.data, n, k, pn, pk),
+        perm=empty,
+        size_k=pk,
+        size_n=pn,
+        num_bits=bits,
+    )
+    replace_parameter(layer, "weight", marlin_qweight)
+    scale = marlin_pad_scales(scale, n, k, pn, pk, group_size)
+    scale = marlin_permute_scales(scale, size_k=pk, size_n=pn, group_size=group_size)
+    layer.weight_scale = torch.nn.Parameter(scale, requires_grad=False)
+    layer.workspace = marlin_make_workspace_new(scale.device)
+    layer.weight_zp = layer.g_idx = layer.g_idx_sort_indices = empty  # no zp, no act-order
+    wtype = scalar_types.uint8b128 if bits == 8 else scalar_types.uint4b8
+    layer.quant_method = IntMarlinA16Method(apply_gptq_marlin_linear, wtype)
+
+
+def _compact(layer: torch.nn.Module) -> None:
+    """Copy a swapped layer's new tensors to the lowest free addresses.
+
+    vLLM loads under max_split_size_mb:20, and run.sh sets
+    expandable_segments:True, which maps memory in 20 MiB pages. The freed
+    BF16 blocks are "oversized" for the new tensors, so each packed weight
+    lands on freshly mapped pages among the swap's transients and keeps two
+    partly used pages once those are unmapped. After empty_cache the only
+    mapped free memory is page remainders: a copy either fills one or starts
+    right after the last live block, so consecutive layers share pages.
+    """
+    torch.cuda.empty_cache()
+    for attr in ("weight", "weight_scale", "weight_global_scale"):
+        p = getattr(layer, attr, None)
+        if p is not None:
+            p.data = p.data.clone()
 
 
 def _collect_sites(model, groups, linear_base):
@@ -338,25 +506,34 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
     if target_device.type != "cuda":
         raise RuntimeError(f"{ENV} needs a CUDA target device, got {target_device}")
 
+    gsize = int_group_size() if set(INT_BITS) & set(modes.values()) else None
     reserved_before = torch.cuda.memory_reserved(target_device)
     plain = (UnquantizedLinearMethod, UnquantizedEmbeddingMethod)
-    swap = {"fp8": quantize_layer_to_marlin_fp8, "nvfp4": quantize_layer_to_marlin_nvfp4}
+    swap = {
+        "fp8": quantize_layer_to_marlin_fp8,
+        "nvfp4": quantize_layer_to_marlin_nvfp4,
+        "int8": lambda layer: quantize_layer_to_marlin_int(layer, "int8", gsize),
+        "int4": lambda layer: quantize_layer_to_marlin_int(layer, "int4", gsize),
+    }
     stats: dict[str, list[int]] = {}
     skipped = []
     for group, name, layer in sites:
+        mode = modes[group]
         w = layer.weight
         if (
             not isinstance(layer.quant_method, plain)
             or w.dtype != torch.bfloat16
             or w.dim() != 2
             or getattr(layer, "bias", None) is not None
-            or (modes[group] == "nvfp4" and w.shape[1] % 16)
+            or (mode == "nvfp4" and w.shape[1] % 16)
+            or (mode in INT_BITS and w.shape[1] % gsize)
         ):
             skipped.append(name)
             continue
         bf16_bytes = w.numel() * w.element_size()
         del w  # the swap below must drop the last reference to the BF16 weight
-        swap[modes[group]](layer)
+        swap[mode](layer)
+        _compact(layer)
         st = stats.setdefault(group, [0, 0, 0])
         st[0] += 1
         st[1] += bf16_bytes
@@ -366,7 +543,8 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
     torch.cuda.empty_cache()
     logger.info(
         "%s: %s %s; torch reserved %.2f -> %.2f GiB",
-        "+".join(e for e in (ENV, ENV_NVFP4) if os.environ.get(e, "").strip()),
+        "+".join(e for e in MODE_ENVS.values() if os.environ.get(e, "").strip())
+        + ("" if gsize is None else f" (group {gsize})"),
         model_name,
         ", ".join(
             f"{g}[{modes[g]}]={n} layers {b / 2**20:.1f}->{f / 2**20:.1f} MiB"
@@ -377,22 +555,27 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
     )
     if skipped:
         logger.warning("%s: left %d selected layers as they were (not plain "
-                       "bias-free BF16, or NVFP4 with K not a multiple of 16): %s",
-                       ENV, len(skipped), skipped[:8])
+                       "bias-free BF16, NVFP4 with K %% 16, or INT with K %% "
+                       "group size): %s", ENV, len(skipped), skipped[:8])
 '''
 
 HOOK_OLD = """    if model_config.quantization == "torchao":
         set_torchao_reload_attrs(model, model_config)
 """
 HOOK_NEW = HOOK_OLD + """
-    # GLM53_FP8_W8A16 / GLM53_NVFP4_W4A16 (recipe patch_v13_fp8): opt-in
-    # weight-only swap of selected BF16 linears. Both unset or empty keeps this
-    # function as it was.
+    # GLM53_{FP8,INT8}_W8A16 / GLM53_{NVFP4,INT4}_W4A16 (recipe patch_v13_fp8):
+    # opt-in weight-only swap of selected BF16 linears. All unset or empty
+    # keeps this function as it was.
     import os as _os
 
-    if (
-        _os.environ.get("GLM53_FP8_W8A16", "").strip()
-        or _os.environ.get("GLM53_NVFP4_W4A16", "").strip()
+    if any(
+        _os.environ.get(_v, "").strip()
+        for _v in (
+            "GLM53_FP8_W8A16",
+            "GLM53_NVFP4_W4A16",
+            "GLM53_INT8_W8A16",
+            "GLM53_INT4_W4A16",
+        )
     ):
         from vllm.model_executor.layers.quantization.glm53_fp8_w8a16 import (
             apply_glm53_fp8_w8a16,
@@ -405,10 +588,17 @@ ENV_OLD = """    for var in ray_noset_env_vars:
         factors[var] = normalize_value(os.getenv(var))
 """
 ENV_NEW = ENV_OLD + """
-    # GLM53_FP8_W8A16 / GLM53_NVFP4_W4A16 (recipe patch_v13_fp8) change the
-    # linears inside the torch.compile'd drafter, so they must key the compile
-    # cache. Hashed only when set, so the unset key matches v11.
-    for _glm53 in ("GLM53_FP8_W8A16", "GLM53_NVFP4_W4A16"):
+    # GLM53_{FP8,INT8}_W8A16, GLM53_{NVFP4,INT4}_W4A16 and GLM53_INT_GROUP_SIZE
+    # (recipe patch_v13_fp8) change the linears inside the torch.compile'd
+    # drafter, so they must key the compile cache. Hashed only when set, so the
+    # unset key matches v11.
+    for _glm53 in (
+        "GLM53_FP8_W8A16",
+        "GLM53_NVFP4_W4A16",
+        "GLM53_INT8_W8A16",
+        "GLM53_INT4_W4A16",
+        "GLM53_INT_GROUP_SIZE",
+    ):
         if os.getenv(_glm53, "").strip():
             factors[_glm53] = normalize_value(os.getenv(_glm53))
 """

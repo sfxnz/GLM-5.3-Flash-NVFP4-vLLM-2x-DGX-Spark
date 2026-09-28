@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-r"""Per-rank BF16 vs Marlin FP8 W8A16 vs Marlin NVFP4 W4A16 GEMM bench.
+r"""Per-rank BF16 vs Marlin FP8 / NVFP4 / INT8 / INT4 weight-only GEMM bench.
 
-Covers GLM53_FP8_W8A16 and GLM53_NVFP4_W4A16. Shapes come from the safetensors
+Covers GLM53_FP8_W8A16, GLM53_NVFP4_W4A16, GLM53_INT8_W8A16 and
+GLM53_INT4_W4A16 (GPTQ-Marlin, --int-group-size). Shapes come from the safetensors
 headers of the nvidia target pack and the DFlash2 drafter, sharded as one TP
 rank sees them. Each distinct GEMM is timed at M = 1, 8, 16, 32 rows (c=1
 verify at k=7 is M=8, c=2 is M=16) inside a CUDA graph, which is how the serve
@@ -27,7 +28,10 @@ Pass: for every group, at each --gate-m, the count-weighted FP8 time is at most
 NVFP4 time is at most --max-ratio-nvfp4 (0.8) of FP8; the FP8 output stays
 within --max-fro-err of BF16, and the NVFP4 output within --max-fro-err-nvfp4
 of a BF16 GEMM on its own dequantized weights (both catch layout bugs, not
-quantization noise). Exit status 0 = pass, 1 = fail.
+quantization noise). INT8 must run in at most --max-ratio-int8 (1.1) of the
+FP8 time at each --gate-m, and INT8 and INT4 outputs stay within
+--max-fro-err-int of a BF16 GEMM on their own dequantized weights; the INT4
+time is reported against NVFP4. Exit status 0 = pass, 1 = fail.
 """
 
 import argparse
@@ -72,10 +76,11 @@ def read_headers(snapshot: Path) -> dict[str, tuple[Path, int, str, list[int]]]:
     return out
 
 
-def marlin_padded(n: int, k: int) -> tuple[int, int]:
-    """marlin_padded_nk(n, k, group_size=-1) from the v11 image."""
+def marlin_padded(n: int, k: int, group: int = -1) -> tuple[int, int]:
+    """marlin_padded_nk(n, k, group_size) from the v11 image."""
     up = lambda x, m: (x + m - 1) // m * m  # noqa: E731
-    return min(((up(n, 64), up(k, 128)), (up(n, 128), up(k, 64))),
+    g = max(group, 1)
+    return min(((up(n, 64), up(k, math.lcm(128, g))), (up(n, 128), up(k, math.lcm(64, g)))),
                key=lambda nk: (nk[0] * nk[1], nk[0] + nk[1]))
 
 
@@ -140,35 +145,45 @@ def build_gemms(ckpt: Path, draft: Path, tp: int, rank: int) -> list[dict]:
     return gemms
 
 
-def report_bytes(gemms: list[dict]) -> None:
-    """Weight bytes streamed per rank per step: BF16, Marlin FP8 (e4m3 + BF16
-    per-channel scale) and Marlin NVFP4 (E2M1 + e4m3 per 16 + fp32 global),
-    both on Marlin's padded (n, k)."""
+FORMATS = ("BF16", "FP8", "NVFP4", "INT8", "INT4")
+
+
+def format_bytes(n: int, k: int, group: int) -> dict[str, int]:
+    """Weight bytes of one (n, k) GEMM per format, on Marlin's padded (n, k):
+    FP8 = e4m3 + BF16 per-channel scale, NVFP4 = E2M1 + e4m3 per 16 + fp32
+    global, INT8/INT4 = int + BF16 scale per `group` along K."""
+    pn, pk = marlin_padded(n, k)
+    qn, qk = marlin_padded(n, k, group)
+    scales = qk // group * qn * 2
+    return {"BF16": n * k * 2, "FP8": pn * pk + pn * 2, "NVFP4": pn * pk // 2 + pn * pk // 16 + 4,
+            "INT8": qn * qk + scales, "INT4": qn * qk // 2 + scales}
+
+
+def report_bytes(gemms: list[dict], group: int) -> None:
+    """Weight bytes streamed per rank per step, per group and format, and the
+    shapes the INT path pads (N or K) or leaves BF16 (K % group)."""
     mib = 2**20
     print(f"{'group':8} {'gemm':18} {'n x k (per rank)':>18} {'GEMMs/step':>10} "
-          f"{'BF16 MiB':>9} {'FP8 MiB':>8} {'NVFP4 MiB':>9} {'FP8 saves':>9} "
-          f"{'NVFP4 saves':>11} {'vs FP8':>8}")
-    tot = [0, 0, 0]
+          + " ".join(f"{f + ' MiB':>10}" for f in FORMATS) + f"   INT g{group}")
+    tot = dict.fromkeys(FORMATS, 0)
     for g in GROUPS:
-        gb = gf = g4 = 0
+        gt = dict.fromkeys(FORMATS, 0)
         for m in (x for x in gemms if x["group"] == g):
-            pn, pk = marlin_padded(m["n"], m["k"])
-            b = m["n"] * m["k"] * 2 * m["count"]
-            f = (pn * pk + pn * 2) * m["count"]
-            f4 = (pn * pk // 2 + pn * pk // 16 + 4) * m["count"]
-            gb, gf, g4 = gb + b, gf + f, g4 + f4
+            b = {f: v * m["count"] for f, v in format_bytes(m["n"], m["k"], group).items()}
+            gt = {f: gt[f] + b[f] for f in FORMATS}
+            qn, qk = marlin_padded(m["n"], m["k"], group)
+            note = ("stays BF16 (K % group)" if m["k"] % group else
+                    f"pads to {qn} x {qk}" if (qn, qk) != (m["n"], m["k"]) else "")
             print(f"{g:8} {m['name']:18} {m['n']:>8} x {m['k']:<7} {m['count']:>10} "
-                  f"{b / mib:9.1f} {f / mib:8.1f} {f4 / mib:9.1f} {(b - f) / mib:9.1f} "
-                  f"{(b - f4) / mib:11.1f} {(f - f4) / mib:8.1f}")
-        print(f"{g:8} {'= group total':18} {'':>18} {'':>10} {gb / mib:9.1f} {gf / mib:8.1f} "
-              f"{g4 / mib:9.1f} {(gb - gf) / mib:9.1f} {(gb - g4) / mib:11.1f} "
-              f"{(gf - g4) / mib:8.1f}  (NVFP4 saves {(gb - g4) / 1e9:.3f} GB/step vs BF16, "
-              f"{(gf - g4) / 1e9:.3f} vs FP8)")
-        tot = [tot[0] + gb, tot[1] + gf, tot[2] + g4]
-    for label, t in (("FP8", tot[1]), ("NVFP4", tot[2])):
-        print(f"all groups: BF16 {tot[0] / 1e9:.3f} GB -> {label} {t / 1e9:.3f} GB per rank "
-              f"per step, saves {(tot[0] - t) / 1e9:.3f} GB = {(tot[0] - t) / 205e6:.1f} ms "
-              f"at 205 GB/s, {(tot[0] - t) / 273e6:.1f} ms at 273 GB/s")
+                  + " ".join(f"{b[f] / mib:10.1f}" for f in FORMATS) + f"   {note}")
+        print(f"{g:8} {'= group total':18} {'':>18} {'':>10} "
+              + " ".join(f"{gt[f] / mib:10.1f}" for f in FORMATS))
+        tot = {f: tot[f] + gt[f] for f in FORMATS}
+    for f in FORMATS[1:]:
+        saved = tot["BF16"] - tot[f]
+        print(f"all groups: BF16 {tot['BF16'] / 1e9:.3f} GB -> {f} {tot[f] / 1e9:.3f} GB per rank "
+              f"per step, saves {saved / 1e9:.3f} GB = {saved / 205e6:.1f} ms at 205 GB/s, "
+              f"{saved / 273e6:.1f} ms at 273 GB/s")
 
 
 def load_rank_weight(m: dict, torch):
@@ -210,6 +225,19 @@ def bench(gemms: list[dict], args) -> int:
             nvfp4 = (quantize_nvfp4, dequantize_nvfp4, quantize_layer_to_marlin_nvfp4)
         except ImportError as e:
             print(f"NVFP4 path unavailable ({e}); skipping that column")
+    ints = {}
+    if not args.no_int:
+        try:
+            from vllm.model_executor.layers.quantization.glm53_fp8_w8a16 import (
+                INT_BITS,
+                INT_CLIP_RATIOS,
+                dequantize_int,
+                quantize_int,
+                quantize_layer_to_marlin_int,
+            )
+            ints = dict(INT_BITS)
+        except ImportError as e:
+            print(f"INT path unavailable ({e}); skipping those columns")
 
     dev = torch.device("cuda", torch.cuda.current_device())
     torch.manual_seed(0)
@@ -256,6 +284,22 @@ def bench(gemms: list[dict], args) -> int:
         fp8_bytes = lay0.weight.numel() * lay0.weight.element_size() \
             + lay0.weight_scale.numel() * lay0.weight_scale.element_size()
         fp4_layers, w4ref = [], None
+        int_layers, int_refs, int_bytes = {}, {}, {}
+        for mode, bits in ints.items():
+            gs = args.int_group_size
+            if k % gs:
+                continue  # the serve leaves this layer BF16
+            int_refs[mode] = dequantize_int(
+                *quantize_int(w, bits, gs, INT_CLIP_RATIOS[mode]), bits).to(torch.bfloat16)
+            int_layers[mode] = []
+            for _ in range(copies):
+                layer = torch.nn.Module()
+                layer.weight = torch.nn.Parameter(w.clone(), requires_grad=False)
+                quantize_layer_to_marlin_int(layer, mode, gs)
+                int_layers[mode].append(layer)
+            lay = int_layers[mode][0]
+            int_bytes[mode] = sum(p.numel() * p.element_size()
+                                  for p in (lay.weight, lay.weight_scale))
         if nvfp4 is not None:
             # BF16 GEMM on the dequantized NVFP4 weights isolates kernel/layout
             # error from quantization error.
@@ -294,6 +338,21 @@ def bench(gemms: list[dict], args) -> int:
                        max_abs_err=max_abs, max_rel_err=max_rel, fro_rel_err=fro,
                        nvfp4_fro_err=fro4, nvfp4_vs_bf16_fro_err=quant4,
                        weights="random" if args.random else "checkpoint")
+            ints_txt = ""
+            for mode, layers in int_layers.items():
+                yi = layers[0].quant_method.apply(layers[0], x).float()
+                refi = F.linear(x, int_refs[mode]).float()
+                froi = float((yi - refi).norm() / refi.norm().clamp_min(1e-30))
+                quanti = float((yi - ref_y).norm() / ref_y.norm().clamp_min(1e-30))
+                tq = time_ms(lambda: [lay.quant_method.apply(lay, x) for lay in layers]) / copies
+                row.update({f"{mode}_us": tq * 1e3, f"{mode}_gbs": int_bytes[mode] / tq / 1e6,
+                            f"{mode}_fro_err": froi, f"{mode}_vs_bf16_fro_err": quanti})
+                ints_txt += (f" {mode} {tq * 1e3:8.1f}us {int_bytes[mode] / tq / 1e6:6.1f}GB/s"
+                             f" (fro {froi:.2e} vs dequant, {quanti:.4f} vs bf16)")
+                if froi > args.max_fro_err_int:
+                    ok = False
+                    print(f"FAIL {m['group']}/{m['name']} M={M}: {mode} fro_rel_err {froi:.3f} "
+                          f"vs dequantized weights > {args.max_fro_err_int} (layout/kernel error)")
             rows.append(row)
             nv = "" if t4 is None else (
                 f" nvfp4 {t4 * 1e3:8.1f}us {row['nvfp4_gbs']:6.1f}GB/s ratio {t4 / t16:.3f}"
@@ -301,7 +360,7 @@ def bench(gemms: list[dict], args) -> int:
             print(f"{m['group']:8} {m['name']:18} {n:>6}x{k:<6} M={M:<3} "
                   f"bf16 {t16 * 1e3:8.1f}us {row['bf16_gbs']:6.1f}GB/s  "
                   f"fp8 {t8 * 1e3:8.1f}us {row['fp8_gbs']:6.1f}GB/s  ratio {t8 / t16:.3f}"
-                  f"  err max_abs {max_abs:.2e} max_rel {max_rel:.2e} fro {fro:.2e}{nv}",
+                  f"  err max_abs {max_abs:.2e} max_rel {max_rel:.2e} fro {fro:.2e}{nv}{ints_txt}",
                   flush=True)
             if fro > args.max_fro_err:
                 ok = False
@@ -311,7 +370,7 @@ def bench(gemms: list[dict], args) -> int:
                 ok = False
                 print(f"FAIL {m['group']}/{m['name']} M={M}: NVFP4 fro_rel_err {fro4:.3f} "
                       f"vs dequantized weights > {args.max_fro_err_nvfp4} (layout/kernel error)")
-        del bf16_ws, fp8_layers, fp4_layers, w4ref, w
+        del bf16_ws, fp8_layers, fp4_layers, w4ref, w, int_layers, int_refs
         torch.cuda.empty_cache()
 
     print("\ncount-weighted per step (one rank):")
@@ -325,32 +384,46 @@ def bench(gemms: list[dict], args) -> int:
             t8 = sum(r["fp8_us"] * r["count"] for r in sel)
             has4 = all(r["nvfp4_us"] is not None for r in sel)
             t4 = sum(r["nvfp4_us"] * r["count"] for r in sel) if has4 else None
+            # A layer the INT path leaves BF16 (K % group) costs its BF16 time.
+            ti = {mode: sum((r[f"{mode}_us"] if f"{mode}_us" in r else r["bf16_us"])
+                            * r["count"] for r in sel) for mode in ints}
             gate = M in args.gate_m
             passed = t8 / t16 <= args.max_ratio
             passed4 = None if t4 is None else t4 / t8 <= args.max_ratio_nvfp4
-            ok &= (passed and passed4 is not False) or not gate
+            passed8 = None if "int8" not in ti else ti["int8"] / t8 <= args.max_ratio_int8
+            ok &= (passed and passed4 is not False and passed8 is not False) or not gate
             summary.append(dict(group=g, M=M, bf16_ms=t16 / 1e3, fp8_ms=t8 / 1e3,
                                 ratio=t8 / t16, saved_ms=(t16 - t8) / 1e3,
                                 nvfp4_ms=None if t4 is None else t4 / 1e3,
                                 nvfp4_ratio=None if t4 is None else t4 / t16,
                                 nvfp4_vs_fp8=None if t4 is None else t4 / t8,
                                 nvfp4_saved_ms=None if t4 is None else (t16 - t4) / 1e3,
-                                gated=gate, passed=passed, nvfp4_passed=passed4))
+                                gated=gate, passed=passed, nvfp4_passed=passed4,
+                                int8_passed=passed8,
+                                **{f"{mode}_ms": t / 1e3 for mode, t in ti.items()},
+                                **{f"{mode}_saved_ms": (t16 - t) / 1e3 for mode, t in ti.items()}))
             verdict = ("PASS" if passed else "FAIL") if gate else "info"
             nv = "" if t4 is None else (
                 f"  nvfp4 {t4 / 1e3:7.2f} ms ratio {t4 / t16:.3f} ({t4 / t8:.3f} of fp8) "
                 f"saves {(t16 - t4) / 1e3:6.2f} ms/step  "
                 f"{('PASS' if passed4 else 'FAIL') if gate else 'info'}")
+            it = "".join(
+                f"  {mode} {t / 1e3:7.2f} ms saves {(t16 - t) / 1e3:6.2f} ms/step"
+                + (f" ({t / t8:.3f} of fp8) {('PASS' if passed8 else 'FAIL') if gate else 'info'}"
+                   if mode == "int8" else "" if t4 is None else f" ({t / t4:.3f} of nvfp4)")
+                for mode, t in ti.items())
             print(f"  {g:8} M={M:<3} bf16 {t16 / 1e3:7.2f} ms  fp8 {t8 / 1e3:7.2f} ms  "
-                  f"ratio {t8 / t16:.3f}  saves {(t16 - t8) / 1e3:6.2f} ms/step  {verdict}{nv}")
+                  f"ratio {t8 / t16:.3f}  saves {(t16 - t8) / 1e3:6.2f} ms/step  {verdict}{nv}{it}")
     if args.json:
         Path(args.json).write_text(json.dumps(dict(
             rows=rows, summary=summary, passed=ok, max_ratio=args.max_ratio,
-            max_ratio_nvfp4=args.max_ratio_nvfp4), indent=1))
-    print(f"\n{'PASS' if ok else 'FAIL'}: FP8/BF16 time ratio <= {args.max_ratio} and "
-          f"NVFP4/FP8 <= {args.max_ratio_nvfp4} at M in {args.gate_m} for every group, "
-          f"fro_rel_err <= {args.max_fro_err} (FP8 vs BF16) and "
-          f"<= {args.max_fro_err_nvfp4} (NVFP4 vs its dequantized weights)")
+            max_ratio_nvfp4=args.max_ratio_nvfp4, max_ratio_int8=args.max_ratio_int8,
+            int_group_size=args.int_group_size), indent=1))
+    print(f"\n{'PASS' if ok else 'FAIL'}: FP8/BF16 time ratio <= {args.max_ratio}, "
+          f"NVFP4/FP8 <= {args.max_ratio_nvfp4} and INT8/FP8 <= {args.max_ratio_int8} "
+          f"at M in {args.gate_m} for every group, fro_rel_err <= {args.max_fro_err} "
+          f"(FP8 vs BF16), <= {args.max_fro_err_nvfp4} (NVFP4) and <= {args.max_fro_err_int} "
+          f"(INT8/INT4 g{args.int_group_size}) vs their dequantized weights")
     return 0 if ok else 1
 
 
@@ -378,6 +451,12 @@ def main() -> int:
                    help="NVFP4 output vs BF16 GEMM on the dequantized NVFP4 weights")
     p.add_argument("--random", action="store_true", help="random weights, skip ckpt reads")
     p.add_argument("--no-nvfp4", action="store_true")
+    p.add_argument("--no-int", action="store_true", help="skip the INT8/INT4 columns")
+    p.add_argument("--int-group-size", type=int, choices=(64, 128), default=128)
+    p.add_argument("--max-ratio-int8", type=float, default=1.1,
+                   help="INT8/FP8 time ratio the pass rule allows")
+    p.add_argument("--max-fro-err-int", type=float, default=0.02,
+                   help="INT output vs BF16 GEMM on the dequantized INT weights")
     p.add_argument("--report-bytes", action="store_true", help="CPU only: bytes table")
     p.add_argument("--json", help="write rows and summary here")
     args = p.parse_args()
@@ -386,7 +465,7 @@ def main() -> int:
         p.error(f"unknown groups {sorted(bad)}")
     gemms = build_gemms(args.ckpt, args.draft, args.tp, args.rank)
     if args.report_bytes:
-        report_bytes(gemms)
+        report_bytes(gemms, args.int_group_size)
         return 0
     return bench(gemms, args)
 
