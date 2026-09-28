@@ -84,6 +84,12 @@ DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-nvfp4}"
 # Comma list of target groups in INT8 W8A16 (GLM53_INT8_W8A16): shared, mla,
 # kda_o, kda_in, lm_head. Empty keeps them BF16 (E4 measures INT8).
 TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,lm_head}"
+# Rows at or above which the swapped kda_in GEMM dequantizes to BF16 and runs
+# cuBLAS instead of Marlin (GLM53_WQ_DEQUANT_MIN_M, GLM53_WQ_DEQUANT_GROUPS=kda_in).
+# 0 is off. Keep it above the largest capture size (16), or decode dequantizes too.
+# E5: INT8 Marlin kda_in is 3.6x BF16 at the 1152-row prefill chunk, 93% of the
+# -11% prefill. 512 is the candidate once a GPU A/B confirms it.
+PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-0}"
 # 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
 # rejected drafts no longer write committed pool keys. E3a: needles pass to
 # 128k, and decode-built pools match prefill within the prefill A/A.
@@ -207,6 +213,10 @@ for group in "${int8_groups[@]}"; do
       ;;
   esac
 done
+if [[ ! "$PREFILL_DEQUANT_MIN_M" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  echo "PREFILL_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M: want a positive integer (rows), or 0 for off." >&2
+  exit 1
+fi
 if [[ "$KPOOL_TAIL_FIX" != 0 && "$KPOOL_TAIL_FIX" != 1 ]]; then
   echo "KPOOL_TAIL_FIX=$KPOOL_TAIL_FIX: want exactly 0 or 1." >&2
   exit 1
@@ -227,6 +237,9 @@ fi
 glm53_env=()
 if [[ "$DRAFT_WEIGHTS" == nvfp4 ]]; then glm53_env+=(GLM53_NVFP4_W4A16=draft); fi
 if (( ${#int8_groups[@]} > 0 )); then glm53_env+=("GLM53_INT8_W8A16=$TARGET_WEIGHT_GROUPS_INT8"); fi
+if [[ "$PREFILL_DEQUANT_MIN_M" != 0 ]]; then
+  glm53_env+=("GLM53_WQ_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M" GLM53_WQ_DEQUANT_GROUPS=kda_in)
+fi
 if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
 if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
@@ -259,6 +272,7 @@ for pair in "${extra_env_pairs[@]}"; do
   case "$name" in
     GLM53_NVFP4_W4A16) knob=DRAFT_WEIGHTS ;;
     GLM53_INT8_W8A16) knob=TARGET_WEIGHT_GROUPS_INT8 ;;
+    GLM53_WQ_DEQUANT_MIN_M | GLM53_WQ_DEQUANT_GROUPS) knob=PREFILL_DEQUANT_MIN_M ;;
     GLM53_KPOOL_TAIL_FIX) knob=KPOOL_TAIL_FIX ;;
     GLM53_ADAPTIVE_VERIFY) knob=ADAPTIVE_VERIFY ;;
     GLM53_ADAPTIVE_VERIFY_TAU) knob=ADAPTIVE_VERIFY_TAU ;;
@@ -583,7 +597,7 @@ FORWARD_ENVS=(
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
   DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR
-  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU
+  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )

@@ -231,9 +231,10 @@ def glm53_env(stdout):
 
 class V13Knobs(RunShCase):
     V13 = {"IMAGE": "glm53-sm121-v13"}
-    ALL_ON = {"DRAFT_WEIGHTS": "nvfp4", "TARGET_WEIGHT_GROUPS_INT8": "shared,mla", "KPOOL_TAIL_FIX": "1",
-              "ADAPTIVE_VERIFY": "1", "ADAPTIVE_VERIFY_TAU": "0.3"}
-    ALL_ON_ENV = ["GLM53_NVFP4_W4A16=draft", "GLM53_INT8_W8A16=shared,mla", "GLM53_KPOOL_TAIL_FIX=1",
+    ALL_ON = {"DRAFT_WEIGHTS": "nvfp4", "TARGET_WEIGHT_GROUPS_INT8": "shared,mla", "PREFILL_DEQUANT_MIN_M": "512",
+              "KPOOL_TAIL_FIX": "1", "ADAPTIVE_VERIFY": "1", "ADAPTIVE_VERIFY_TAU": "0.3"}
+    ALL_ON_ENV = ["GLM53_NVFP4_W4A16=draft", "GLM53_INT8_W8A16=shared,mla", "GLM53_WQ_DEQUANT_MIN_M=512",
+                  "GLM53_WQ_DEQUANT_GROUPS=kda_in", "GLM53_KPOOL_TAIL_FIX=1",
                   "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"]
     V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "TARGET_WEIGHT_GROUPS_INT8": "none",
                     "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
@@ -282,6 +283,8 @@ class V13Knobs(RunShCase):
                  ("ADAPTIVE_VERIFY", "2", "ADAPTIVE_VERIFY=2: want exactly 0 or 1")]
         cases += [("ADAPTIVE_VERIFY_TAU", tau, "strictly between 0 and 1")
                   for tau in ("0", "0.0", "1", "1.0", "1.5", "-0.2", "1e-9", ".", "0.2.1", "abc")]
+        cases += [("PREFILL_DEQUANT_MIN_M", m, f"PREFILL_DEQUANT_MIN_M={m}: want a positive integer")
+                  for m in ("-1", "-512", "512.0", "1e3", "abc", "0512", "512 ", "0x200", "off")]
         for name, value, needle in cases:
             with self.subTest(name=name, value=value):
                 self.assertRefused(self.run_sh(**self.V13, **{name: value}), needle)
@@ -308,6 +311,25 @@ class V13Knobs(RunShCase):
         target = ",".join(g for g in groups if g != "draft")
         self.assertAccepted(self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8=target))
 
+    def test_prefill_dequant_follows_the_patch(self):
+        src = (REPO / "docker/patch_v13_fp8.py").read_text()
+        self.assertIn('ENV_DEQUANT_MIN_M = "GLM53_WQ_DEQUANT_MIN_M"', src)
+        self.assertIn('ENV_DEQUANT_GROUPS = "GLM53_WQ_DEQUANT_GROUPS"', src)
+        self.assertIn('"kda_in"', re.search(r"^GROUPS = \((.*)\)$", src, re.M).group(1))
+        for off in ("0", ""):  # empty falls back to the default, 0
+            with self.subTest(off=off):
+                proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M=off)
+                self.assertAccepted(proc)
+                self.assertFalse([e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")])
+                self.assertIn("PREFILL_DEQUANT_MIN_M=0", shell_words(worker_command(proc.stdout)))
+        for rows in ("1", "512", "1024"):
+            with self.subTest(rows=rows):
+                proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M=rows)
+                self.assertAccepted(proc)
+                env = [e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")]
+                self.assertEqual(env, [f"GLM53_WQ_DEQUANT_MIN_M={rows}", "GLM53_WQ_DEQUANT_GROUPS=kda_in"])
+                self.assertIn(f"PREFILL_DEQUANT_MIN_M={rows}", shell_words(worker_command(proc.stdout)))
+
     def test_int8_bad_groups_refused(self):
         for bad in ("shared,draft", "attn", "shared, mla", "SHARED", "shared,,mla"):
             with self.subTest(bad=bad):
@@ -316,6 +338,8 @@ class V13Knobs(RunShCase):
 
     def test_extra_env_cannot_set_a_knob_variable(self):
         owners = {"GLM53_NVFP4_W4A16": "DRAFT_WEIGHTS", "GLM53_INT8_W8A16": "TARGET_WEIGHT_GROUPS_INT8",
+                  "GLM53_WQ_DEQUANT_MIN_M": "PREFILL_DEQUANT_MIN_M",
+                  "GLM53_WQ_DEQUANT_GROUPS": "PREFILL_DEQUANT_MIN_M",
                   "GLM53_KPOOL_TAIL_FIX": "KPOOL_TAIL_FIX", "GLM53_ADAPTIVE_VERIFY": "ADAPTIVE_VERIFY",
                   "GLM53_ADAPTIVE_VERIFY_TAU": "ADAPTIVE_VERIFY_TAU"}
         for name, knob in owners.items():
