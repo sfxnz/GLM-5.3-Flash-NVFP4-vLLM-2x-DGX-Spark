@@ -57,6 +57,7 @@ serve:
     FORCE_UNSAFE_LINEAR: 0
     FORCE_UNSAFE_SPEC: 0
     FORCE_UNSAFE_VISION: 0
+    FORCE_UNSAFE_IMAGE: 0
     LANGUAGE_MODEL_ONLY: 0
     MM_PROCESSOR_CACHE_GB: 1
     MAX_NEW_TOKENS: 65536
@@ -74,6 +75,12 @@ serve:
     SPEC: dflash2
     JIT_CACHE: 1
     JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
+    # v13 switches (docker/README-v13.md). run.sh turns them into GLM53_* env on both ranks.
+    DRAFT_WEIGHTS: bf16
+    TARGET_WEIGHT_GROUPS_INT8: ""
+    KPOOL_TAIL_FIX: 0
+    ADAPTIVE_VERIFY: 0
+    ADAPTIVE_VERIFY_TAU: 0.2
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
