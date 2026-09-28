@@ -22,9 +22,10 @@ model_loader.utils.process_weights_after_loading, once per loaded model
 Stays BF16 by construction: indexer, router gate, mHC, embeddings, kv_b
 (absorbed into the MLA BMMs), fused_qkv_a, KDA f_b/g_b/conv, vision tower.
 
-GLM53_WQ_DEQUANT_MIN_M=<rows> (unset = off) sends every swapped layer but the
-LM head through dequantize-then-cuBLAS when its input has at least that many
-rows (long prefill chunks), instead of the Marlin GEMM, which is slower there.
+GLM53_WQ_DEQUANT_MIN_M=<rows> (unset = off) sends the swapped layers of the
+groups in GLM53_WQ_DEQUANT_GROUPS (default kda_in; never the LM head) through
+dequantize-then-cuBLAS when their input has at least that many rows (long
+prefill chunks), instead of the Marlin GEMM, which is slower there.
 
 Usage: python3 patch_v13_fp8.py [VLLM_ROOT]
 (default /usr/local/lib/python3.12/dist-packages/vllm). Exact-substring
@@ -78,16 +79,18 @@ marlin_permute_scales steps as vLLM's MarlinLinearKernel. A layer whose K is
 not a multiple of the group size stays BF16.
 
 GLM53_WQ_DEQUANT_MIN_M (a positive integer; unset or empty = off: nothing is
-wrapped and no workspace is allocated): every swapped layer except the LM head
-gets a MarlinDequantMethod. An input of at least that many rows (a long prefill
-chunk, which runs eagerly) dequantizes the packed weight into one BF16
+wrapped and no workspace is allocated): every swapped layer of the groups in
+GLM53_WQ_DEQUANT_GROUPS (a comma list of the groups above; unset or empty =
+kda_in), except the LM head, gets a MarlinDequantMethod; other swapped layers
+keep the Marlin GEMM at every M. An input of at least that many rows (a long
+prefill chunk, which runs eagerly) dequantizes the packed weight into one BF16
 workspace shared by the whole process and runs F.linear (cuBLAS). Smaller
 inputs keep the Marlin GEMM; decode and verify steps are captured at 16 rows
 or fewer. Each workspace element is the BF16 rounding of the exact fp32
 q * scale, the value dequantize_per_channel, dequantize_nvfp4 and
 dequantize_int give. For INT groups it is also the BF16 product Marlin forms
-in registers. The workspace is sized for the largest such layer when its model
-is swapped, so the drafter's swap may grow it once.
+in registers. The workspace is sized for the largest wrapped layer when its
+model is swapped, so a drafter swap with draft listed may grow it once.
 """
 
 import os
@@ -107,6 +110,7 @@ ENV_INT8 = "GLM53_INT8_W8A16"
 ENV_INT4 = "GLM53_INT4_W4A16"
 ENV_INT_GROUP = "GLM53_INT_GROUP_SIZE"
 ENV_DEQUANT_MIN_M = "GLM53_WQ_DEQUANT_MIN_M"
+ENV_DEQUANT_GROUPS = "GLM53_WQ_DEQUANT_GROUPS"
 MODE_ENVS = {"fp8": ENV, "nvfp4": ENV_NVFP4, "int8": ENV_INT8, "int4": ENV_INT4}
 INT_BITS = {"int8": 8, "int4": 4}
 INT_GROUP_SIZES = (64, 128)
@@ -171,6 +175,11 @@ def dequant_min_m(environ=os.environ) -> int | None:
     if not value.isdigit() or int(value) < 1:
         raise ValueError(f"{ENV_DEQUANT_MIN_M}={value!r}; want a positive integer")
     return int(value)
+
+
+def dequant_groups(environ=os.environ) -> list[str]:
+    """GLM53_WQ_DEQUANT_GROUPS as a list of GROUPS; unset or empty = kda_in."""
+    return parse_groups(environ.get(ENV_DEQUANT_GROUPS, ""), ENV_DEQUANT_GROUPS) or ["kda_in"]
 
 
 def quantize_per_channel(
@@ -722,6 +731,7 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
     logger = init_logger(__name__)
     modes = selected_modes()
     min_m = dequant_min_m()
+    dq_groups = dequant_groups() if min_m else []
     groups = list(modes)
     model_name = type(model).__name__
     kind, sites = _collect_sites(model, groups, LinearBase)
@@ -779,12 +789,12 @@ def apply_glm53_fp8_w8a16(model: torch.nn.Module, target_device: torch.device) -
             p = getattr(layer, attr, None)
             st[2] += 0 if p is None else p.numel() * p.element_size()
     # The LM head only sees sampled rows (max_num_seqs * (k + 1) at most).
-    big = [(layer, modes[g]) for g, layer in swapped if g != "lm_head"] if min_m else []
+    big = [(layer, modes[g]) for g, layer in swapped if g in dq_groups and g != "lm_head"]
     if big:
         ws_bytes = install_marlin_dequant(big, min_m, gsize)
-        logger.info("%s=%d: %s %d layers dequantize at M >= %d; shared BF16 "
-                    "workspace %.1f MiB", ENV_DEQUANT_MIN_M, min_m, model_name,
-                    len(big), min_m, ws_bytes / 2**20)
+        logger.info("%s=%d (groups %s): %s %d layers dequantize at M >= %d; shared "
+                    "BF16 workspace %.1f MiB", ENV_DEQUANT_MIN_M, min_m, ",".join(dq_groups),
+                    model_name, len(big), min_m, ws_bytes / 2**20)
     torch.cuda.empty_cache()
     logger.info(
         "%s: %s %s; torch reserved %.2f -> %.2f GiB",

@@ -695,6 +695,16 @@ class QuantizerTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "GLM53_INT_GROUP_SIZE"):
                 self.m.int_group_size({"GLM53_INT_GROUP_SIZE": bad})
 
+    def test_dequant_groups(self):
+        env = "GLM53_WQ_DEQUANT_GROUPS"
+        for unset in ({}, {env: ""}, {env: " , "}):
+            self.assertEqual(self.m.dequant_groups(unset), ["kda_in"])
+        self.assertEqual(self.m.dequant_groups({env: " kda_o, kda_in,kda_o "}), ["kda_o", "kda_in"])
+        self.assertEqual(self.m.dequant_groups({env: ",".join(self.m.GROUPS)}), list(self.m.GROUPS))
+        for bad in ("kda", "kda_in,attn", "KDA_IN"):
+            with self.assertRaisesRegex(ValueError, f"{env}: unknown group"):
+                self.m.dequant_groups({env: bad})
+
     def test_int_pack_layout_matches_vllm_pack_rows(self):
         """qweight is vLLM's GPTQ layout: pack_rows of the biased ints, which
         MarlinLinearKernel hands to gptq_marlin_repack."""
@@ -1048,9 +1058,11 @@ class DequantTest(unittest.TestCase):
         self.assertEqual(m._WORKSPACE.numel(), 256 * 512)
 
     def test_env_gates_the_wrapper_and_skips_lm_head(self):
-        """apply_glm53_fp8_w8a16 on a fake target: unset leaves every Marlin
-        method as it was; set wraps all but the LM head, and the workspace
-        ignores the (larger) LM head; a bad value fails before any swap."""
+        """apply_glm53_fp8_w8a16 on a fake target: MIN_M unset leaves every
+        Marlin method as it was, whatever GLM53_WQ_DEQUANT_GROUPS says; set, it
+        wraps the swapped layers of the listed groups (default kda_in) but never
+        the LM head, and the workspace fits the largest wrapped layer only; a
+        bad value of either variable fails before any swap."""
         m, nn = self.m, torch.nn
         plain = type("UnquantizedLinearMethod", (), {})
         fakes = {name: types.ModuleType(name) for name in (
@@ -1077,7 +1089,10 @@ class DequantTest(unittest.TestCase):
             target.lm_head = linear(512, 128, type("ParallelLMHead", (nn.Module,), {}))
             return target, [kda.in_proj_qkvbfg_a, kda.o_proj], target.lm_head
 
+        swaps = []
+
         def swap(layer, mode, gs):  # quantize_layer_to_marlin_int, built on CPU
+            swaps.append(layer)
             n, k = layer.weight.shape
             built = self.layer(mode, m.quantize_int(layer.weight, 8, gs), n, k, gs)
             layer.weight, layer.weight_scale = built.weight, built.weight_scale
@@ -1089,6 +1104,8 @@ class DequantTest(unittest.TestCase):
 
         def run(extra):
             target, kda, head = model()
+            m._WORKSPACE = None
+            swaps.clear()
             with mock.patch.dict(sys.modules, fakes), \
                     mock.patch.dict(os.environ, {**clean, **groups, **extra}, clear=True), \
                     mock.patch.object(m, "quantize_layer_to_marlin_int", swap), \
@@ -1096,21 +1113,48 @@ class DequantTest(unittest.TestCase):
                 m.apply_glm53_fp8_w8a16(target, torch.device("cuda"))
             return kda, head
 
-        kda, head = run({})
-        self.assertEqual([layer.quant_method for layer in kda + [head]],
-                         [("marlin", 192), ("marlin", 128), ("marlin", 512)])
-        self.assertIsNone(m._WORKSPACE)
-        kda, head = run({"GLM53_WQ_DEQUANT_MIN_M": " 256 "})
-        for layer in kda:
-            self.assertIsInstance(layer.quant_method, m.MarlinDequantMethod)
-            self.assertEqual(layer.quant_method._min_m, 256)
-            self.assertEqual(layer.quant_method._inner,
-                             ("marlin", layer.output_size_per_partition))
-        self.assertEqual(head.quant_method, ("marlin", 512))
-        self.assertEqual(m._WORKSPACE.numel(), 192 * 256)  # LM head: 512 * 128
-        for bad in ("0", "-4", "1e3", "abc"):
-            with self.assertRaisesRegex(ValueError, "GLM53_WQ_DEQUANT_MIN_M"):
-                run({"GLM53_WQ_DEQUANT_MIN_M": bad})
+        def wrapped(layers):
+            """min_m per layer, or None where the Marlin method is untouched."""
+            out = []
+            for layer in layers:
+                qm = layer.quant_method
+                if isinstance(qm, m.MarlinDequantMethod):
+                    self.assertEqual(qm._inner, ("marlin", layer.output_size_per_partition))
+                    out.append(qm._min_m)
+                else:
+                    self.assertEqual(qm, ("marlin", layer.output_size_per_partition))
+                    out.append(None)
+            return out
+
+        for off in ({}, {"GLM53_WQ_DEQUANT_GROUPS": "kda_in,kda_o"},
+                    {"GLM53_WQ_DEQUANT_GROUPS": "attn"}, {"GLM53_WQ_DEQUANT_MIN_M": ""}):
+            with self.subTest(off=off):
+                kda, head = run(off)
+                self.assertEqual(wrapped(kda + [head]), [None, None, None])
+                self.assertIsNone(m._WORKSPACE)
+        # kda_in 192 x 256, kda_o 128 x 128, LM head 512 x 128 (never wrapped)
+        for dq_groups, want, numel in ((None, [256, None], 192 * 256),
+                                       ("kda_in", [256, None], 192 * 256),
+                                       ("kda_o", [None, 256], 128 * 128),
+                                       ("kda_o,lm_head,draft", [None, 256], 128 * 128),
+                                       ("kda_in,kda_o,lm_head", [256, 256], 192 * 256)):
+            with self.subTest(dq_groups=dq_groups):
+                extra = {"GLM53_WQ_DEQUANT_MIN_M": " 256 "}
+                if dq_groups is not None:
+                    extra["GLM53_WQ_DEQUANT_GROUPS"] = dq_groups
+                kda, head = run(extra)
+                self.assertEqual(wrapped(kda + [head]), want + [None])
+                self.assertEqual(m._WORKSPACE.numel(), numel)
+        for bad in ({"GLM53_WQ_DEQUANT_MIN_M": v} for v in ("0", "-4", "1e3", "abc")):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "GLM53_WQ_DEQUANT_MIN_M"):
+                run(bad)
+            self.assertEqual(swaps, [])
+        for bad in ("kda", "kda_in,attn"):
+            env = {"GLM53_WQ_DEQUANT_MIN_M": "256", "GLM53_WQ_DEQUANT_GROUPS": bad}
+            with self.subTest(bad=bad), \
+                    self.assertRaisesRegex(ValueError, "GLM53_WQ_DEQUANT_GROUPS: unknown"):
+                run(env)
+            self.assertEqual(swaps, [])
 
     def test_v11_runs_large_m_eagerly(self):
         """Why a Python branch on the row count is safe in v11. GLM-5.3 auto-
