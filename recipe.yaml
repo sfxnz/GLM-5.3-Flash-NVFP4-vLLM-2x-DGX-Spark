@@ -115,7 +115,7 @@ readme:
 measured:
   # Published decode score is prose only. Do not add structured or code rows.
   decode:
-    conditions: prose only; streamed greedy, thinking off, 200 completion tokens, 3-run median; LibertAIDAI pin on this image (nvidia pack unmeasured on Sparks); max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
+    conditions: prose only; streamed greedy, thinking off, max_tokens 200 (~98 completion tokens, today's cell K), 3-run median; 2026-09-02 rebench of the LibertAIDAI pin on glm53-sm121-v11 with no v13 switches, not the current defaults (nvidia pack, v13); max-num-seqs=2, fp8 KV pinned at 4.14 GiB, context 327680, DFlash2-7, CUDA graphs
     units: {decode: tok/s per stream (median), aggregate: tok/s, ttft_p50: s}
     rows:
       - {phase: prose, concurrency: 1, decode: 21.2, aggregate: 21.2, ttft_p50: 0.33, evidence: evidence/rebench-20260902T204243Z/bench.txt}
