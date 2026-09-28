@@ -33,13 +33,14 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 | Knob | Sets | Recipe default |
 |---|---|---|
 | `DRAFT_WEIGHTS=bf16\|nvfp4` | `GLM53_NVFP4_W4A16=draft` when `nvfp4` | `nvfp4` |
-| `TARGET_WEIGHT_GROUPS_INT8=<groups>` | `GLM53_INT8_W8A16=<groups>`, target groups only (`draft` is refused) | empty |
+| `TARGET_WEIGHT_GROUPS_INT8=<groups>\|none` | `GLM53_INT8_W8A16=<groups>`, target groups only (`draft` is refused); `none` sets nothing | `shared,mla,kda_o,kda_in,lm_head` |
+| `PREFILL_DEQUANT_MIN_M=<rows>` | `GLM53_WQ_DEQUANT_MIN_M=<rows>` and `GLM53_WQ_DEQUANT_GROUPS=kda_in` unless `0` | `0` |
 | `KPOOL_TAIL_FIX=0\|1` | `GLM53_KPOOL_TAIL_FIX=1` when `1` | `1` |
-| `ADAPTIVE_VERIFY=0\|1`, `ADAPTIVE_VERIFY_TAU=<decimal in (0,1)>` | `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU` when `1` (needs `SPEC=dflash2`) | `1`, `0.2` |
+| `ADAPTIVE_VERIFY=0\|1`, `ADAPTIVE_VERIFY_TAU=<decimal in (0,1)>` | `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU` when `1` (needs `SPEC=dflash2`) | `1`, `0.3` |
 
-Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the five knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
+Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the seven knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
 
-The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0`. Two forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only) and INT8 on `draft`.
+The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0` (and `PREFILL_DEQUANT_MIN_M=0`). Three forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only), INT8 on `draft`, and `GLM53_WQ_DEQUANT_GROUPS` other than `kda_in`.
 
 ## Switches
 
@@ -591,15 +592,31 @@ E2 logged `torch reserved 88.96 -> 87.44 GiB` for 3.42 GiB of freed target weigh
 
 ### Large-M prefill: dequantize to BF16, then cuBLAS (`GLM53_WQ_DEQUANT_MIN_M`)
 
-E5 F1 ran the recipe defaults (INT8 target groups, NVFP4 drafter). Decode gained 23-51%, but cell E prefill fell to 1193 / 1191 tok/s at 32k / 128k, against E0's 1331 / 1329 (-10% / -12%). TTFT at 128k went from 98.4 s to 109.7 s. At 2048-token chunks that is +178 ms per chunk (2048/1193 - 2048/1331 s). The suspect is Marlin at prefill M: at 256-2048 rows the weight-only GEMM is compute-bound and slower than cuBLAS BF16. The GPU microbench below confirms or refutes that.
+E5 measured the recipe defaults (INT8 target groups, NVFP4 drafter) on two boots, F1 and F2 (`evidence/e5-final/notes.txt`). Decode gained 23-51% over E0, but cell E prefill fell to 1164-1199 tok/s at 32k / 128k (three panels), against E0's 1331 / 1329 and E3a's 1355 / 1353 (BF16 target, same drafter). That is -11% against E0 and -12% against E3a. TTFT at 128k went from 98.4 s (E0) to 109.7 s. The serve prefills in 1152-token chunks, not the 2048 of `max_num_batched_tokens`: the F3 profile shows `execute_context_1(1152)`, and a 12,787-token prompt ran as 10 x 1152 + 1267.
+
+**Cause, measured.** The E5 microbench (`evidence/e5-final/microbench-largem/table.txt`: one rank, `glm53-sm121-v13` c9729cc0738f, checkpoint weights, CUDA-graph replay) times every target GEMM at prefill M. INT8 Marlin falls behind cuBLAS BF16 as M grows. The byte arithmetic (not a kernel trace) says it re-streams a weight that does not fit in L2 once per 64-row block. Per 1152-row chunk, count-weighted, BF16 costs 90.05 ms and INT8 210.54 ms: +120.5 ms, of which `kda_in` is +112.4 ms (93%). The LM head is faster in INT8 at the M it actually sees (-3.7 ms: logits at M = 1, the drafter's query block at M = 8). Net: +101.3 us per prefill token predicted, against +105 measured vs E3a and +92 vs E0. The Marlin GEMMs account for the whole loss.
+
+| Group (layers) | Per-rank N x K | ms per GEMM at M = 1152, BF16 / INT8 | INT8 / BF16 | Marlin gap per chunk | Dequant pass per chunk (est.) | Chunk if wrapped |
+|---|---|---|---|---|---|---|
+| `kda_in` (34) | 12576 x 4096 | 1.273 / 4.579 | 3.60x | +112.4 ms | 23.0 ms | **-89.4 ms** |
+| `kda_o` (34) | 4096 x 4096 | 0.458 / 0.555 | 1.21x | +3.3 ms | 7.5 ms | +4.2 ms |
+| `mla` (11) | `q_b` 8192 x 1536, `o` 4096 x 8192 | 0.361 / 0.490, 1.132 / 1.088 | 1.36x, 0.96x | +0.9 ms | 6.7 ms | +5.7 ms |
+| `shared` (42) | `gate_up` 2048 x 4096, `down` 4096 x 1024 | 0.221 / 0.276, 0.131 / 0.167 | 1.25x, 1.27x | +3.8 ms | 6.9 ms | +3.1 ms |
+| all four | | chunk 90.05 / 210.54 | 2.34x | +120.5 ms | 44.0 ms | -76.4 ms |
+
+- **Dequant pass (estimated, not yet measured).** The kernel reads the packed weight and writes BF16: 1 + 2/128 + 2 = 3.02 B/param for INT8 g128, at about 230 GB/s. `F.linear` then reads the BF16 workspace, which is the BF16 GEMM's own traffic, so the path costs BF16 plus the pass. For `kda_in` that is 0.68 ms per GEMM against a 3.31 ms Marlin gap at M = 1152.
+- **Only `kda_in` wins.** Every other group's Marlin gap is smaller than its dequant pass at M = 1152. At 2048 they still lose, by 0.1-1.1 ms per chunk. Wrapping all four recovers 76.4 ms per chunk, while `kda_in` alone recovers 89.4. That is why `GLM53_WQ_DEQUANT_GROUPS` defaults to `kda_in`.
+- **Expected gain.** `kda_in` alone saves 89.4 ms per 1152-token chunk, which is 77.6 us per prefill token. At 32k, E5's 842.7 us/token (1187 tok/s) would become about 765 us/token, or about 1305 tok/s (E0 1331), and TTFT at 128k would fall to about 100 s. At 205 GB/s the saving is 86.6 ms per chunk.
+- **Threshold.** The dequant pass costs the same at every M, while the Marlin gap grows with M. For `kda_in` the gap per GEMM is 0.43 ms at M = 256 (below the 0.68 ms pass, so the path loses), 2.81 ms at 1024 and 3.31 ms at 1152. The break-even is estimated at M ≈ 400-600. A straight line between the 256 and 1024 points crosses at about 330, but the gap is not measured in between. Full chunks are 1152 rows, so any threshold from the break-even up to 1152 recovers the full-chunk saving. The threshold only decides partial chunks and prompts shorter than one chunk. **512 is the suggested value after the GPU A/B. It is not the default:** `PREFILL_DEQUANT_MIN_M` stays `0` until step 2 below pins the break-even and a boot confirms the gain.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `GLM53_WQ_DEQUANT_MIN_M=<rows>` | unset | A swapped layer whose input has at least `<rows>` rows dequantizes its weight into a shared BF16 workspace and runs `F.linear` (cuBLAS) instead of the Marlin GEMM. Smaller inputs keep Marlin. Anything but a positive integer fails the boot. |
+| `GLM53_WQ_DEQUANT_MIN_M=<rows>` | unset | A wrapped layer whose input has at least `<rows>` rows dequantizes its weight into a shared BF16 workspace and runs `F.linear` (cuBLAS) instead of the Marlin GEMM. Smaller inputs keep Marlin. Anything but a positive integer fails the boot. |
+| `GLM53_WQ_DEQUANT_GROUPS=<groups>` | `kda_in` | Comma list of the groups whose swapped layers are wrapped (names as in the group variables). Other swapped layers keep Marlin at every M. The LM head is never wrapped, even when listed. An unknown name fails the boot with `ValueError`. Read only when `GLM53_WQ_DEQUANT_MIN_M` is set. |
 
-- **Setting it.** No recipe knob yet: `EXTRA_ENV='GLM53_WQ_DEQUANT_MIN_M=1024'`. It only acts on layers that a group variable swapped, and it needs v13 rebuilt from this branch.
-- **Off.** Unset or empty wraps nothing, allocates nothing and compiles no kernel. The serve runs exactly the F1 kernels.
-- **Which layers.** Every swapped layer except the LM head, whose input is the sampled rows only (at most `MAX_NUM_SEQS` x 8 = 16 at the defaults). In a prefill chunk, `kda_in`, `kda_o`, `mla`, `shared` and the drafter's `fc` run at full M. `fc` projects the context in `combine_hidden_states`, outside the drafter's graph. The drafter's other layers only ever see its query tokens (16 or fewer).
+- **Setting it.** Use the recipe knob `PREFILL_DEQUANT_MIN_M=<rows>` (default `0`, off). `run.sh` turns it into `GLM53_WQ_DEQUANT_MIN_M=<rows>` and `GLM53_WQ_DEQUANT_GROUPS=kda_in` on both ranks, forwards it to the worker, refuses anything but `0` or a positive integer, and refuses both variables in `EXTRA_ENV`. There is no groups knob, because the table above shows no other group winning. The path only acts on layers that a group variable swapped (`kda_in` is in the default `TARGET_WEIGHT_GROUPS_INT8`). It needs v13 rebuilt from this branch, because older v13 images ignore the groups variable and wrap every swapped layer.
+- **Off.** Unset or empty wraps nothing, allocates nothing, compiles no kernel and does not read `GLM53_WQ_DEQUANT_GROUPS`. The serve runs exactly the F1 kernels.
+- **Which layers.** The swapped layers of the listed groups, never the LM head, whose input is the sampled rows only (at most `MAX_NUM_SEQS` x 8 = 16 at the defaults). In a prefill chunk, `kda_in`, `kda_o`, `mla`, `shared` and the drafter's `fc` run at full M. `fc` projects the context in `combine_hidden_states`, outside the drafter's graph. The drafter's other layers only ever see its query tokens (16 or fewer). Listing `draft` wraps all 32 drafter layers, but only `fc` ever reaches the threshold.
 - **Dequant.** One Triton kernel reads the Marlin tensors in place and writes the (N, K) BF16 weight. It inverts `gptq_marlin_repack`'s 1024-element permutation (`get_weight_perm`) and `marlin_permute_scales`, plus the NVFP4 scale swap and the S0E5M3 code. No second copy of any packed weight is kept.
 - **Exact.** Each element is the fp32 q x scale rounded once to BF16 (nearest even):
   - INT8 / INT4: bit-equal to `dequantize_int`, and to the BF16 product that Marlin forms in registers, because grouped scales are applied in BF16 before the MMA.
@@ -607,7 +624,7 @@ E5 F1 ran the recipe defaults (INT8 target groups, NVFP4 drafter). Decode gained
   - NVFP4: bit-equal to `dequantize_nvfp4`, in its fp32 order e2m1 x (block scale x global scale). Marlin applies the global scale to its accumulator instead, so NVFP4 outputs differ from Marlin by rounding only.
   - Outputs differ from Marlin's by accumulation order only, like any other GEMM.
 - **TP and layer semantics.** `apply` returns the same per-rank (M, N) shard as Marlin, and the layer's own forward still does the all-reduce (row-parallel) or keeps the shard (column-parallel). `bias` goes to `F.linear` (swapped layers have none).
-- **Workspace.** One BF16 tensor per process, allocated at swap time and sized for the largest wrapped layer. Target only: `kda_in` 12576 x 4096 is 98.2 MiB. With the drafter swapped, `fc` 4096 x 20480 is 160.0 MiB: the drafter's swap frees the target's workspace and allocates the larger one. Each rank logs `GLM53_WQ_DEQUANT_MIN_M=<m>: <model> <n> layers dequantize at M >= <m>; shared BF16 workspace <x> MiB`, and `torch reserved` includes it. MemAvailable after ready should drop by about 160 MiB on both ranks (F1 spark1 9.9 GiB, F2 7.1 GiB; the F4 gate needs 9 GiB on spark1).
+- **Workspace.** One BF16 tensor per process, allocated at swap time and sized for the largest *wrapped* layer. Swapped layers that are not wrapped do not count. At the default groups (`kda_in`) that is `kda_in` 12576 x 4096 = 98.2 MiB per rank. The drafter wraps nothing then, so it logs no dequant line and leaves the workspace alone. Only with `draft` listed does the drafter's swap free that workspace and allocate one for `fc` 4096 x 20480 (160.0 MiB). Each rank logs `GLM53_WQ_DEQUANT_MIN_M=<m> (groups <groups>): <model> <n> layers dequantize at M >= <m>; shared BF16 workspace <x> MiB`, and `torch reserved` includes it. MemAvailable after ready should drop by about 98 MiB on both ranks (F1 spark1 9.9 GiB, F2 7.1 GiB; the F4 gate needs 9 GiB on spark1).
 - **Reuse is stream-ordered.** Layers use the workspace one after another. The one swapped layer that runs on a second stream is the shared expert, on the MoE aux stream at 256 rows or fewer (`VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD`). The aux stream waits for the main stream before it starts, and the main stream waits for it right after the launch. No other swapped layer runs in between.
 
 **CUDA graphs and compile (v11 facts; `test_v11_runs_large_m_eagerly` pins them).**
@@ -615,24 +632,9 @@ E5 F1 ran the recipe defaults (INT8 target groups, NVFP4 drafter). Decode gained
 - `config/vllm.py` auto-enables `VLLM_USE_BREAKABLE_CUDAGRAPH=1` for `Glm5Next*` (`run.sh` leaves it unset), and then sets the compilation mode to NONE. So neither the target nor the drafter is `torch.compile`d, and `gpu_model_runner` wraps both in `BreakableCUDAGraphWrapper`.
 - `run.sh` captures 1, 2, 4, 8 and 16 tokens. `CudagraphDispatcher.dispatch` returns NONE for more than 16 tokens, and the wrapper then runs the model eagerly. Every prefill chunk above 16 tokens, mixed with decode or not, is eager, and the branch sees its real M.
 - 16 tokens or fewer, mixed batches included, pad to the next capture size and replay: the FULL key if one exists, else the relaxed PIECEWISE key. Breakable capture builds the same artifact for both. The linears see the padded size at capture and at replay, so the branch is constant per graph. With a threshold above 16, captured steps always run Marlin. A threshold of 16 or less would capture the dequant path into decode graphs, which is correct but slow.
-- With `VLLM_USE_BREAKABLE_CUDAGRAPH=0` the drafter is compiled. The wrapper takes the Marlin path whenever `torch.compiler.is_compiling()`, so a compiled graph never branches on a symbolic row count, and the variable stays out of the compile-cache key.
+- With `VLLM_USE_BREAKABLE_CUDAGRAPH=0` the drafter is compiled. The wrapper takes the Marlin path whenever `torch.compiler.is_compiling()`, so a compiled graph never branches on a symbolic row count, and neither variable joins the compile-cache key.
 
-**Cost model (one 2048-token chunk, per rank).**
-
-| Layers at full M | Params per rank | Dequant traffic (read packed + write BF16) | at 230 GB/s |
-|---|---|---|---|
-| `kda_in` 34 x 12576 x 4096 | 1.751e9 | | |
-| `kda_o` 34 x 4096 x 4096 | 0.570e9 | | |
-| `mla` 11 x (8192 x 1536 + 4096 x 8192) | 0.508e9 | | |
-| `shared` 42 x (2048 x 4096 + 4096 x 1024) | 0.528e9 | | |
-| target, INT8 g128 (1 + 2/128 + 2 = 3.02 B/param) | 3.358e9 | 10.13 GB | 44.0 ms |
-| drafter `fc`, NVFP4 (0.5 + 1/16 + 2 = 2.56 B/param) | 0.084e9 | 0.21 GB | 0.9 ms |
-| total | 3.44e9 | 10.34 GB | 45 ms (50 ms at 205 GB/s) |
-
-- `F.linear` then reads the BF16 workspace, which is the same weight traffic as E0's BF16 GEMM. Against E0, the path costs only the dequant pass, D ≈ 45-50 ms per chunk. The LM head (read twice per step) and the drafter's small-M layers are not in the chunk.
-- **Pays off iff G > D**, where G is the count-weighted Marlin - cuBLAS gap at the chunk's M. The chunk saves G - D. If all of the observed 178 ms is G, the path recovers about 130 ms: about 1585 ms per chunk, or about 1290 tok/s (97% of E0). If G is under about 50 ms, the slowdown is not Marlin, and the path makes prefill slower.
-- **Threshold.** The dequant cost is fixed per call, and the gap grows with M. While both GEMMs are compute-bound, t_dq / t_cuBLAS ≈ 3.02 F / (2 M BW), whatever the layer's shape, where F is cuBLAS's achieved BF16 FLOP/s. With Marlin at r times cuBLAS, the break-even is M* ≈ 3.02 F / (2 BW (r - 1)): at F = 100 TFLOP/s and BW = 230 GB/s, M* ≈ 660 for r = 2 and ≈ 1300 for r = 1.5. At M = 256 the path is unlikely to win: it moves at least 5 B/param (dequant plus the BF16 read), and Marlin moves about 1 B/param near its compute limit. Full chunks are 2048 tokens minus the 16 or fewer decode tokens mixed in, so any threshold up to 2032 catches them. Take the smallest M at which the bench's chunk line shows a saving; 1024 is the likely value.
-- **Overheads.** Each chunk adds 175 Triton launches (174 target layers and the drafter's `fc`). An eager prefill chunk is GPU-bound at about 1.5 s, so the launches overlap the GPU work.
+**Overheads.** At the default groups each prefill chunk adds 34 Triton launches, one per `kda_in` layer. An eager prefill chunk is GPU-bound at about 1 s (the F3 profile's chunk took 1002 ms), so the launches overlap the GPU work.
 
 **GPU validation (exclusive TP = 2 slot).**
 
@@ -643,13 +645,16 @@ E5 F1 ran the recipe defaults (INT8 target groups, NVFP4 drafter). Decode gained
    docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \
      -v ~/.cache/huggingface:/hf:ro -e HF_HUB_CACHE=/hf/hub \
      glm53-sm121-v13 tools/bench_fp8_marlin.py --dequant \
-     --groups kda_in,kda_o,mla,shared,draft --json evidence/<run>/dq-bench.json
+     --groups kda_in,kda_o,mla,shared,draft --m 256,384,512,640,768,1024,1152 \
+     --json evidence/<run>/dq-bench.json
    ```
 
    - PASS needs every dequantized weight to equal its reference dequant in BF16. This is the layout check against the real `gptq_marlin_repack`, which the CPU tests can only check against vLLM's Python reference. A Triton compile error here means the kernel does not build on sm_121, so stop there.
-   - Read the `one prefill chunk per rank` lines. `int8: dq` should be about 44 ms (about 230 GB/s). `saves` at M = 2048 is G - D for the target groups. Boot only if it is clearly positive, about 50 ms or more. Pick the threshold as described above.
-3. Boot the recipe defaults with `EXTRA_ENV='GLM53_WQ_DEQUANT_MIN_M=<M>'`. Both ranks log the dequant line twice: the target with 174 layers and 98.2 MiB, then the drafter with 32 layers and 160.0 MiB. Log `free -h` at ready: spark1 must keep 9 GiB or more for F4.
-4. Cell E at 32k and 128k. Prefill tok/s should move from F1's 1193 / 1191 toward E0's 1331 / 1329, with a ceiling of about E0 minus the dequant pass (about 1290). TTFT at 128k should fall from 109.7 s.
+   - Read the per-GEMM rows. For `kda_in`, `int8 dq` should be about 675 us (230 GB/s). The smallest M at which `int8 dq+linear` beats the `int8` Marlin time is the break-even. Set the threshold at or just above it: 512 if the break-even is 512 or lower.
+   - The other groups' rows should show `dq+linear` slower than Marlin at 1152, as in the table above. A group that wins clearly there is a case for adding it to `GLM53_WQ_DEQUANT_GROUPS`, which would then need a knob.
+   - The `one prefill chunk per rank` line sums every benched group, so it describes the all-groups wrapper. For the default wrapper, rerun with `--groups kda_in`. Its `int8:` `saves` at M = 1152 should be about 89 ms. Boot only if it is clearly positive.
+3. Boot the recipe defaults with `PREFILL_DEQUANT_MIN_M=<M>` (512 unless step 2 moves it). `VALIDATE_ONLY=1` shows `GLM53_WQ_DEQUANT_MIN_M=<M> GLM53_WQ_DEQUANT_GROUPS=kda_in` in `glm53_env`. Each rank logs one dequant line, `GLM53_WQ_DEQUANT_MIN_M=<M> (groups kda_in): Glm5NextForConditionalGeneration 34 layers dequantize at M >= <M>; shared BF16 workspace 98.2 MiB`, and none for the drafter. Log `free -h` at ready: spark1 must keep 9 GiB or more for F4.
+4. Cell E at 32k and 128k. Prefill tok/s should move from F's 1164-1199 toward about 1305 (E0 1331 / 1329, E3a 1355 / 1353). TTFT at 128k should fall from 109.7 s toward about 100 s.
 5. Decode fast gate (`bench_decode.py` fast gate twice, `kit/compare.py` against F1). It must be unchanged within the cross-boot band, because captured steps never take the path.
 6. Tier 0, `quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8`, judged against the F1 / E4 cross-boot limits. The layers compute the same product with the same weights, so only prefill reduction-order noise may move it. Count-200 must stay lossless, the thinking-off smoke must pass, and needle 8k / 32k must pass.
-7. Keep it only if cell E beats noise and nothing else regresses. Otherwise leave it unset. Record the result in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`.
+7. Keep it only if cell E beats noise and nothing else regresses. Then set `PREFILL_DEQUANT_MIN_M` in `recipe.yaml` and run `python3 kit/render.py`. Otherwise leave it at `0`. Record the result in `evidence/<run>/notes.txt`, `evidence/trail.tsv` and `evidence/decision.tsv`.

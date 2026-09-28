@@ -8,7 +8,7 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 
 - `recipe.yaml` is the source of truth for pins and generated blocks. Edit it, then `python3 kit/render.py`. Do not hand-edit `# BEGIN generated` or `<!-- BEGIN generated` blocks.
 - Change one knob at a time against `python3 bench_decode.py`. Revert if it does not beat noise or it regresses another cell. Record the revert in `evidence/` (`trail.tsv`, `decision.tsv`).
-- The v13 switches are recipe knobs: `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `KPOOL_TAIL_FIX`, `ADAPTIVE_VERIFY`, `ADAPTIVE_VERIFY_TAU`. Change their defaults in `recipe.yaml`, or set one per boot as env. `run.sh` turns them into `GLM53_*` env on both ranks; do not set those variables through `EXTRA_ENV`. Other `GLM53_*` switches still go through `EXTRA_ENV`. `VALIDATE_ONLY=1 ./run.sh` prints every `GLM53_*` the containers get (`==> glm53_env:`).
+- The v13 switches are recipe knobs: `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `PREFILL_DEQUANT_MIN_M`, `KPOOL_TAIL_FIX`, `ADAPTIVE_VERIFY`, `ADAPTIVE_VERIFY_TAU`. Change their defaults in `recipe.yaml`, or set one per boot as env. `run.sh` turns them into `GLM53_*` env on both ranks; do not set those variables through `EXTRA_ENV`. Other `GLM53_*` switches still go through `EXTRA_ENV`. `VALIDATE_ONLY=1 ./run.sh` prints every `GLM53_*` the containers get (`==> glm53_env:`).
 - Read unified memory with `free -h`. Never `nvidia-smi` VRAM.
 - Exclusive GPUs. Do not start this while another `--gpus all` serve is up.
 - Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `enp1s0f1np1` / `rocep1s0f1`.
@@ -34,8 +34,8 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 - `EXTRA_ENV` with `FLASHINFER_JIT_VERBOSE=1` unless it also sets `FLASHINFER_JIT_DEBUG=0`. This image's FlashInfer reads verbose as debug when debug is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel builds `-O0 --device-debug`; on 2026-09-27 that pushed spark1 under the PROFILE floor.
 - Any v13 knob that is on while `IMAGE` is not a `glm53-sm121-v13*` tag, unless `FORCE_UNSAFE_IMAGE=1`. Older images ignore `GLM53_*`.
 - `ADAPTIVE_VERIFY=1` with any `SPEC` but `dflash2`. The verify width comes from DFlash2's selector scores.
-- `TARGET_WEIGHT_GROUPS_INT8` with `draft` (`DRAFT_WEIGHTS` owns the drafter) or a name outside `patch_v13_fp8.py`'s groups; `DRAFT_WEIGHTS` other than `bf16` / `nvfp4`; `KPOOL_TAIL_FIX` or `ADAPTIVE_VERIFY` other than `0` / `1`; `ADAPTIVE_VERIFY_TAU` that is not a decimal strictly between 0 and 1.
-- `EXTRA_ENV` setting a knob's variable: `GLM53_NVFP4_W4A16`, `GLM53_INT8_W8A16`, `GLM53_KPOOL_TAIL_FIX`, `GLM53_ADAPTIVE_VERIFY`, `GLM53_ADAPTIVE_VERIFY_TAU`.
+- `TARGET_WEIGHT_GROUPS_INT8` with `draft` (`DRAFT_WEIGHTS` owns the drafter) or a name outside `patch_v13_fp8.py`'s groups; `DRAFT_WEIGHTS` other than `bf16` / `nvfp4`; `PREFILL_DEQUANT_MIN_M` that is not `0` or a positive integer; `KPOOL_TAIL_FIX` or `ADAPTIVE_VERIFY` other than `0` / `1`; `ADAPTIVE_VERIFY_TAU` that is not a decimal strictly between 0 and 1.
+- `EXTRA_ENV` setting a knob's variable: `GLM53_NVFP4_W4A16`, `GLM53_INT8_W8A16`, `GLM53_WQ_DEQUANT_MIN_M`, `GLM53_WQ_DEQUANT_GROUPS`, `GLM53_KPOOL_TAIL_FIX`, `GLM53_ADAPTIVE_VERIFY`, `GLM53_ADAPTIVE_VERIFY_TAU`.
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
 
