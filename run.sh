@@ -76,17 +76,18 @@ JIT_CACHE="${JIT_CACHE:-1}"
 JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # v13 switches (docker/README-v13.md). Each one that is on becomes GLM53_* env on
 # both ranks, and needs a glm53-sm121-v13 image. Off adds nothing. v11 rollback:
-# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
 # DRAFT_WEIGHTS: bf16, or nvfp4 for the DFlash2 drafter's linears in NVFP4 W4A16
 # (GLM53_NVFP4_W4A16=draft). E2e: the target is untouched, step A -4 ms, Tier 1
 # 856 vs 857 of 1010.
 DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-nvfp4}"
 # Comma list of target groups in INT8 W8A16 (GLM53_INT8_W8A16): shared, mla,
-# kda_o, kda_in, lm_head. Empty keeps them BF16 (E4 measures INT8).
+# kda_o, kda_in, lm_head. none keeps them BF16. E4a over E3b: step A -17 ms,
+# prose A +24.9%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010.
 TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,lm_head}"
 # Rows at or above which the swapped kda_in GEMM dequantizes to BF16 and runs
 # cuBLAS instead of Marlin (GLM53_WQ_DEQUANT_MIN_M, GLM53_WQ_DEQUANT_GROUPS=kda_in).
-# 0 is off. Keep it above the largest capture size (16), or decode dequantizes too.
+# 0 is off. Values below 64 are refused: they would reach the captured decode graphs.
 # E5: INT8 Marlin kda_in is 3.6x BF16 at the 1152-row prefill chunk, 93% of the
 # -11% prefill. 512 is the candidate once a GPU A/B confirms it.
 PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-0}"
@@ -97,6 +98,7 @@ KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # 1: verify only the leading drafts whose running DFlash2 confidence is at least
 # ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU). Lossless.
 # E3b at 0.2 vs E3a: prose A +14.9%, H +20.0%, B +5.3%, T +10.1%, J flat.
+# E4b at 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%.
 ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
 ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.3}"
 # END generated
@@ -215,6 +217,11 @@ for group in "${int8_groups[@]}"; do
 done
 if [[ ! "$PREFILL_DEQUANT_MIN_M" =~ ^(0|[1-9][0-9]*)$ ]]; then
   echo "PREFILL_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M: want a positive integer (rows), or 0 for off." >&2
+  exit 1
+fi
+# Capture sizes reach 16 (24 on the four-way rollback); keep dequant out of decode graphs.
+if (( PREFILL_DEQUANT_MIN_M != 0 && PREFILL_DEQUANT_MIN_M < 64 )); then
+  echo "PREFILL_DEQUANT_MIN_M=$PREFILL_DEQUANT_MIN_M is below 64 and would dequantize inside captured decode steps. Use 0 (off) or at least 64." >&2
   exit 1
 fi
 if [[ "$KPOOL_TAIL_FIX" != 0 && "$KPOOL_TAIL_FIX" != 1 ]]; then

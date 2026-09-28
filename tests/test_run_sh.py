@@ -285,6 +285,7 @@ class V13Knobs(RunShCase):
                   for tau in ("0", "0.0", "1", "1.0", "1.5", "-0.2", "1e-9", ".", "0.2.1", "abc")]
         cases += [("PREFILL_DEQUANT_MIN_M", m, f"PREFILL_DEQUANT_MIN_M={m}: want a positive integer")
                   for m in ("-1", "-512", "512.0", "1e3", "abc", "0512", "512 ", "0x200", "off")]
+        cases += [("PREFILL_DEQUANT_MIN_M", m, "below 64") for m in ("1", "16", "24", "63")]
         for name, value, needle in cases:
             with self.subTest(name=name, value=value):
                 self.assertRefused(self.run_sh(**self.V13, **{name: value}), needle)
@@ -322,7 +323,7 @@ class V13Knobs(RunShCase):
                 self.assertAccepted(proc)
                 self.assertFalse([e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")])
                 self.assertIn("PREFILL_DEQUANT_MIN_M=0", shell_words(worker_command(proc.stdout)))
-        for rows in ("1", "512", "1024"):
+        for rows in ("64", "512", "1024"):
             with self.subTest(rows=rows):
                 proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M=rows)
                 self.assertAccepted(proc)
