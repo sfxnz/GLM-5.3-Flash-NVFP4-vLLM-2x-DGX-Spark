@@ -21,11 +21,41 @@ A request that omits sampling params is served at `generation_config.json`'s T=1
 | prose | 2 | 20.69 | 39.43 | 0.36 s | 105.3 | 2.18 |
 <!-- END generated measured -->
 
-Default occupancy is the trained DFlash2 block (7 draft slots) at two sequences. Structured is the occupancy ruler (50.7 → 68.1 at c=1 versus DFlash2-5 / four sequences). Prose now stops near the requested eighty words (~105 tokens) once thinking-off seeds `<think></think>`, so it is no longer a 200-token pad. `MAX_NUM_SEQS=3` at DFlash2-7 does not starve the third stream, but structured c=2 fell 59.5 → 50.7. Four-way admission needs the rollback `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4`. CUDA graphs capture 1/2/4 plus 8/16 (verify shapes for 1–2 sequences). `ENFORCE_EAGER=1` is the rollback; it slowed structured c=1 68.1 → 65.0. Adding capture size 3 to the ladder was inside noise. Capture size 24 at two sequences was unused and stayed inside noise. `VLLM_USE_BREAKABLE_CUDAGRAPH=0` slowed structured c=2 59.7 → 52.1. Leave the engine auto-on. Async scheduling is already on: this vLLM auto-enables it for DFlash with the `mp` executor, so passing `--async-scheduling` was a no-op and every cell stayed inside noise. Do not pass `--no-async-scheduling`. Greedy count stays lossless: 200 consecutive integers with thinking off. `MAX_NUM_BATCHED_TOKENS=4096` was measured at two sequences and reverted (structured c=2 55.5 → 51.6, KV pool 372877 → 363476). Tony's 3.0 GiB KV pin cannot boot `--max-model-len` 327680 (vLLM wants 3.62 GiB). The displayed 3.62 GiB pin (3886945403) still estimates max len 327168 and refuses. A 4.0 GiB pin boots but structured c=2 fell 59.5 → 52.4.
+### From E0 to the defaults
 
-MTP-4 (eager, 262144 context) measured 24.7 / 20.9 / 16.6 per stream prose. A unique-salt 8k-word needle prefilled at 1425 tok/s (TTFT 7.2 s, 10271 prompt tokens). Repeating an 8k prompt hit prefix cache (1427 → 2600 tok/s, 4608 cached tokens = two 2304-token blocks). A 318,123-token prompt (97% of the 327680 window) prefilled in 4m05s and answered a needle question exactly. First wave after restart pays Triton JIT per batch shape; warm waves sit at 0.23–0.65 s TTFT. A first concurrent structured wave on this boot can median ~52 tok/s while `VLLM::Worker_TP0` has ~1.3 GiB in swap (host `vm.swappiness=60`, 6.1 GiB swap used). This table is a second frozen wave after those pages faulted in. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo. `python3 bench_decode.py --cells K` reruns this table's prose prompt at c=1,2. The fp8 hybrid pool on this pin is 372,877 tokens (1.14× at 327,680).
+E0 is the nvidia pack on `glm53-sm121-v11` with DFlash2-7 and no v13 patches ([`evidence/e0-nvidia-v11/SUMMARY.md`](evidence/e0-nvidia-v11/SUMMARY.md)). Each lever below got its own boot and was judged by `kit/compare.py` and Tier 0. The numbers are single-boot deltas against the previous stage (E2e: against E0).
 
-Receipts for these numbers are in [`evidence/`](evidence/): `trail.tsv` and `decision.tsv` (what was tried, kept, reverted), `hypotheses.md`, and per-iteration `bench.txt` / `run.log` / `doctor.txt`.
+- **JIT cache** (E1b): a warm per-image cache cut ready time from 21.2 to 16.3 min and init engine from 333 to 46 s, with no compiler process at boot ([notes](evidence/e1b-v13-warmcache-draft-bf582e4/notes.txt)).
+- **NVFP4 drafter** (E2e, `DRAFT_WEIGHTS=nvfp4`): step A −4 ms, A +2.3% [+0.6, +4.1]. The target verifies every draft, so output is unchanged ([notes](evidence/e2e-nvfp4-draft-only/notes.txt)).
+- **kpool tail fix** (E3a, `KPOOL_TAIL_FIX=1`): a correctness fix, not a speed lever. Rejected drafts and the other request no longer write committed indexer pool keys. Needles pass 3/3 at 8k, 32k and 128k, and step time stays within noise ([notes](evidence/e3a-kpool-det/notes.txt)).
+- **Adaptive verify** (E3b, E4b, `ADAPTIVE_VERIFY=1`): verify only the drafts DFlash2 is confident in, at fixed shapes. tau 0.2 against off: A +14.9% [+13.5, +16.3], H +20.0%, code B +5.3%. tau 0.3 against 0.2: A +5.2%, H +8.0%, B +4.3% ([E3b](evidence/e3b-av-tau0.2/notes.txt), [E4b](evidence/e4b-int8-tau0.3/notes.txt)).
+- **INT8 target groups** (E4a, `TARGET_WEIGHT_GROUPS_INT8`): INT8 W8A16 g128 on `shared`, `mla`, `kda_o`, `kda_in` and `lm_head`. Step A −17 ms, A +24.9% [+23.8, +26.1], B +21.1%, H +13.4% ([notes](evidence/e4a-int8/notes.txt)).
+
+Across the three final boots, step A fell 36.5% against E0 and acceptance fell 3.2%, because adaptive verify trims drafts ([`compare-f12g2-vs-e0.txt`](evidence/e6-prefill/compare-f12g2-vs-e0.txt)).
+
+### Quality
+
+Tier 1 (1,010 items, greedy) scored 863 on the INT8 defaults (E4a) against E0's 857: pooled +0.59 points [−0.86, +2.05], PASS. Adaptive verify is lossless, so tau 0.3 keeps that result ([E4a notes](evidence/e4a-int8/notes.txt)). Tier 0 on F1 sits inside the cross-boot A/A limits: |dNLL| 0.00046 (limit 0.005), top-1 98.14% (limit 97.83%), KL top-20 6.63e-3 (limit 6.86e-3, a thin margin) and greedy hazard 0.0135 (limit 0.0192) ([E5 notes](evidence/e5-final/notes.txt)). Count-200 is lossless and thinking-off leaks no chain-of-thought on every final boot. The utf8-table probe fails most runs on every boot, E0 included, and E0's video answer sits on a model decision boundary.
+
+### Known trade-off: long-context prefill
+
+Long prompts prefill about 10.5% slower than on E0. G2 prefilled 1192 / 1190 tok/s at 32k / 128k against E0's 1331 / 1329, and TTFT at 128k rose from 98.4 s to 109.8 s ([`prefill-table.txt`](evidence/e6-prefill/prefill-table.txt)). The INT8 Marlin GEMMs cause it: at the 1152-row prefill chunk INT8 `kda_in` runs 3.6x slower than BF16 and carries 93% of the loss ([E5 notes](evidence/e5-final/notes.txt)).
+
+`PREFILL_DEQUANT_MIN_M=512` is an opt-in partial fix. Prefill inputs of 512 rows or more dequantize `kda_in` to BF16 and run cuBLAS. E6 measured +9.5% at a 7k prompt, but only +6.4% / +3.5% at 32k / 128k on the planned panels (+1.0% / +2.0% over all five). That misses the +5% keep rule at 128k, so the default stays `0` ([E6 notes](evidence/e6-prefill/notes.txt)).
+
+### Tried and reverted
+
+- FP8 and NVFP4 on the target groups failed Tier 0 on KL (E2a-E2d). The drafter alone in NVFP4 passed (E2e).
+- DFlash2 `bf582e4` (same config, new weights) showed no acceptance gain over the `7d74cdd` pin (E1b).
+- The head shard warmer showed no gain: the head weight load took 715-721 s with it (E1a, E1b) and 686 s without (E0). It was removed.
+- `GLM53_DETERMINISTIC_MLA_INDEX` changed nothing measurable (E3a). It was removed from the image.
+- `PREFILL_DEQUANT_MIN_M=512` as a default (E6, above).
+
+Every row is in [`evidence/decision.tsv`](evidence/decision.tsv), with the run log in [`evidence/trail.tsv`](evidence/trail.tsv). To reproduce the numbers, see Repeat the decode bench.
+
+### Occupancy
+
+The occupancy settings come from the 2026-08/09 tuning on the LibertAI pin (receipts in `evidence/`). The default is DFlash2-7 at two sequences; `NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` is the four-way rollback. CUDA graphs capture 1/2/4 plus 8/16, the verify shapes for 1-2 sequences. `ENFORCE_EAGER=1` and `VLLM_USE_BREAKABLE_CUDAGRAPH=0` were both slower; leave the breakable graphs on auto. This vLLM auto-enables async scheduling for DFlash with the `mp` executor, so do not pass `--no-async-scheduling`. `MAX_NUM_BATCHED_TOKENS=4096` was reverted: structured c=2 was slower and the KV pool smaller. A 3.0 GiB KV pin cannot hold 327680 (vLLM wants 3.62 GiB), and a 4.0 GiB pin was slower on structured c=2, so the pin is 4.14 GiB. `run.sh` already calls `maybe_drop_caches`; it no-ops without passwordless sudo.
 
 ## Requirements
 
@@ -101,7 +131,7 @@ chmod +x run.sh stop.sh
 ./run.sh
 ```
 
-The head script copies itself to `spark2`, starts the worker, waits 25s, then starts rank 0. First boot is weight load plus warmup. About 15–20 minutes when the cache is warm.
+The head script copies itself to `spark2`, starts the worker, waits 25s, then starts rank 0. A boot is weight load plus warmup. With a warm JIT cache the final boots were ready in 15–17 minutes (E5, E6). The first boot on a new image also compiles its kernels and took 21 minutes (E1a, E6 G1).
 
 If SSH is not set up, start the worker yourself, then the head:
 
@@ -172,13 +202,13 @@ Stop both ranks from the head:
 | API | `http://<head>:8000/v1` |
 <!-- END generated defaults -->
 
-The v13 rows cite one boot each: E2e (`evidence/e2e-nvfp4-draft-only/notes.txt`), E3a (`evidence/e3a-kpool-det/notes.txt`) and E3b (`evidence/e3b-av-tau0.2/notes.txt`). E3a and E3b also ran `GLM53_DETERMINISTIC_MLA_INDEX=1`, which was later dropped from the image because it changed nothing measurable (`evidence/decision.tsv`, `e3a-det-index-remove`). To A/B one switch, set only that knob to its off value.
+The v13 rows cite one boot each: E2e (`evidence/e2e-nvfp4-draft-only/notes.txt`), E3a (`evidence/e3a-kpool-det/notes.txt`), E3b (`evidence/e3b-av-tau0.2/notes.txt`), E4a (`evidence/e4a-int8/notes.txt`), E4b (`evidence/e4b-int8-tau0.3/notes.txt`) and E6 (`evidence/e6-prefill/notes.txt`). The measured table is the combined defaults on three boots. E3a and E3b also ran `GLM53_DETERMINISTIC_MLA_INDEX=1`, which was later dropped from the image because it changed nothing measurable (`evidence/decision.tsv`, `e3a-det-index-remove`). To A/B one switch, set only that knob to its off value.
 
 The official NVIDIA pack is W4A4 on experts and dense MLP. `--moe-backend` covers only the routed experts; the layer 0-2 dense MLP goes through `--linear-backend`. With `--linear-backend auto` vLLM picks a FlashInfer FP4 GEMM on sm_121 that JIT-compiles during the first profile forward, so `run.sh` pins `LINEAR_BACKEND=marlin` and refuses other values unless `FORCE_UNSAFE_LINEAR=1`. Both ranks should log `Using MarlinNvFp4LinearKernel for NVFP4 GEMM`. Marlin dequantizes weights and never reads an activation `input_scale`, so this pin is a weight-layout + dense-MLP change until an SM121 W4A4 MoE path exists that does not JIT-OOM. `flashinfer_cutlass` is not that path on 2× GB10. v11 dies at JIT (`nvrtc.h` missing). v12 with `cuda-nvrtc-dev-13-0` got past that and then global-OOM'd spark2 during `cudafe++` after 90.67 GiB weights (`NV_ERR_NO_MEMORY`, ~18 GiB left). `run.sh` refuses any `MOE_BACKEND` other than `marlin` unless `FORCE_UNSAFE_MOE=1`. Do not set `VLLM_GLM53_MOE_INPUT_SCALE=1.0`. That constant underflows per 16-element block. LibertAI's GB10 recipe ([glm53-flash-vllm-gb10](https://github.com/Libertai/glm53-flash-vllm-gb10)) is MTP-3, eager, 64K, about 24 tok/s. It is a different stack from this DFlash2-7 / graphs / 327680 bar. Rollback to that pack: `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177`.
 
 `--kv-cache-memory 4445787956` stays the pin on TP=2. Dropping it OOMs GB10 (`NV_ERR_NO_MEMORY`). Raising it boots but backfires under UMA pressure: 5.0 GiB slowed decode ~20% at every concurrency, 5.14 GiB crashed under concurrent load. Two concurrent 20k-word needles (Tony's three-way 20k shape, at two sequences) and two concurrent 64k-word needles (~98k prompt tokens each) returned `hit=1` with docker `OOMKilled=false`. `MemAvailable` stayed about 8 GiB. Tony's anti-oom kill was three sequences at this pin. Occupancy gate: `python3 .cursor/skills/verify-glm53-flash/scripts/needle_probe.py --prompt-tokens 20480 --concurrency 2`. Do not turn on InstantTensor. That loader killed TP=2 ranks here.
 
-Native `max_position_embeddings` is 1,048,576. This pin yields a 372,877-token fp8 hybrid pool at DFlash2-7 (1.14× at 327,680; it was 400,497 / 1.22× at DFlash2-5). A 1M request needs ~8.2 GiB of this `fp8_e4m3` hybrid layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Official NVIDIA KV is still `kv_fp8_cast`. Packed `nvfp4_ds_mla` is the published 2× GB10 path that actually needles 1M. It is a different occupancy lane (different attention backend and image), and it measured ~22 tok/s prose versus 28 here. This recipe does not advertise a 1M window on the fp8 pin.
+Native `max_position_embeddings` is 1,048,576. This pin yields a 372,877-token fp8 hybrid pool at DFlash2-7 (1.14× at 327,680; it was 400,497 / 1.22× at DFlash2-5). A 1M request needs ~8.2 GiB of this `fp8_e4m3` hybrid layout. That is above the UMA crash point, so `run.sh` refuses `--max-model-len` above 327,680 on `fp8_e4m3` unless `FORCE_UNSAFE_CTX=1`. Official NVIDIA KV is still `kv_fp8_cast`. Packed `nvfp4_ds_mla` is the published 2× GB10 path that actually needles 1M. It is a different occupancy lane (different attention backend and image), and its public result decodes ~22 tok/s prose (not measured on this ruler). This recipe does not advertise a 1M window on the fp8 pin.
 
 `chat_template.jinja` honors `enable_thinking`. The stock Hugging Face template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. Thinking off now seeds an empty `<think></think>` so a Hermes-style tool follow-up does not prefix `</think>` onto `content`. Do not swap in the Hub template. `thinking` is an alias with the same rule as vLLM's `glm45` reasoning parser: thinking is on when both kwargs are unset, otherwise when either is true. Before this, `{"thinking": true}` against the server default `enable_thinking: false` rendered `<think></think>` while the parser waited for `</think>`, so the whole answer landed in `reasoning` and `content` came back empty. `python3 -m unittest discover -s tests` checks the kwarg matrix and that the template differs from the Hub copy in `tests/data/` only in the generation prompt.
 
@@ -234,6 +264,21 @@ python3 kit/compare.py --a A1/bench.json A2/bench.json --b B1/bench.json B2/benc
 The published score is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off, c=1. Every wave reports `acceptance_len`, `step_ms` and tok/s from `/metrics` deltas. Cell K reruns the old ~98-token prose prompt for continuity. Cell T (`--full` or `--cells T`) sends A's prompts with thinking on (`enable_thinking: true`, no `reasoning_effort`, so Max effort), the regime upstream DFlash2 was trained and benchmarked in (acceptance 4-5.8 on GSM8K / MT-Bench). Its 512 forced tokens count reasoning + content, and TTFT ends at the first reasoning or content token. T is not a published score. A cell is INVALID if swap use grows more than 64 MiB while it runs. The bench exits 1 on any failed or short request, INVALID cell, or unreadable meminfo, and rewrites `DIR/bench.json` after every cell.
 
 `kit/compare.py` uses the serve boot as the sample, not the `bench.json` file. `bench.json` records the boot as `boot_id` (the API server's `process_start_time_seconds`). Older files are grouped by their `evidence/<boot>/bench-N/` directory. Panels from one boot are averaged first. With 2 or more boots per arm it prints KEEP, REVERT or INCONCLUSIVE per cell. With one boot in an arm, the only interval is the within-boot one from same-boot panels, which cannot see boot-to-boot variance. The verdict is then `INCONCLUSIVE(single-boot)` unless that interval clears the ±4% cross-boot band (`--boot-band`). On the same code path, E1a moved tok/s by up to 3.7% against E0 (`evidence/e1a-v13-off/notes.txt`). The old per-file rule called that a REVERT. For a verdict, run 2 boots per arm, ABAB.
+
+The published rows and their E0 deltas rebuild from the evidence files. This prints `evidence/e6-prefill/compare-f12g2-vs-e0.txt` exactly:
+
+```bash
+python3 kit/compare.py --a evidence/e0-nvidia-v11/bench-*/bench.json \
+  --b evidence/e5-final/f1/bench-[12]/bench.json evidence/e5-final/f2b/bench-[12]/bench.json evidence/e6-prefill/g2/bench-[12]/bench.json
+```
+
+Quality runs against a live serve ([`quality/README.md`](quality/README.md)). The Tier 0 reference `nvidia-v11-k7` and E0's Tier 1 run are in `~/projects/data/glm53-evals/`:
+
+```bash
+python3 quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8   # ~15 min; judge nll and KL against the cross-boot A/A (docker/README-v13.md)
+python3 quality/tier1.py run --out RUN.jsonl --label NAME           # ~2.75 h, 1,010 items, greedy
+python3 quality/compare_tier1.py ~/projects/data/glm53-evals/tier1/nvidia-v11-k7/tier1.jsonl RUN.jsonl
+```
 
 ## Logs
 
