@@ -1,0 +1,31 @@
+E4 build: glm53-sm121-v13 with the five patch layers now in HEAD (misc, fp8 [FP8/NVFP4 + INT8/INT4 + _compact swap
+compaction], census, verify, kpool_tail). The determinism layer is gone (23dbcf4).
+
+stop E3b  04:50:41Z..04:50:55Z: SERVING watcher 3197287 killed, ./stop.sh rc=0 (stop-e3b.log). After: no glm53 container on
+          either node, MemAvailable 116.7 / 116.9 GiB, no GPU compute process and no leftover uma_watch / bench / tier
+          process on either node (stop-e3b-after.txt). conduit untouched; the exited dsv41-exl3-nfs container untouched.
+old image tagged glm53-sm121-v13-e3 on both nodes: sha256:56c6084f422c4ab3ac20c0b56fe826b3c01e5dbe933c65360b17e97a225a6359
+build     spark1 04:51:43Z..04:51:46Z, git 9c2cbef, tracked tree clean, only the new evidence dirs untracked (git-head.txt has the patch hashes)
+          docker build --no-cache --progress=plain -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker
+          (../e4-tools/build.sh; build-spark1.log)
+          misc         "v13 misc patches applied (8 files written)": model.py 3/3, indexer.py 2/2, kernel_warmup.py 1/1,
+                       fused_recurrent.py 4/4, kda.py 6/6, ep_weight_filter.py 2/2, kv_cache_coordinator.py 4/4 + mhc warmup
+          fp8          "patch_v13_fp8: 3 file(s) written"
+          census       "v13 census patch applied (2 files written)": gpu/model_runner.py 4/4 + glm53_expert_census.py
+          verify       "v13 verify patch applied (5 files written)": base_router.py 2/2, rejection_sampler.py 2/2,
+                       gpu/model_runner.py 3/3, indexer.py 2/2 + glm53_adaptive_verify.py
+          kpool_tail   "v13 kpool tail patch applied (3 files written)": kpool_compress.py 12/12, attention.py 1/1,
+                       indexer.py 5/5
+          12 build steps; every edit n/n, no anchor drift or refusal; compileall ok.
+          Image sha256:c9729cc0738f8855fc643fa51be815076cc56ae6053ecde23a74b5e83ca19bb3
+ship      04:51:46Z..04:55:20Z, docker save | ssh spark2 docker load, rc 0/0, 214 s (ship-spark2.log)
+parity    glm53-sm121-v13 = c9729cc0738f... on spark1 and spark2; v13-e3 = 56c6084f422c... on both (image-parity.txt).
+          glm53-sm121-v11 differs by node (88173725a448 / bde907c4c44a: built on each node in August); v13 is built on
+          spark1's v11 and shipped, so both ranks serve the same bytes. JIT cache key c9729cc0738f (cold on E4a).
+
+CPU tests in glm53-sm121-v11, HF cache mounted at /root/.cache/huggingface (../e4-tools/cpu_tests.sh: the E3 script
+  with every docker/test_v13_*.py instead of the removed determinism test; cpu-tests.log)
+  Ran 109 tests in 198.2 s: OK, 0 skipped. By file: census 18, fp8 34, kpool_tail 21, misc 12, verify 24.
+  The checkpoint test (test_skip_prefix_matches_exactly_the_nvidia_mtp_layer) now runs with the cache at
+  /root/.cache/huggingface (d202997), so no second run at the host path is needed.
+  kpool tail simulation: masked k=7 leaves the tail ring and every committed pool as k'=m does (0 differ).

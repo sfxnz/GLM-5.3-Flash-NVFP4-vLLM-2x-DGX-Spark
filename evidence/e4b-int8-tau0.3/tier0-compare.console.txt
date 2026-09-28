@@ -1,0 +1,30 @@
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+[nll] {"docs": 96, "tokens": 184990, "mean_nll": 0.484537, "vs_ref": {"tokens": 184990, "nll_ref": 0.484849, "nll_cand": 0.484537, "delta": -0.000312, "top1_agree": 0.98174, "kl": 0.00682646, "mismatched_docs": [], "by_domain": {"chat": {"tokens": 11504, "nll_ref": 1.044623, "nll_cand": 1.043703, "delta": -0.00092, "top1_agree": 0.974183, "kl": 0.00842737}, "code": {"tokens": 36468, "nll_ref": 0.172989,
+[greedy] {"golden": {"hazard": 0.014911, "diverged": 16, "pairs": 20, "first_div": [62, 2, null, 20, 19, null, null, 70, 2, 112, 17, 0, 12, 7, 113, 9, 0, 46, 90, null]}, "s": 77.6}
+[count] {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop", "s": 5.1}
+[kwargs] {"pass": true, "passed": 12, "total": 12, "s": 3.4}
+[utf8] {"error": "ValueError: invalid literal for int() with base 10: '\u00b3'", "s": 42.9}
+[tools] {"n": 50, "json_valid": 1.0, "called": 1.0, "name_ok": 1.0, "args_ok": 0.96, "s": 41.5}
+[vision] {"pass": true, "passed": 13, "total": 13, "skipped": [], "s": 7.6}
+[needle] {"pass": true, "per_length": {"8192": 3, "32768": 3}, "s": 111.4}
+FAIL utf8.error value=ValueError: invalid literal for int() with base 10: '³' limit=None
+PASS nll.delta value=-0.000312 limit=0.005
+PASS nll.top1_stage value=0.98174 limit=0.979469
+FAIL nll.kl_stage value=0.00682646 limit=0.00613701
+PASS greedy.hazard value=0.014911 limit=0.019178
+PASS kwargs.core value=10 limit=10
+PASS kwargs.thinking_alias value=2 limit=2
+PASS count value=200 limit=200
+PASS vision value=13 limit=None
+PASS needle value={'8192': 3, '32768': 3} limit=>=2 each
+PASS tools.json_valid value=1.0 limit=0.98
+written: evidence/e4b-int8-tau0.3/tier0.json
+FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed utf8.error, nll.kl_stage
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+BrokenPipeError: [Errno 32] Broken pipe

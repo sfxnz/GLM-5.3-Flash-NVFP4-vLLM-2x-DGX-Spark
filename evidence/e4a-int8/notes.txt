@@ -1,0 +1,98 @@
+E4a: INT8 W8A16 (GPTQ-Marlin, g128) on the five target groups, NVFP4 drafter, kpool tail fix, adaptive verify tau 0.2.
+Everything as E3b tau 0.2 (../e3b-av-tau0.2/) except: the INT8 groups, the rebuilt 5-patch image (no determinism layer,
+so no GLM53_DETERMINISTIC_MLA_INDEX), and _compact in the swap.
+  serve   IMAGE=glm53-sm121-v13 (c9729cc0738f, ../e4-v13-build/) EXTRA_ENV='MAX_JOBS=2 GLM53_NVFP4_W4A16=draft
+          GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head GLM53_KPOOL_TAIL_FIX=1 GLM53_ADAPTIVE_VERIFY=1
+          GLM53_ADAPTIVE_VERIFY_TAU=0.2' (../e4-tools/cfg.sh). VALIDATE_ONLY first: image parity OK. Served containers:
+          args parity OK, image parity OK, env differs only by the head's HF tokens (as every earlier boot).
+          Booted under kit/uma_watch.py (boot.sh, default floors), watcher pid 3275992.
+microbench (../e4-microbench/, no serve up): PASS. INT8/FP8 time 1.011-1.034 at M=8, 1.015-1.097 at M=16 (gate 1.1);
+          INT8 output within 3.7e-3 of a BF16 GEMM on its own dequantized weights (gate 0.02).
+
+boot  run.sh 04:57:26Z -> ready 05:20:03Z (22.6 min). Cold JIT cache for the new image id: init engine 333.3 s
+      (E3b 38.5 s), PROFILE 2.4 min (E3b 0.5 min). KV pool 372,877 tokens (pinned, unchanged). No Traceback or ERROR.
+      Loading weights / Model loading: worker 215.8 / 270.8 s, head 725.0 / 865.4 s.
+      Model loading took 86.18 GiB per rank (E3b 89.55: -3.37 GiB, the 3.365 GiB of freed target weights).
+
+swap lines (both ranks identical; glm53-lines.txt)
+  target  GLM53_NVFP4_W4A16+GLM53_INT8_W8A16 (group 128): kda_in[int8]=34 layers 3340.5->1700.7 MiB, kda_o[int8]=34
+          1088.0->552.5, mla[int8]=22 968.0->491.6, shared[int8]=84 1008.0->511.9, lm_head[int8]=1 605.0->307.2 MiB;
+          torch reserved 88.96 -> 86.74 GiB
+  draft   draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 89.36 -> 88.51 GiB
+  No "left ... as they were" warning. The target line released 2.22 of 3.365 GiB freed (66%): allocsim predicted
+  2.27 for INT8 on all target groups with _compact (1.78 without). E2a (FP8, same groups, no _compact) released
+  1.52 of 3.42. So _compact works as modelled.
+  Other lines: GLM53_KPOOL_TAIL_FIX ring 16 slots (index_kpool=4, k=7); GLM53_ADAPTIVE_VERIFY tau=0.2 max=7 (k=7).
+
+MemAvailable GiB (spark1 / spark2), uma.tsv / memory-by-phase.txt / ready-mem.txt
+                         E3b tau0.2      E4a
+  LOAD min               14.46 / 15.52   14.41 / 15.51
+  PROFILE min            11.17 / 12.11   12.33 / 11.51
+  KV_READY min            4.97 / 10.70    8.11 /  9.40
+  after ready (free)      4.46 / 10.84    9.79 / 13.15   => +5.3 / +2.3
+  SERVING min (Tier 0)    4.19 / 10.16    6.42 / 12.29
+  swap at ready           7.1  /  4.1     7.2  /  4.1
+  torch reserved after both swaps: E3b 90.92 GiB, E4a 88.51 GiB (-2.41). spark2 (the clean node) gains +2.3 GiB at
+  ready, which is that drop. spark1 reads +5.3 because its E3b ready value was a low draw (E2e 5.14, E2a 10.36:
+  page cache and swap on spark1 move by several GiB between boots).
+
+checks: count-200 200/200 (stop), thinking-off "PING", no chain-of-thought (probe-count.console.txt).
+
+ruler v2 fast gate x2 + T (bench-1, bench-2, bench-T); kit/compare.py vs E3b tau 0.2 (compare-vs-e3b-tau0.2.txt,
+compare-T-vs-e3b-tau0.2.txt); per-position acceptance in per-pos.txt
+  cell   E3b tau0.2 tok/s  E4a b1 / b2 tok/s  step_ms E3b / E4a   acc_len E3b / E4a   tok/s change [95% CI]  verdict
+  A      23.00             28.75 / 28.72      96.3 / 79.2         2.22 / 2.28         +24.9% [+23.8,+26.1]   KEEP
+  B      37.05             45.13 / 44.58      110.6 / 91.8        4.13 / 4.15         +21.1% [+16.6,+25.6]   KEEP
+  J@c1   71.50             83.32 / 84.82      111.3 / 94.1        8.00 / 7.95         +17.6% [+15.4,+19.7]   KEEP
+  J@c2   60.92             71.78 / 71.56      130.7 / 111.1       8.00 / 8.00         +17.6% [+17.1,+18.2]   KEEP
+  H      17.02             19.40 / 19.21      131.8 / 114.3       2.24 / 2.21         +13.4% [+10.7,+16.1]   KEEP
+  T      27.97             35.07              96.6 / 78.7         2.71 / 2.77         +25.4%                 single panel
+  (single boot per arm; the KEEPs clear the +-4% cross-boot band.)
+  Step time fell 17-19 ms at c=1 (A -17.9%, B -17.0%, T -18.6%) and 17-20 ms at c=2 (H -13.3%, J@c2 -15.0%). The
+  microbench predicted 17.2 ms at M=8 (E2e mix 37.24 -> E4a mix 20.04 ms per rank) and 17.0 at M=16: the byte model
+  holds again. Acceptance moved inside its noise on every cell (A +2.7% [-1.4,+7.0] paired, B +0.4%, H -1.2%).
+  per_pos A b1 .638 .355 .169 .074 .030 .011 .004 (E3b b1 .628 .315 .151 .070 .030 .011 .006): the adaptive cut
+  keeps prose acceptance. J@c1 b1's first wave accepted 7.69 (one position rejected); the other five J@c1 waves 8.00.
+
+Tier 0 compare vs nvidia-v11-k7 --stage fp8 (tier0.json, tier0-table.txt), 05:36:37Z..05:45:08Z
+                     E1a (A/A)    E2a FP8 all  E2e          E3b tau0.2   E4a          cross-boot limit   judged
+  dNLL               -0.000120    +0.001961    -0.000078    -0.000339    -0.000169    |d| <= 0.005       PASS
+  top-1              0.983264     0.976458     0.982686     0.984021     0.981599     >= 0.97826         PASS
+  KL top-20          5.864e-3     1.103e-2     6.050e-3     5.172e-3     6.761e-3     <= 6.864e-3        PASS
+  greedy hazard      0.016716     0.016882     0.016000     0.010728     0.014953     <= 0.0192          PASS
+  greedy diverged    17/20        17/20        16/20        14/20        16/20
+  count 200, kwargs 12/12, tools json 1.00 (args_ok 0.96), vision 13/13 (video right), needle 8k 3/3, 32k 3/3: PASS.
+  The tool's own nll.kl_stage limit is 6.137e-3 (reference same-boot rerun + 1e-3): FAIL there, as the task and
+  README-v13 say to judge against the cross-boot A/A instead (6.864e-3). Margin 0.10e-3.
+  Per domain KL (E3b -> E4a): chat 6.41 -> 8.30e-3, code 3.27 -> 4.43, math 7.74 -> 9.69, multilingual 6.74 -> 8.81,
+  prose 4.17 -> 5.52. Every domain rises by 1.2-2.1e-3; no single domain carries it.
+  Added KL over E3b: +1.59e-3 (over E2e: +0.71e-3). README-v13 expected +0.7e-3 for INT8 on all six groups (range
+  0.4-1.4e-3). E2e -> E4a sits on that expectation; E3b was a low draw of the same serve.
+  utf8: the compare's utf8 component crashed the scorer: "ValueError: invalid literal for int() with base 10: '³'"
+    (quality/tier0.py judge_utf8: str.isdigit() is True for superscript digits, then int() raises; the component
+    errors instead of counting a wrong row). Reruns (rerun_flaky.sh x3, tier0-flaky-*.json):
+      run 1 utf8 FAIL (40 rows, 5 wrong squares, finish length) | vision 12/13 (video 3186)
+      run 2 utf8 FAIL (38 rows, 9 wrong squares)                 | vision 12/13 (video 3186)
+      run 3 utf8 PASS (40 rows, 0 errors)                        | vision 13/13
+    Same flaky pattern and same wrong video answer (3186) as E0, E2e and E3b.
+  Verdict: Tier 0 PASS (judged against the cross-boot A/A; utf8 and video flaky as on the reference boot).
+
+Tier 1 (../e2-tools/tier1.sh, greedy, serve-default kwargs, c=2, 3.0 GiB client memguard never fired; 05:47:39Z..07:18:36Z,
+1 h 31 min). Results: ~/projects/data/glm53-evals/tier1/e4a-int8-av02/tier1.jsonl (sha256 in tier1-sha256.txt);
+tier1.summary.json, compare-tier1-vs-nvidia-v11-k7.json, tier1-compare.console.txt here.
+  E4a 863/1010 (85.45%), 0 errors. compare_tier1 vs nvidia-v11-k7 (857/1010), PLAN rule:
+    pooled +0.59 pts, se 0.74, ci95 [-0.86, +2.05], floor -2.0 -> PASS
+    task       n    ref     E4a    diff    A-only/B-only  McNemar p
+    ifeval     150  70.67   72.00  +1.33   12/14          0.845
+    gsm8k      200  95.00   97.50  +2.50    0/5           0.0625
+    mmlu_pro   280  83.57   83.21  -0.36   10/9           1.000
+    bfcl       120  95.00   95.00  +0.00    0/0           1.000
+    chartqa    100  92.00   92.00  +0.00   (Vision group 3/3, p 1.000)
+    ocrbench   100  82.00   82.00  +0.00
+    mmmu        60  65.00   65.00  +0.00
+    No group has p < 0.01 or a drop of 5 points. VERDICT PASS.
+  For context, vs E2e (856/1010, v13 BF16 target + NVFP4 draft): pooled +0.69 [-0.58, +1.97], every group ok
+  (compare-tier1-vs-e2e.txt).
+
+Verdict E4a: Tier 0 PASS (judged, KL margin 0.10e-3), Tier 1 PASS, count-200 and thinking-off pass. Speed vs E3b tau
+0.2: A +24.9%, B +21.1%, H +13.4%, T +25.4%, J +17.6%. Kept as the E4 winner at tau 0.2 (tau 0.3: ../e4b-int8-tau0.3/).
