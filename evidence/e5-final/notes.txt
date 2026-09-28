@@ -1,0 +1,88 @@
+E5 final measurement of the recipe defaults (plain ./run.sh, HEAD 44205da). PARTIAL: the session was paused by the
+lead after F1 and the F2 boot. Done: steps 1, 2 (all of it), 3 (F2 booted to ready, captured, stopped; its two fast
+gates and the F-vs-E0 / F-vs-E4b two-boot compares did not run). Not run: 4 (F3 census + profile), 5 (F4), the
+trail/decision rows for F3/F4.
+
+stop E4b  stop-e4b*.txt/log: SERVING watcher 3755873 killed, ./stop.sh rc=0, both nodes clean (conduit only),
+          MemAvailable 115 / 117 GiB.
+
+F1 (f1/)  VALIDATE_ONLY=1 ./run.sh (validate-only.txt): glm53_env = the five knob values, image parity OK
+          (c9729cc0738f both nodes). Booted with exactly ./run.sh under kit/uma_watch.py (evidence/e1-tools/boot.sh, no
+          env; preflight: 0 GLM53_* in the shell, no sudo -n).
+  docker  both ranks: GLM53_NVFP4_W4A16=draft, GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head, GLM53_KPOOL_TAIL_FIX=1,
+          GLM53_ADAPTIVE_VERIFY=1, GLM53_ADAPTIVE_VERIFY_TAU=0.3 (count 5). docker-inspect-vs-e4b.txt: Args identical on
+          both ranks (56 / 51 words), mounts identical, image identical; env differs only by MAX_JOBS=2, which E4b set
+          through EXTRA_ENV. Args/image parity OK between ranks; env parity differs only by the head's HF tokens.
+  boot    run.sh 08:15:38Z -> ready 08:30:21Z (14.7 min). Head load 726.7 s, worker 276.2 s, init engine 34.4 s, no
+          compiler process (warm JIT cache). KV pool 372,877. Both ranks log the four GLM53 lines (AV tau=0.3 max=7,
+          kpool tail ring 16 slots, draft nvfp4, INT8 groups; torch reserved 89.36 -> 88.51 GiB).
+  memory  MemAvailable min GiB spark1 / spark2: LOAD 14.47 / 15.53, PROFILE 14.01 / 14.24, KV_READY 7.85 / 12.87,
+          SERVING 9.84 / 13.10 (whole post-ready run incl. E@128k and Tier 0). After ready (free -h) 9.9 / 13 GiB.
+          Swap flat (spark1 7.3, spark2 4.1 GiB).
+  probes  count-200 200/200 stop; thinking-off "PING", no CoT, no reasoning; QUAL-2 kwarg matrix 8/8; vision suite
+          13/13 (video 3816); legacy skill probes: smoke.sh ok (skill-smoke/), thinking_off_probe leaked_think=0,
+          tool_call_probe get_weather parsed, needle_probe --prompt-tokens 8192 hit=1 (16,400 prompt tokens: the probe
+          sizes by words, ~2 tokens each; prefill 1202 tok/s, TTFT 13.6 s).
+  bench   bench-1 = python3 bench_decode.py --full --remote-meminfo (under a 3.0 GiB client memguard, min 10.57 GiB);
+          bench-2 = fast gate. per_pos from evidence/e1-tools/per_pos.py.
+          cell     tok/s b1 [b2]    acc_len        step_ms       TTFT s   notes
+          A        29.75 [29.96]    2.183 [2.201]  73.1 [73.3]   0.28     pp .619 .310 .141 .058 .025 .008 .005
+          B        45.72 [46.56]    4.061 [4.176]  88.3 [89.1]   0.29     pp .810 .641 .502 .385 .282 .209 .153
+          J@c1     84.90 [85.18]    8.000          93.8 [93.5]   0.27
+          J@c2     67.76 [71.54]    7.961 [8.000]  117.4 [111.3] 0.33     b1 wave 3 60.19 (acc 7.882, 129.7 ms)
+          H        20.53 [21.07]    2.179 [2.219]  105.9 [105.3] 0.36     agg 39.5
+          I (c=4)  20.51            2.198          107.3         12.35    queued at MAX_NUM_SEQS=2
+          E@32k    51.81            4.323          79.1          27.48    prefill 1193 tok/s
+          E@128k   31.93            2.418          72.3          109.71   prefill 1191 tok/s
+          F image  36.10            2.728          74.7          0.48
+          G samp.  28.44            2.100          73.7          0.26
+          K@c1/c2  29.05 / 20.88 [27.15 / 21.48]
+          T        35.43            2.648          74.5          0.28     pp .682 .412 .240 .133 .079 .050 .030
+  compare kit/compare.py, F1 (one boot) vs E0 (one boot, compare-f1-vs-e0.txt): A +51.4% [+50.0,+52.8], B +33.2%,
+          J@c1 +23.5%, J@c2 +23.9%, H +50.0%, K@c1 +48.4%, K@c2 +37.8%: KEEP (clear the 4% band); I +52.6%, F +37.9%,
+          G +56.0%, E@128k +27.5% single panel. Acceptance A -3.8% (adaptive verify cuts drafts), step_ms A -36.5%.
+          F1 vs E4b (compare-f1-vs-e4b.txt, compare-f1-T-vs-e4b.txt): A -1.3%, B -1.3%, J@c1 +1.1%, J@c2 -3.2%,
+          H -0.3%, K@c1 -4.0%, K@c2 -3.1%, T -1.0%: all INCONCLUSIVE(single-boot), i.e. the published default reproduces
+          E4b inside the cross-boot band.
+  prefill E prefill 1193 / 1191 tok/s vs E0 1331 / 1329 and E3a 1355 / 1353 (-10% / -12%); TTFT 128k 109.7 s vs 98.4
+          (E0) and 96.6 (E3a). E4a/E4b never ran cell E, so this is the first E cell with the INT8 target groups; one
+          panel. The F2 re-check did not run (pause).
+  tier0   quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8 (tier0.json, tier0-compare.console.txt). Judged
+          against the cross-boot A/A limits (E4 notes):
+            |dNLL| 0.000461 <= 0.005 PASS; top-1 0.981426 >= 0.97826 PASS; KL top-20 6.625e-3 <= 6.864e-3 PASS
+            (E4a 6.761e-3, E4b 6.826e-3); greedy hazard 0.013548 <= 0.0192 PASS (16/20 diverged, as E4a/E4b).
+          Tool verdict 8/11 (its same-boot KL limit 6.137e-3, as on E4a/E4b). count 200, kwargs 12/12, tools json 1.00
+          (args_ok 0.96), needle 8k 3/3 32k 3/3: PASS. utf8 FAIL (15 rows, 9 wrong squares; no scorer crash this time).
+          vision 12/13: video answered 3186 (E0's known decision boundary).
+          Flaky reruns (rerun_flaky.sh x3): utf8 PASS / FAIL (9 sq) / FAIL (11 sq); vision 12/13 (video 3186), 13/13,
+          13/13. utf8_texts.py x3: FAIL 8 sq, PASS, FAIL (length); utf8_scan: the same leaked-word shape as E3b/E4b.
+          So utf8 1/7 and video 2/4 wrong answers across this boot: the pre-existing flaky probes.
+  lossless lossless_probe.py 600: utf8 13/600 not target top-1, greedy16 1/108, greedy0 3/92. utf8 had large gaps
+          (7.1, 8.8 and 16.7 nats, rank 72). tools/lossless_repeat.py (probe-lossless-repeat.console.txt) repeated the
+          teacher-forced prefill 3x on one fresh generation: 6 / 9 / 9 misses per pass, 16 positions missed in any
+          pass, only 1 in every pass (pos 507, gap 1.3 nats). Identical prefills swing by up to 9 nats at fixed
+          positions (pos 411 rank 1 -> rank 5 lp -9.07), so the big gaps are prefill noise (the known A/A swings,
+          quality/README.md Determinism), not a lossless break.
+
+F2 (f2/)  validate-only.txt identical to F1's. Same plain ./run.sh under uma_watch. run.sh 09:06:07Z -> ready
+          09:21:18Z (15.2 min); head load 745.3 s, worker 260.5 s, init engine 36.8 s; KV pool 372,877.
+          docker-inspect-vs-f1.txt: Args and env identical on both ranks, GLM53_* identical (5); worker mount order
+          differs (same two mounts). MemAvailable min GiB spark1 / spark2: LOAD 14.44 / 15.38, PROFILE 13.66 / 13.86,
+          KV_READY 7.22 / 12.62, SERVING (40 s) 7.01 / 12.66; after ready 7.1 / 12 GiB.
+          Stopped at ready by the pause (stop-f2*.txt/log): no fast gate ran.
+
+F4 gate   needs MemAvailable after ready >= 9 GiB on spark1 and >= 11 on spark2 on F1 and F2. F1 9.9 / 13 passes,
+          F2 7.1 / 12 fails on spark1, so F4 would be skipped on this data.
+
+Final state (09:22Z): watcher killed, ./stop.sh rc=0; spark1 docker ps: conduit (up) and the old exited dsv41-exl3-nfs
+container (not ours); spark2 no containers; MemAvailable 116 / 117 GiB. No census or profiler dirs were created.
+
+Resume (next session): boot F2 again (plain ./run.sh via evidence/e5-final/tools/launch.sh ... evidence/e1-tools/boot.sh
+DIR), run evidence/e5-final/tools/post_ready_f2.sh (fast gate x2 + cell E), then kit/compare.py F1+F2 vs E0 and vs
+E4b; then F3 with evidence/e5-final/tools/f3_cfg.sh DIR RUN boot and post_ready_f3.sh DIR PROF_OUT, then
+tools/step_buckets.py and tools/census_report.py + evidence/e5-final/tools/census_masked.py (adaptive-verify masked
+rows). F4 only if the F2 rerun's after-ready MemAvailable clears the gate.
+
+tools/   launch.sh (detached runner), post_ready_f1.sh, post_ready_f2.sh, skill_probes.sh, inspect_diff.py,
+         lossless_repeat.py; prepared but not run: f3_cfg.sh, post_ready_f3.sh, prof_step.py (torch-profiler capture per
+         prompt kind: prose, code, structured 1..1000, distinct prose c=2), census_masked.py.

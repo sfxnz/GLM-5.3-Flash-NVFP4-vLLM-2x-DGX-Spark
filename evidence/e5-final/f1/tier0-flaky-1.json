@@ -1,0 +1,134 @@
+{
+ "schema": 1,
+ "mode": "compare",
+ "ts": "20260928T090136Z",
+ "url": "http://127.0.0.1:8000",
+ "ref": "nvidia-v11-k7",
+ "name": null,
+ "stage": null,
+ "stage_absolute": false,
+ "elapsed_s": 37.7,
+ "criteria": [
+  {
+   "name": "utf8",
+   "pass": true,
+   "value": 0,
+   "limit": 0,
+   "rule": "zero U+FFFD, rows 1..40 present, every n^2 right, finish_reason stop"
+  },
+  {
+   "name": "vision",
+   "pass": false,
+   "value": 12,
+   "limit": null,
+   "rule": "every vision check passes (video may SKIP)"
+  }
+ ],
+ "verdict": "FAIL tier0 compare vs nvidia-v11-k7: 1/2 criteria; failed vision",
+ "components": {
+  "utf8": {
+   "pass": true,
+   "fffd": 0,
+   "rows": 40,
+   "complete": true,
+   "square_errors": 0,
+   "cube_errors": 0,
+   "chinese_numeral_errors": 0,
+   "finish_reason": "stop",
+   "s": 30.6
+  },
+  "vision": {
+   "pass": false,
+   "passed": 12,
+   "total": 13,
+   "skipped": [],
+   "checks": [
+    {
+     "name": "tokens",
+     "pass": true,
+     "answer": 258,
+     "expected": 258
+    },
+    {
+     "name": "solid.red",
+     "pass": true,
+     "answer": "Red",
+     "expected": "red"
+    },
+    {
+     "name": "solid.green",
+     "pass": true,
+     "answer": "Green",
+     "expected": "green"
+    },
+    {
+     "name": "solid.blue",
+     "pass": true,
+     "answer": "Blue",
+     "expected": "blue"
+    },
+    {
+     "name": "solid.yellow",
+     "pass": true,
+     "answer": "Yellow",
+     "expected": "yellow"
+    },
+    {
+     "name": "quadrants",
+     "pass": true,
+     "answer": "top-left=red, top-right=green, bottom-left=blue, bottom-right=yellow",
+     "expected": {
+      "top-left": "red",
+      "top-right": "green",
+      "bottom-left": "blue",
+      "bottom-right": "yellow"
+     }
+    },
+    {
+     "name": "count.3",
+     "pass": true,
+     "answer": "3",
+     "expected": 3
+    },
+    {
+     "name": "count.5",
+     "pass": true,
+     "answer": "5",
+     "expected": 5
+    },
+    {
+     "name": "ocr.7F3A91",
+     "pass": true,
+     "answer": "7F3A91",
+     "expected": "7F3A91"
+    },
+    {
+     "name": "ocr.K9P2X",
+     "pass": true,
+     "answer": "K9P2X",
+     "expected": "K9P2X"
+    },
+    {
+     "name": "order.red-blue",
+     "pass": true,
+     "answer": "First",
+     "expected": "first"
+    },
+    {
+     "name": "order.blue-red",
+     "pass": true,
+     "answer": "Second",
+     "expected": "second"
+    },
+    {
+     "name": "video",
+     "pass": false,
+     "status": "FAIL",
+     "answer": "3186",
+     "expected": "3816"
+    }
+   ],
+   "s": 7.0
+  }
+ }
+}

@@ -1,0 +1,37 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3140 min= 14.47 @ 08:28:22  first=115.97 last= 22.58  swap_first=4.05 swap_max=7.50  span=08:15:38..08:28:56
+spark1 PROFILE  n=    98 min= 14.01 @ 08:29:21  first= 22.58 last= 14.01  swap_first=7.48 swap_max=7.48  span=08:28:56..08:29:21
+spark1 KV_READY n=   235 min=  7.85 @ 08:30:18  first= 14.99 last= 10.03  swap_first=7.47 swap_max=7.47  span=08:29:21..08:30:20
+spark1 SERVING  n=   435 min=  9.84 @ 08:30:51  first= 10.02 last= 10.57  swap_first=7.28 swap_max=7.28  span=08:30:21..09:05:27
+spark2 LOAD     n=  3143 min= 15.53 @ 08:20:42  first=117.37 last= 23.43  swap_first=1.71 swap_max=4.41  span=08:15:38..08:28:56
+spark2 PROFILE  n=    98 min= 14.24 @ 08:29:21  first= 23.43 last= 14.24  swap_first=4.15 swap_max=4.15  span=08:28:56..08:29:21
+spark2 KV_READY n=   235 min= 12.87 @ 08:29:29  first= 15.44 last= 13.46  swap_first=4.15 swap_max=4.15  span=08:29:21..08:30:20
+spark2 SERVING  n=   428 min= 13.10 @ 08:31:41  first= 13.46 last= 13.31  swap_first=4.14 swap_max=4.14  span=08:30:21..09:05:27
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-09-28T08:15:38.737Z
+PROFILE  from 2026-09-28T08:28:56.555Z
+KV_READY from 2026-09-28T08:29:21.497Z
+SERVING  from 2026-09-28T08:30:21.206Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        08:30:37..08:30:43  spark1 min=9.85@08:30:40 swap 7.27->7.27 | spark2 min=13.38@08:30:37 swap 4.14->4.14
+probe-qual2                        08:30:43..08:30:48  spark1 min=9.84@08:30:47 swap 7.27->7.27 | spark2 min=13.41@08:30:47 swap 4.14->4.14
+probe-vision                       08:30:48..08:30:56  spark1 min=9.84@08:30:51 swap 7.27->7.27 | spark2 min=13.39@08:30:52 swap 4.14->4.14
+skill-smoke                        08:30:56..08:30:57  spark1 min=10.84@08:30:57 swap 7.27->7.27 | spark2 min=13.38@08:30:56 swap 4.14->4.14
+skill-thinking-off                 08:30:57..08:30:57  
+skill-tool-call                    08:30:57..08:30:58  
+skill-needle-8k                    08:30:58..08:31:12  spark1 min=10.67@08:31:02 swap 7.27->7.27 | spark2 min=13.14@08:31:10 swap 4.14->4.14
+bench-1                            08:31:12..08:47:18  spark1 min=10.57@08:31:58 swap 7.27->7.21 | spark2 min=13.10@08:31:41 swap 4.14->4.13
+bench-2                            08:47:18..08:53:54  spark1 min=11.53@08:52:54 swap 7.21->7.20 | spark2 min=14.20@08:53:46 swap 4.13->4.13
+tier0-compare                      08:53:54..09:00:58  spark1 min=10.40@08:55:48 swap 7.20->7.19 | spark2 min=13.30@08:59:24 swap 4.13->4.13
+tier0-flaky-1                      09:00:58..09:01:36  spark1 min=10.45@09:01:01 swap 7.19->7.19 | spark2 min=13.35@09:01:01 swap 4.13->4.13
+tier0-flaky-2                      09:01:36..09:01:46  spark1 min=10.48@09:01:37 swap 7.19->7.19 | spark2 min=13.32@09:01:37 swap 4.13->4.13
+tier0-flaky-3                      09:01:46..09:02:05  spark1 min=10.46@09:01:58 swap 7.19->7.19 | spark2 min=13.35@09:01:47 swap 4.13->4.13
+utf8-texts                         09:02:05..09:03:41  spark1 min=10.55@09:02:34 swap 7.19->7.19 | spark2 min=13.34@09:03:30 swap 4.13->4.13
+probe-lossless                     09:03:41..09:04:00  spark1 min=10.55@09:03:50 swap 7.19->7.19 | spark2 min=13.31@09:03:50 swap 4.13->4.13
+probe-lossless-repeat              09:05:11..09:05:22  spark1 min=10.55@09:05:22 swap 7.19->7.19 | spark2 min=13.30@09:05:11 swap 4.13->4.13
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+spark1 other                                                              pids=   1 rows=    1 08:29:00..08:29:00 phases=['PROFILE'] peak_proc=    0 peak_sum=    0
+spark1 triton                                                             pids=   1 rows=    1 08:42:15..08:42:15 phases=['SERVING'] peak_proc=   56 peak_sum=   56
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB
+spark1 PROFILE  busy_s=    1 peak_sum_rss=    0
+spark1 SERVING  busy_s=    1 peak_sum_rss=   56
