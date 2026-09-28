@@ -264,7 +264,7 @@ def judge_utf8(out: dict) -> dict:
     rows = {}
     for line in (out.get("content") or "").splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 4 and cells[0].isdigit():
+        if len(cells) >= 4 and cells[0].isdecimal():  # isdigit() accepts "³", which int() rejects
             rows[int(cells[0])] = cells
     sq_err = cube_err = cn_err = 0
     for n, cells in rows.items():

@@ -83,7 +83,7 @@ JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 DRAFT_WEIGHTS="${DRAFT_WEIGHTS:-nvfp4}"
 # Comma list of target groups in INT8 W8A16 (GLM53_INT8_W8A16): shared, mla,
 # kda_o, kda_in, lm_head. Empty keeps them BF16 (E4 measures INT8).
-TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-}"
+TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,lm_head}"
 # 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
 # rejected drafts no longer write committed pool keys. E3a: needles pass to
 # 128k, and decode-built pools match prefill within the prefill A/A.
@@ -92,7 +92,7 @@ KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU). Lossless.
 # E3b at 0.2 vs E3a: prose A +14.9%, H +20.0%, B +5.3%, T +10.1%, J flat.
 ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
-ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.2}"
+ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.3}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"

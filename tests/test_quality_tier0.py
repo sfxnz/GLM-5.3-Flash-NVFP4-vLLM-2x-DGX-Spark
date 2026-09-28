@@ -122,6 +122,9 @@ class JudgeTests(unittest.TestCase):
         self.assertEqual((r["pass"], r["fffd"], r["chinese_numeral_errors"]), (False, 1, 1))
         wrong_sq = table.replace("| 7 | 49 |", "| 7 | 48 |")
         self.assertEqual(tier0.judge_utf8({"content": wrong_sq, "finish_reason": "stop"})["square_errors"], 1)
+        # E4: a superscript first cell used to raise ValueError instead of scoring the row as missing
+        sup = table + "\n| ³ | 9 | 27 | 三 |"
+        self.assertTrue(tier0.judge_utf8({"content": sup, "finish_reason": "stop"})["pass"])
 
     def test_tool_item(self):
         item = {"id": "t", "expect": {"name": "f", "args": {"city": "Paris", "n": 2}}, "ignore": ["note"]}

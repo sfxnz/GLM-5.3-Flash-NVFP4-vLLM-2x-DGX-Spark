@@ -78,10 +78,10 @@ serve:
     # v13 switches (docker/README-v13.md). run.sh turns them into GLM53_* env on both ranks.
     # v11 rollback: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
     DRAFT_WEIGHTS: nvfp4                 # E2e
-    TARGET_WEIGHT_GROUPS_INT8: ""        # empty until E4 measures INT8 on the target
+    TARGET_WEIGHT_GROUPS_INT8: shared,mla,kda_o,kda_in,lm_head  # E4a
     KPOOL_TAIL_FIX: 1                    # E3a
     ADAPTIVE_VERIFY: 1                   # E3b
-    ADAPTIVE_VERIFY_TAU: 0.2             # E3b (0.1 cut less)
+    ADAPTIVE_VERIFY_TAU: 0.3             # E4b (0.2 and 0.1 cut less)
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
@@ -104,9 +104,9 @@ readme:
     - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`)"
     - Draft: "`{DRAFT_MODEL}` @ `{DRAFT_REV}` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter)"
     - Drafter weights: "`DRAFT_WEIGHTS={DRAFT_WEIGHTS}`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off"
-    - Target INT8: "`TARGET_WEIGHT_GROUPS_INT8=\"{TARGET_WEIGHT_GROUPS_INT8}\"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. Empty keeps them BF16. FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d); INT8 is under test (E4)"
+    - Target INT8: "`TARGET_WEIGHT_GROUPS_INT8=\"{TARGET_WEIGHT_GROUPS_INT8}\"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. Empty keeps them BF16. FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010"
     - Indexer tail ring: "`KPOOL_TAIL_FIX={KPOOL_TAIL_FIX}` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring"
-    - Adaptive verify: "`ADAPTIVE_VERIFY={ADAPTIVE_VERIFY}`, `ADAPTIVE_VERIFY_TAU={ADAPTIVE_VERIFY_TAU}` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a: prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. Needs `SPEC=dflash2`; `0` turns it off"
+    - Adaptive verify: "`ADAPTIVE_VERIFY={ADAPTIVE_VERIFY}`, `ADAPTIVE_VERIFY_TAU={ADAPTIVE_VERIFY_TAU}` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a (tau 0.2): prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. E4b tau 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. Needs `SPEC=dflash2`; `0` turns it off"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
     - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"
