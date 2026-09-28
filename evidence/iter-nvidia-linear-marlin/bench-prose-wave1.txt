@@ -1,0 +1,32 @@
+url=http://127.0.0.1:8000/v1/chat/completions model=nvidia/GLM-5.3-Flash-NVFP4 max_tokens=200 runs=3 concurrency=[1, 2] phases=['prose']
+phase=prose c=1 run=1 wall=5.17s agg=20.78 tok/s per_stream=[20.78] ttft=[0.259]
+phase=prose c=1 run=2 wall=5.51s agg=19.67 tok/s per_stream=[19.67] ttft=[0.329]
+phase=prose c=1 run=3 wall=6.02s agg=18.88 tok/s per_stream=[18.88] ttft=[0.348]
+phase=prose c=2 run=1 wall=12.31s agg=31.67 tok/s per_stream=[16.29,16.41] ttft=[6.212,6.211]
+phase=prose c=2 run=2 wall=8.36s agg=26.63 tok/s per_stream=[14.73,13.25] ttft=[0.360,0.360]
+phase=prose c=2 run=3 wall=7.96s agg=28.85 tok/s per_stream=[15.68,14.23] ttft=[0.364,0.364]
+SUMMARY [
+  {
+    "phase": "prose",
+    "concurrency": 1,
+    "median_decode_tok_s": 19.669744169861477,
+    "median_ttft_s": 0.3285903789801523,
+    "median_agg_tok_s": 19.6670444987251,
+    "median_completion_tokens": 103,
+    "n": 3,
+    "acceptance_len": 2.3088235294117645,
+    "draft_acceptance_rate": 0.1869747899159664
+  },
+  {
+    "phase": "prose",
+    "concurrency": 2,
+    "median_decode_tok_s": 15.205460480294914,
+    "median_ttft_s": 0.3642535355174914,
+    "median_agg_tok_s": 28.850880615767085,
+    "median_completion_tokens": 107.5,
+    "n": 6,
+    "acceptance_len": 2.311355311355311,
+    "draft_acceptance_rate": 0.18733647305075876
+  }
+]
+rc=0

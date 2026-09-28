@@ -19,6 +19,13 @@ jobs:
       - uses: actions/checkout@v7
       - run: python3 .cursor/skills/verify-glm53-flash/scripts/recipe-lint.py
 
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: pip install jinja2
+      - run: python3 -m unittest discover -s tests -v
+
   validate-only:
     runs-on: ubuntu-latest
     steps:
@@ -35,6 +42,12 @@ jobs:
         run: |
           if VALIDATE_ONLY=1 MOE_BACKEND=flashinfer_cutlass ./run.sh; then
             echo "run.sh accepted MOE_BACKEND=flashinfer_cutlass without FORCE_UNSAFE_MOE" >&2
+            exit 1
+          fi
+      - name: run.sh refuses hiding the vision tower
+        run: |
+          if VALIDATE_ONLY=1 LANGUAGE_MODEL_ONLY=1 ./run.sh; then
+            echo "run.sh accepted LANGUAGE_MODEL_ONLY=1 without FORCE_UNSAFE_VISION" >&2
             exit 1
           fi
 

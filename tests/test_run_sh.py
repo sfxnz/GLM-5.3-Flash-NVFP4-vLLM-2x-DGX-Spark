@@ -1,0 +1,197 @@
+"""VALIDATE_ONLY checks for run.sh. No GPU, no docker, no network.
+
+Run: python3 -m unittest discover -s tests
+Every run sets VALIDATE_ONLY=1 and WORKER_HOST=worker.invalid; ssh and docker
+are stubs whenever ORCHESTRATE=auto is exercised.
+"""
+import os
+import re
+import stat
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+RUN_SH = REPO / "run.sh"
+LIBERTAI = {"MODEL": "LibertAIDAI/GLM-5.3-Flash-NVFP4", "SNAPSHOT_REV": "caca4e6a4ebbd66f159d3d2fc256683fd6e27177"}
+
+
+class RunShCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def base_env(self, **extra):
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(self.home),
+            "VALIDATE_ONLY": "1",
+            "ORCHESTRATE": "0",
+            "ROLE": "head",
+            "WORKER_HOST": "worker.invalid",
+        }
+        env.update(extra)
+        return env
+
+    def run_sh(self, **extra):
+        return subprocess.run(
+            ["bash", str(RUN_SH)], env=self.base_env(**extra), capture_output=True, text=True, timeout=60
+        )
+
+    def assertRefused(self, proc, needle):
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn(needle, proc.stderr)
+        self.assertNotIn("validate-only", proc.stdout)
+
+    def assertAccepted(self, proc):
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("==> validate-only", proc.stdout)
+
+
+def worker_command(stdout):
+    m = re.search(r"^==> worker command: (.*)$", stdout, re.M)
+    assert m, stdout
+    return m.group(1)
+
+
+def shell_words(command):
+    """Split a command exactly as the worker's bash would."""
+    out = subprocess.run(
+        ["bash", "-c", 'eval "set -- $1"; printf "%s\\0" "$@"', "_", command],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return out.split("\0")[:-1]
+
+
+class Guards(RunShCase):
+    def test_defaults_accepted(self):
+        proc = self.run_sh()
+        self.assertAccepted(proc)
+        for want in ("spec=dflash2", "moe=marlin", "linear=marlin", "served=nvidia/GLM-5.3-Flash-NVFP4",
+                     "mm_cache_gb=1", "max_new_tokens=65536", '"cudagraph_capture_sizes":[1,2,4,8,16]'):
+            self.assertIn(want, proc.stdout)
+
+    def test_linear_backend_refused(self):
+        self.assertRefused(self.run_sh(LINEAR_BACKEND="flashinfer_cutlass"), "FORCE_UNSAFE_LINEAR=1")
+        self.assertAccepted(self.run_sh(LINEAR_BACKEND="emulation", FORCE_UNSAFE_LINEAR="1"))
+
+    def test_spec_mtp_refused_on_nvidia(self):
+        self.assertRefused(self.run_sh(SPEC="mtp"), "FORCE_UNSAFE_SPEC=1")
+        self.assertAccepted(self.run_sh(SPEC="mtp", **LIBERTAI))
+
+    def test_language_model_only_must_be_0_or_1(self):
+        self.assertRefused(self.run_sh(LANGUAGE_MODEL_ONLY="2"), "want exactly 0 or 1")
+        self.assertRefused(self.run_sh(LANGUAGE_MODEL_ONLY="2", FORCE_UNSAFE_VISION="1"), "want exactly 0 or 1")
+        self.assertAccepted(self.run_sh(LANGUAGE_MODEL_ONLY="1", FORCE_UNSAFE_VISION="1"))
+
+    def test_extra_env_secret_refused_without_echoing_value(self):
+        proc = self.run_sh(EXTRA_ENV="HF_TOKEN=hf_do_not_print")
+        self.assertRefused(proc, "EXTRA_ENV refuses 'HF_TOKEN'")
+        self.assertNotIn("hf_do_not_print", proc.stderr + proc.stdout)
+        for bad in ("VLLM_API_KEY=x", "NCCL_SECRET_X=1", "LD_PRELOAD=/x.so", "no_equals_sign"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(EXTRA_ENV=bad), "EXTRA_ENV refuses")
+
+    def test_extra_env_allowlist_accepted(self):
+        self.assertAccepted(self.run_sh(EXTRA_ENV="MAX_JOBS=2 FLASHINFER_JIT_VERBOSE=1 NCCL_DEBUG=INFO GLM53_X=1"))
+
+    def test_max_new_tokens_must_be_integer(self):
+        self.assertRefused(self.run_sh(MAX_NEW_TOKENS="12x"), "positive integer")
+        self.assertRefused(self.run_sh(MAX_NEW_TOKENS="-1"), "positive integer")
+        proc = self.run_sh(MAX_NEW_TOKENS="0")
+        self.assertAccepted(proc)
+        self.assertRegex(proc.stdout, r"max_new_tokens=0\n")
+
+    def test_served_name_follows_model(self):
+        proc = self.run_sh(**LIBERTAI)
+        self.assertAccepted(proc)
+        self.assertIn("served=LibertAIDAI/GLM-5.3-Flash-NVFP4", proc.stdout)
+
+
+class Forwarding(RunShCase):
+    TRICKY = {
+        "EXTRA_ARGS": "--load-format dummy --served-model-name 'it'\"s\"",
+        "EXTRA_ENV": "MAX_JOBS=2 NCCL_DEBUG=INFO",
+        "LIMIT_MM_PER_PROMPT": '{"image":2,"video":0}',
+        "SNAPSHOT": "/weights/with space/snap",
+        "HF_CACHE": "/cache dir/hf",
+        "LINEAR_BACKEND": "emulation",
+        "FORCE_UNSAFE_LINEAR": "1",
+        "MM_PROCESSOR_CACHE_GB": "0.5",
+    }
+
+    def test_every_generated_var_is_forwarded(self):
+        block = RUN_SH.read_text().split("# BEGIN generated", 1)[1].split("# END generated", 1)[0]
+        generated = re.findall(r'^([A-Z][A-Z0-9_]*)="\$\{\1:-', block, re.M)
+        derived = ["SNAPSHOT", "SNAPSHOT_IN_CONTAINER", "LIMIT_MM_PER_PROMPT", "HF_HUB_DISABLE_XET",
+                   "SPEC_CONFIG", "ENFORCE_EAGER", "COMPILATION_CONFIG", "SKIP_DOWNLOAD", "EXTRA_ARGS", "EXTRA_ENV"]
+        words = shell_words(worker_command(self.run_sh().stdout))
+        names = {w.split("=", 1)[0] for w in words if "=" in w}
+        self.assertTrue(generated)
+        self.assertEqual(sorted(set(generated + derived) - names), [])
+        self.assertEqual(words[:3], ["env", "ROLE=worker", "ORCHESTRATE=0"])
+        self.assertEqual(words[-2:], ["bash", "/tmp/glm53-run.sh"])
+
+    def test_worker_resolves_the_same_config(self):
+        head = self.run_sh(**self.TRICKY)
+        self.assertAccepted(head)
+        words = shell_words(worker_command(head.stdout))
+        worker_env = dict(w.split("=", 1) for w in words[1:-2])
+        self.assertEqual(worker_env["EXTRA_ARGS"], self.TRICKY["EXTRA_ARGS"])
+        self.assertEqual(worker_env["LIMIT_MM_PER_PROMPT"], self.TRICKY["LIMIT_MM_PER_PROMPT"])
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "VALIDATE_ONLY": "1", **worker_env}
+        worker = subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertAccepted(worker)
+        # Identical validate line and identical forwarded values on both ranks.
+        self.assertEqual(head.stdout, worker.stdout)
+
+
+class ImageParity(RunShCase):
+    def stub(self, name, body):
+        path = self.home / "bin" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("#!/usr/bin/env bash\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+    def setUp(self):
+        super().setUp()
+        self.stub("ssh", 'echo "$*" >>"$STUB_LOG"\n'
+                         'case "$*" in *"docker image inspect"*) echo "$STUB_REMOTE_ID" ;; esac\n')
+        self.stub("docker", 'echo "docker $*" >>"$STUB_LOG"\n'
+                            'case "$*" in "image inspect"*) echo "$STUB_LOCAL_ID" ;; *) exit 1 ;; esac\n')
+        self.log = self.home / "stub.log"
+
+    def run_auto(self, local_id, remote_id):
+        return self.run_sh(
+            ORCHESTRATE="auto",
+            PATH=f"{self.home / 'bin'}:{os.environ['PATH']}",
+            STUB_LOG=str(self.log),
+            STUB_LOCAL_ID=local_id,
+            STUB_REMOTE_ID=remote_id,
+        )
+
+    def test_match_ok(self):
+        proc = self.run_auto("sha256:aaa", "sha256:aaa")
+        self.assertAccepted(proc)
+        self.assertIn("Image parity OK", proc.stdout)
+        self.assertNotIn("WARN", proc.stderr)
+
+    def test_mismatch_warns_with_sync_command(self):
+        proc = self.run_auto("sha256:aaa", "sha256:bbb")
+        self.assertAccepted(proc)
+        self.assertIn("WARN image glm53-sm121-v11 differs", proc.stderr)
+        self.assertIn("docker save glm53-sm121-v11 | ssh worker.invalid docker load", proc.stderr)
+        self.assertNotIn("docker run", self.log.read_text())
+
+    def test_orchestrate_0_never_sshes(self):
+        proc = self.run_sh(PATH=f"{self.home / 'bin'}:{os.environ['PATH']}", STUB_LOG=str(self.log))
+        self.assertAccepted(proc)
+        self.assertFalse(self.log.exists(), self.log.read_text() if self.log.exists() else "")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,54 @@
+== MemAvailable per phase (GiB): min @ time, first, last, max swap
+spark1 LOAD     n= 3422 min= 14.62 @ 12:41:03  first=115.94 last= 18.70  swap_max=6.74 span=12:26:56..12:41:25
+spark1 PROFILE  n=  506 min=  8.90 @ 12:43:25  first= 19.68 last= 10.45  swap_max=6.71 span=12:41:26..12:43:34
+spark1 KV_READY n=  805 min=  4.16 @ 12:46:46  first= 11.48 last=  5.31  swap_max=6.71 span=12:43:34..12:46:59
+spark1 SERVING  n=  119 min=  4.82 @ 12:48:28  first=  5.31 last=  7.76  swap_max=8.11 span=12:46:59..12:55:41
+spark2 LOAD     n= 3427 min= 15.47 @ 12:32:34  first=116.88 last= 20.40  swap_max=4.25 span=12:26:56..12:41:25
+spark2 PROFILE  n=  506 min=  8.89 @ 12:42:08  first= 20.39 last= 11.50  swap_max=4.10 span=12:41:26..12:43:34
+spark2 KV_READY n=  805 min=  6.02 @ 12:45:30  first= 12.61 last=  9.89  swap_max=4.09 span=12:43:34..12:46:58
+spark2 SERVING  n=  123 min=  8.73 @ 12:48:26  first=  9.89 last= 10.41  swap_max=5.24 span=12:46:59..12:55:44
+== PROFILE trajectory, 5 s buckets (min GiB per node)
+12:41:25 spark1= 14.69 spark2= 15.11
+12:41:30 spark1= 13.14 spark2= 13.87
+12:41:35 spark1= 12.90 spark2= 13.32
+12:41:40 spark1= 12.38 spark2= 12.74
+12:41:45 spark1= 11.90 spark2= 12.62
+12:41:50 spark1= 11.61 spark2= 12.76
+12:41:55 spark1= 11.27 spark2= 12.00
+12:42:00 spark1=  9.10 spark2=  9.38
+12:42:05 spark1=  9.02 spark2=  8.89
+12:42:10 spark1=  9.64 spark2=  9.19
+12:42:15 spark1=  9.92 spark2= 10.48
+12:42:20 spark1=  9.97 spark2= 10.54
+12:42:25 spark1= 10.04 spark2= 10.56
+12:42:30 spark1= 10.06 spark2= 10.60
+12:42:35 spark1= 10.09 spark2= 10.63
+12:42:40 spark1=  9.99 spark2= 10.65
+12:42:45 spark1=  9.93 spark2= 10.68
+12:42:50 spark1=  9.92 spark2= 10.71
+12:42:55 spark1=  9.92 spark2= 10.73
+12:43:00 spark1= 10.25 spark2= 11.05
+12:43:05 spark1= 10.25 spark2= 11.01
+12:43:10 spark1= 10.22 spark2= 10.94
+12:43:15 spark1= 10.17 spark2= 10.92
+12:43:20 spark1=  9.03 spark2= 10.15
+12:43:25 spark1=  8.90 spark2= 11.20
+12:43:30 spark1= 10.33 spark2= 11.10
+== compilers: groups by node/kind (first..last, peak single-proc RSS MiB, peak summed RSS MiB per sample-second)
+spark1 deep_gemm              n=   25 12:41:48..12:49:10 phases=['KV_READY', 'PROFILE', 'SERVING'] peak_proc=    302 peak_sum=    308
+spark1 flashinfer:batch_mla_attention_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_dtype_idx_i32_head_dim_ckv_512_head_dim_kpe_0_profiler_False n=   37 12:43:40..12:43:46 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark1 flashinfer:batch_prefill_with_kv_cache_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_True_use_logits_cap_False_f16qk_False n=  184 12:43:47..12:44:07 phases=['KV_READY'] peak_proc=      4 peak_sum=     53
+spark1 flashinfer:sampling    n=  152 12:45:26..12:46:02 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark1 flashinfer:topk        n=  315 12:42:02..12:43:33 phases=['PROFILE'] peak_proc=      4 peak_sum=     18
+spark1 flashinfer:xqa_input_bf16_kv_cache_e4m3_output_bf16_page_size_64_head_dim_128_head_group_ratio_4_use_sliding_window_True_use_spec_dec_True_spec_q_seq_len_8 n=   23 12:44:54..12:44:58 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark1 other                  n=  577 12:41:49..12:48:26 phases=['KV_READY', 'PROFILE', 'SERVING'] peak_proc=   1938 peak_sum=   3551
+spark1 tilelang               n=   11 12:41:55..12:48:26 phases=['KV_READY', 'PROFILE', 'SERVING'] peak_proc=    210 peak_sum=    215
+spark2 deep_gemm              n=   32 12:41:47..12:49:11 phases=['KV_READY', 'PROFILE', 'SERVING'] peak_proc=    315 peak_sum=    321
+spark2 flashinfer:batch_mla_attention_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_dtype_idx_i32_head_dim_ckv_512_head_dim_kpe_0_profiler_False n=   37 12:43:40..12:43:46 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark2 flashinfer:batch_prefill_with_kv_cache_dtype_q_bf16_dtype_kv_e4m3_dtype_o_bf16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_True_use_logits_cap_False_f16qk_False n=  179 12:43:47..12:44:05 phases=['KV_READY'] peak_proc=      4 peak_sum=     53
+spark2 flashinfer:sampling    n=  147 12:45:27..12:46:01 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark2 flashinfer:topk        n=  312 12:42:01..12:43:32 phases=['PROFILE'] peak_proc=      4 peak_sum=     18
+spark2 flashinfer:xqa_input_bf16_kv_cache_e4m3_output_bf16_page_size_64_head_dim_128_head_group_ratio_4_use_sliding_window_True_use_spec_dec_True_spec_q_seq_len_8 n=   23 12:44:53..12:44:57 phases=['KV_READY'] peak_proc=      4 peak_sum=     18
+spark2 other                  n=  564 12:41:58..12:46:05 phases=['KV_READY', 'PROFILE'] peak_proc=   1939 peak_sum=   3878
+spark2 tilelang               n=   23 12:41:53..12:49:15 phases=['KV_READY', 'PROFILE', 'SERVING'] peak_proc=    234 peak_sum=    238
+fp4_gemm lines: 0

@@ -254,7 +254,10 @@ For each function call, output the function name and arguments within the follow
 {%- endfor -%}
 {%- if add_generation_prompt -%}
     <|assistant|>
-    {%- if enable_thinking | default(true) -%}
+    {#- vLLM's glm45/glm47 parser: on when both kwargs are unset, else thinking or enable_thinking. -#}
+    {%- set _thinking = thinking if thinking is defined else none -%}
+    {%- set _enable_thinking = enable_thinking if enable_thinking is defined else none -%}
+    {%- if (_thinking is none and _enable_thinking is none) or _thinking or _enable_thinking -%}
         {{- '<think>' -}}
     {%- else -%}
         {{- '<think></think>' -}}

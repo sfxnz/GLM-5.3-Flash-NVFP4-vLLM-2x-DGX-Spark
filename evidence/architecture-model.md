@@ -4,7 +4,7 @@ Sources: repo `run.sh` / README, live `docker inspect` + boot logs, target `conf
 
 ## What this is
 
-A two-node vLLM serve of LibertAIDAI NVFP4 GLM-5.3-Flash on GB10. Native context is 1,048,576. This recipe serves 327,680 with DFlash2-5 and CUDA graphs. Decode is limited by hybrid KDA+DSA attention, Marlin weight-only FP4, cross-node RoCE TP, and speculative acceptance. Context is limited by a 4.14 GiB fp8 KV pin that yields 400,497 tokens (1.22× at 327,680).
+A two-node vLLM serve of LibertAIDAI NVFP4 GLM-5.3-Flash on GB10. Native context is 1,048,576. This recipe serves 327,680 with DFlash2-5 and CUDA graphs. Decode is limited by hybrid KDA+DSA attention, Marlin weight-only FP4, cross-node RoCE TP, and speculative acceptance. Context is limited by a 4.14 GiB fp8 KV pin that yields 400,497 tokens (1.22× at 327,680) at DFlash2-5. At today's DFlash2-7 default the same pin yields 372,877 tokens (1.14×; `evidence/rebench-20260902T204243Z/engine.log.tail:69`).
 
 ## Rulers (frozen)
 
@@ -25,7 +25,7 @@ Context: boot `--max-model-len 1048576` and retrieve a needle at ≥95% of that 
 
 ## Why 327,680 not 1M
 
-`text_config.max_position_embeddings` is 1,048,576. `--max-model-len` is a recipe choice. `--kv-cache-memory 4445787956` skips profiling and ignores `--gpu-memory-utilization`. Pool is 400,497 tokens. The pool is 0.38× a 1M request (a 1M request is 2.62× the pool). Raising the pin to 5.0 GiB slowed decode ~20%. 5.14 GiB crashed under concurrent load (Tony ladder: every try ≥5.5 GiB NVRM OOM on GB10 UMA). Hybrid glm5 charging needs ~8.24 GiB of fp8 KV for one 1M request with DFlash. Host UMA is already ~115/121 GiB with swap. fp8 KV cannot buy 1M on 2× GB10.
+`text_config.max_position_embeddings` is 1,048,576. `--max-model-len` is a recipe choice. `--kv-cache-memory 4445787956` skips profiling and ignores `--gpu-memory-utilization`. Pool is 400,497 tokens at DFlash2-5 (372,877 at DFlash2-7). The pool is 0.38× a 1M request (a 1M request is 2.62× the pool). Raising the pin to 5.0 GiB slowed decode ~20%. 5.14 GiB crashed under concurrent load (Tony ladder: every try ≥5.5 GiB NVRM OOM on GB10 UMA). Hybrid glm5 charging needs ~8.24 GiB of fp8 KV for one 1M request with DFlash. Host UMA is already ~115/121 GiB with swap. fp8 KV cannot buy 1M on 2× GB10.
 
 Public 2× 1M result (drowzeys) uses `nvfp4_ds_mla` packed KV (~368 B/token vs ~656 B fp8), `block-size 7168`, `max-num-seqs 2`, and still decodes ~22 tok/s. That is a context win that likely loses decode vs this recipe's 28.
 

@@ -1,6 +1,6 @@
 # Serve smoke
 
-The published recipe answers a one-sentence hello on the OpenAI-compatible chat API with thinking off, proving the head rank is serving `LibertAIDAI/GLM-5.3-Flash-NVFP4`.
+The published recipe answers a one-sentence hello on the OpenAI-compatible chat API with thinking off, proving the head rank is serving `nvidia/GLM-5.3-Flash-NVFP4`.
 
 ## Sub-features
 
@@ -18,10 +18,10 @@ The published recipe answers a one-sentence hello on the OpenAI-compatible chat 
 Preconditions:
 
 - Doctor prints `status=ready`.
-- `GET http://127.0.0.1:8000/v1/models` includes `"id": "LibertAIDAI/GLM-5.3-Flash-NVFP4"` and `"max_model_len": 327680`.
+- `GET http://127.0.0.1:8000/v1/models` includes `"id": "nvidia/GLM-5.3-Flash-NVFP4"` and `"max_model_len": 327680`.
 
-- **Models list.** Run `curl -sf http://127.0.0.1:8000/v1/models`. The JSON `data[0].id` is `LibertAIDAI/GLM-5.3-Flash-NVFP4`.
-- **Hello completion.** Run `.cursor/skills/verify-glm53-flash/scripts/smoke.sh`. Exit code `0`. HTTP status is `200`. `response.json` has non-empty `choices[0].message.content` and `"model": "LibertAIDAI/GLM-5.3-Flash-NVFP4"`.
+- **Models list.** Run `curl -sf http://127.0.0.1:8000/v1/models`. The JSON `data[0].id` is `nvidia/GLM-5.3-Flash-NVFP4`.
+- **Hello completion.** Run `.cursor/skills/verify-glm53-flash/scripts/smoke.sh`. Exit code `0`. HTTP status is `200`. `response.json` has non-empty `choices[0].message.content` and `"model": "nvidia/GLM-5.3-Flash-NVFP4"`.
 - **Proof.** Keep the directory printed as `evidence=`. It contains `doctor.txt`, `request.json`, `response.json`, and `http_status.txt`.
 
 ## Gotchas

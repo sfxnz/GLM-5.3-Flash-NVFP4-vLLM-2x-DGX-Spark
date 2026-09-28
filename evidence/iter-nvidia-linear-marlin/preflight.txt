@@ -1,0 +1,28 @@
+2026-09-27T12:26:15Z
+182d7b13477eacba030f6e3b58b56001029c3390
+?? ./
+?? ../../kit/uma_watch.py
+== spark1 docker ps -a
+CONTAINER ID   IMAGE                                 COMMAND                  CREATED        STATUS                    PORTS     NAMES
+37646c287fa5   dsv41-exl3-nfs:local                  "/entrypoint.sh"         6 days ago     Exited (137) 5 days ago             dsv41-exl3-nfs
+6f15eeb08110   matrixconduit/matrix-conduit:latest   "/nix/store/5kxl74pr…"   2 months ago   Up 7 days                           conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.7Gi       111Gi       7.2Mi       6.1Gi       115Gi
+Swap:           15Gi       3.2Gi        12Gi
+== spark1 swapon
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G 3.2G   -2
+== spark1 image
+sha256:88173725a4485c8d4145212f328d00428c31e7b6caa78fa655940489ea14132a 2026-08-28T11:39:23.043148072+01:00
+== spark2 docker ps -a
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.8Gi       115Gi       244Ki       3.1Gi       116Gi
+Swap:           15Gi       1.6Gi        14Gi
+== spark2 swapon
+NAME      TYPE SIZE USED PRIO
+/swap.img file  16G 1.6G   -2
+== spark2 image
+sha256:bde907c4c44a3609b531f8594ab01b46eb726e15a5380a23bef8945e4930211e 2026-08-28T11:39:24.744344465+01:00

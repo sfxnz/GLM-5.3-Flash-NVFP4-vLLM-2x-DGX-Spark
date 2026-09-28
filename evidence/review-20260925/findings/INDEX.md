@@ -1,0 +1,218 @@
+# Review index (id | dim | kind | impact | conf | effort | verdict | title)
+
+- RF-1 | byte-roofline | perf | I5 | C3 | S | plausible | Verify step is ~85-95% DRAM-bandwidth-bound; exact per-rank byte ledger
+- RF-2 | byte-roofline | perf | I5 | C3 | L | plausible | BF16 non-MoE weights are ~43% of step time; FP8 (or NVFP4) weight-only for KDA/MLA/shared/lm_head/draft is the largest lever
+- RF-3 | byte-roofline | perf | I5 | C4 | S | plausible | k=7 is past the prose optimum; k=5 was a measured +14% win reverted for a tooling failure; model optimum k≈3, workload-aware k keeps structured at 7
+- RF-4 | byte-roofline | methodology | I4 | C4 | S | confirmed | bench c=2 runs identical prompts, so both streams share experts; published c=2 understates real concurrent cost
+- RF-5 | byte-roofline | perf | I3 | C3 | M | plausible | DFlash2 draft costs 1.9 GB/rank/step (≈9 ms, 8%): re-reads the full lm_head, a replicated 160 MiB fc, BF16 12288-wide MLPs
+- RF-6 | byte-roofline | perf | I2 | C3 | M | plausible | KDA spec-decode writes (k+1) fp32 recurrent states per layer per sequence: 628 MiB/seq/step at k=7
+- RF-7 | byte-roofline | perf | I3 | C3 | M | plausible | 10-18.5 ms fixed + ~11 ms per-extra-sequence overhead not explained by bytes
+- RF-8 | byte-roofline | perf | I5 | C2 | XL | plausible | Amdahl lever table (prose c=1, calibrated model) — combined path to ~+70%
+- RF-9 | byte-roofline | correctness | I3 | C4 | S | confirmed | nvidia vs LibertAI pack: identical expert bytes, nvidia saves 310 MiB/rank/step on dense MLP; nvidia MTP layer is BF16 and not excluded from quant (SPEC=mtp rollback risk)
+- RF-10 | byte-roofline | perf | I2 | C3 | S | plausible | Decode bytes are nearly context-independent up to 128k (DSA top-k 2048 + kpool-4 indexer); long context is not a decode-speed tax
+- RF-11 | byte-roofline | perf | I3 | C2 | M | plausible | Achieved bandwidth of Marlin NVFP4 MoE at M≈1 token/expert is the biggest unknown; +10% BW ≈ +9% tok/s
+- RF-12 | byte-roofline | perf | I1 | C4 | S | confirmed | mHC hyper-connection weights are upcast to fp32 (2x checkpoint size) and read every step
+- byte-roofline-MISSED-1 | byte-roofline | missed | - | - | - | from-verifier | The reviewer missed that PR #9 already hand-applied NUM_SPECULATIVE_TOKENS=5 as the default (commit a76474e; decision.tsv 'H1-20260903-apply ... kept'; e898a80:
+- byte-roofline-MISSED-2 | byte-roofline | missed | - | - | - | from-verifier | Bench noise is large and it undermines the calibration. Nine prose c=1 runs at k=7 over three boots (rebench bench.txt, parity bench.txt, parity bench-run1.txt)
+- byte-roofline-MISSED-3 | byte-roofline | missed | - | - | - | from-verifier | The identical-token c=2 controls show a large non-byte per-token cost. rebench-dflash5 structured c=2 run 3 (synchronized, 48.8 tok/s, acc 6.0) takes 123 ms vs 
+- byte-roofline-MISSED-4 | byte-roofline | missed | - | - | - | from-verifier | On the PR #11 nvidia pin, the NVFP4 dense MLP (layers 0-2) does NOT run through Marlin. MOE_BACKEND=marlin only covers MoE. init_nvfp4_linear_kernel (v11src vll
+- byte-roofline-MISSED-5 | byte-roofline | missed | - | - | - | from-verifier | lm_head is one tensor shared by the target and the DFlash2 draft (v1/worker/gpu/spec_decode/dflash/utils.py, load_dflash_model). Any FP8 lm_head lever (RF-2/RF-
+- byte-roofline-MISSED-6 | byte-roofline | missed | - | - | - | from-verifier | The SPEC=mtp rollback on the nvidia pin also breaks for layer-45 shared_experts (BF16, and hf_quant_config exclude_modules only lists shared_experts for layers 
+- byte-roofline-MISSED-7 | byte-roofline | missed | - | - | - | from-verifier | UMA swap is a probable noise and slowdown source that the reviewer did not model. evidence/rebench-20260902T204243Z/free-after-bench.txt shows 116/121 GiB used,
+- byte-roofline-MISSED-8 | byte-roofline | missed | - | - | - | from-verifier | Each target step contains 34 eager KDA breaks (kda.py:373 @eager_break_during_capture) under breakable CUDA graphs. Each one runs Python metadata handling plus 
+- PR12-1 | open-prs | pr-review | I5 | C5 | S | confirmed | #12 wait-phase 16 GiB MemAvailable tripwire would stop every healthy boot
+- PR12-2 | open-prs | pr-review | I5 | C4 | S | confirmed | #12 20 GiB start floor passes when a co-tenant holds most of UMA, which is the dangerous case
+- PR12-3 | open-prs | pr-review | I4 | C4 | M | confirmed | #12 watcher/refuse logic: SSH blips kill a healthy load, env grep refuses GPU-less CUDA-image containers, non-Docker GPU users pass, re-run behaviour changes, worker can be orphaned; tests only grep text
+- PR9-1 | open-prs | methodology | I4 | C5 | S | confirmed | #9 DFlash2-5 was reverted for the wrong reason, but reverting was right; drop a76474e
+- PR9-2 | open-prs | methodology | I4 | C3 | S | plausible | Step time, not tok/s, is the stable signal: k=7 ≈115–119 ms/step, k=5 ≈105–108 ms/step, consistent with a distinct-expert-bytes model
+- PR9-3 | open-prs | quality | I3 | C3 | S | plausible | Needle evidence shows chain-of-thought in content with thinking off at 8k–16k context, and a safety refusal; probes still pass
+- PR8-1 | open-prs | pr-review | I3 | C5 | M | confirmed | #8 kit: same bench request body, better evidence format, but conflicts with #11/#12, carries the env-{} lint bug that lost H1, and leaves the vision probe off
+- PR3-1 | open-prs | pr-review | I3 | C4 | M | confirmed | #3 ABLIT o_proj transplant: shapes fit the nvidia pack, but conflicting, tag-colliding, unpinned, safety-sensitive; close in this form
+- MTP-NV-1 | open-prs | correctness | I3 | C4 | S | plausible | On the nvidia pin, SPEC=mtp is probably not a working rollback: layer-45 experts are BF16 (13.5 GiB) but not excluded from NVFP4
+- B12X-1 | open-prs | perf | I3 | C5 | M | confirmed | b12x worktree diagnosis is accurate; exact patch to unblock flashinfer_b12x for GLM's clamped SiLU
+- B12X-2 | open-prs | perf | I3 | C3 | M | plausible | Expected value of b12x on decode is small (≤~5–10%), trades W4A16 accuracy for W4A4, and adds per-layer workspaces on a ~5 GiB headroom
+- ORDER-1 | open-prs | pr-review | I3 | C4 | S | confirmed | Recommended disposition and merge order relative to #11
+- open-prs-MISSED-1 | open-prs | missed | - | - | - | from-verifier | The step-time model contradicts the c=2 data. In the same k=5 boot (PR #9 rebench-dflash5 bench.json), structured c=2 runs at 41.56/5.98 = 6.95 steps/s (144 ms)
+- open-prs-MISSED-2 | open-prs | missed | - | - | - | from-verifier | H3 (k=7, MAX_NUM_SEQS=1; iter-H3 bench.json prose c=1 17.40, acc 2.168) gives 124.6 ms/step. That widens the k=7 c=1 step range to 114.6–124.6 ms and undercuts 
+- open-prs-MISSED-3 | open-prs | missed | - | - | - | from-verifier | The MTP-NV-1 root cause is broader than the experts. The nvidia pack excludes by per-layer names under 'model.language_model.layers.N.*' (config.json quantizati
+- open-prs-MISSED-4 | open-prs | missed | - | - | - | from-verifier | FlashInfer's B12xMoEWrapper supports a W4A16 mode: activation_precision='bf16' selects quant_mode='w4a16' (v11src flashinfer/fused_moe/cute_dsl/b12x_moe.py:119-
+- open-prs-MISSED-5 | open-prs | missed | - | - | - | from-verifier | PR #12's watcher also runs `wait_uma_or_abort` on spark2, whose healthy post-ready MemAvailable is 9.8 GiB (b12x-A postboot-spark2.txt). That is below the 16 Gi
+- open-prs-MISSED-6 | open-prs | missed | - | - | - | from-verifier | PR #8's recipe.yaml lint `contains:` hardcodes README strings 'LibertAIDAI/GLM-5.3-Flash-NVFP4' and 'glm53-sm121-v11' plus the `{env: {}}` default-ladder case (
+- QUAL-1 | quality | quality | I5 | C3 | S | plausible | Server-wide enable_thinking:false is an unsupported, off-distribution prompt shape for GLM-5.3-Flash
+- QUAL-2 | quality | correctness | I4 | C4 | S | confirmed | Parser/template kwarg mismatch: `thinking:true` sends the whole answer into `reasoning`; /v1/messages `thinking` is ignored
+- QUAL-3 | quality | quality | I4 | C4 | S | confirmed | PR #11 adds an unpinned NVFP4 dense-linear kernel path (layers 0-2) that the LibertAI pin never exercised
+- QUAL-4 | quality | quality | I4 | C4 | M | confirmed | On Marlin the nvidia pack gives no quality advantage over LibertAI; the calibrated W4A4 scales are unused (SwiGLU clamp verified correct)
+- QUAL-5 | quality | methodology | I5 | C5 | M | confirmed | No accuracy evaluation exists; the probes miss the default serving path, sampling, thinking-on, tools streaming, long-context depth and vision content
+- QUAL-6 | quality | quality | I3 | C4 | S | confirmed | Default sampling is temp 1.0 / top_p 0.95 with no max_tokens cap, but everything was measured greedy
+- QUAL-7 | quality | quality | I2 | C5 | S | confirmed | reasoning_effort mapping: 'medium', 'minimal' and 'xhigh' silently become Max; any non-'none' effort forces thinking on
+- QUAL-8 | quality | quality | I3 | C4 | S | confirmed | Multi-turn reasoning history: clear_thinking defaults false, and reasoning is dropped unless the client echoes `reasoning`
+- QUAL-9 | quality | quality | I3 | C3 | M | plausible | Vision: preprocessing differs from the card's eval setting, video has an uncapped token budget, and correctness is unverified (1x1 smoke)
+- QUAL-10 | quality | quality | I3 | C3 | M | plausible | fp8_e4m3 KV with an uncalibrated per-tensor scale of 1.0 on the patched sm_121 sparse-MLA path: long-context quality validated by only one recency needle
+- QUAL-11 | quality | correctness | I2 | C4 | S | confirmed | SPEC=mtp rollback is likely broken on the nvidia pack (MTP layer is BF16 but not in the quant exclude list)
+- QUAL-12 | quality | quality | I2 | C3 | M | plausible | DFlash2 losslessness and thinking-budget under sampling are asserted but only checked greedily
+- QUAL-13 | quality | pr-review | I2 | C4 | S | confirmed | PR #3 ABLIT o_proj transplant changes model behavior across 30 layers and must be quality-gated
+- quality-MISSED-1 | quality | missed | - | - | - | from-verifier | No evidence exists anywhere that the nvidia 09b04e5 pack has ever booted on glm53-sm121-v11. The Sep-8 iter-b12x-A-marlin and B runs, the only post-PR-#11 boots
+- quality-MISSED-2 | quality | missed | - | - | - | from-verifier | The exclude-list styles differ between packs, and this matters for load, not only MTP. LibertAI uses prefix-agnostic wildcards ('*.mlp.shared_experts.*', '*.mlp
+- quality-MISSED-3 | quality | missed | - | - | - | from-verifier | The current default path is internally contradictory. Every request without kwargs renders `[gMASK]<sop><|system|>Reasoning Effort: Max ... <|assistant|><think>
+- quality-MISSED-4 | quality | missed | - | - | - | from-verifier | MiaAI #257 reports the thinking-off corruption at temperatures 1.0, 0.6 AND 0 (WebFetch of the issue), not only under sampling. The corruption is therefore dete
+- quality-MISSED-5 | quality | missed | - | - | - | from-verifier | The reviewer's QUAL-11 rollback advice was factually wrong. LibertAI's MTP routed experts are NVFP4 (U8 [2048,2048] plus F8_E4M3 scales plus input_scale in the 
+- SYS-1 | system-uma-comm | methodology | I4 | C2 | S | plausible | Decode is at ~74-86% of the LPDDR5X bandwidth roofline; system knobs are second-order
+- SYS-2 | system-uma-comm | perf | I4 | C3 | S | plausible | Host reclaim/swap policy (swappiness 60, 16 GiB swapfile, 45 MB min_free) costs bandwidth and stalls serving processes
+- SYS-3 | system-uma-comm | methodology | I3 | C3 | S | plausible | The '5.0 GiB KV pin slows decode ~20%' rule has no receipts and cannot be a KV-bandwidth effect
+- SYS-4 | system-uma-comm | perf | I5 | C3 | L | plausible | FP8 for the BF16 attention, shared-expert, lm_head and draft weights frees ~4.3 GiB/rank of UMA and removes ~18% of bytes per step
+- SYS-5 | system-uma-comm | pr-review | I4 | C5 | S | confirmed | PR #12's 16 GiB MemAvailable wait-abort will kill a healthy boot
+- SYS-6 | system-uma-comm | perf | I3 | C2 | M | plausible | Cross-node all-reduce costs ~6-9 ms/step; a one-shot RoCE all-reduce or LL protocol can recover ~3-5%
+- SYS-7 | system-uma-comm | perf | I2 | C2 | S | plausible | The second active RoCE rail and MTU 1500 halve inter-node bandwidth for prefill
+- SYS-8 | system-uma-comm | ops | I3 | C4 | S | confirmed | Worker env/arg forwarding gaps and no NCCL/VLLM env passthrough make cross-node experiments unsafe
+- SYS-9 | system-uma-comm | ops | I2 | C4 | S | confirmed | Image built separately on each node, and VALIDATE_ONLY checks nothing across nodes
+- SYS-10 | system-uma-comm | ops | I2 | C3 | M | plausible | Boot takes 18 min: each rank streams the full checkpoint, the head loads 3.2x slower, and drop_caches is a no-op without sudo
+- SYS-11 | system-uma-comm | methodology | I2 | C4 | S | confirmed | Async scheduling is already ON; the 'leave --async-scheduling off' rule comes from a no-op A/B
+- SYS-12 | system-uma-comm | correctness | I3 | C4 | S | confirmed | SPEC=mtp rollback is probably broken on the nvidia pin and would not fit in UMA
+- SYS-13 | system-uma-comm | perf | I2 | C2 | S | plausible | Head node (spark1) is a noisy straggler: API server, EngineCore and dev tooling share its UMA and bandwidth
+- SYS-14 | system-uma-comm | perf | I2 | C3 | S | plausible | First c=2 request pays a reproducible ~6 s TTFT (one-time warmup/JIT) and several kernels JIT during inference
+- SYS-15 | system-uma-comm | methodology | I2 | C4 | S | confirmed | Pipeline or expert parallelism would not beat TP=2 for decode on two Sparks
+- SYS-16 | system-uma-comm | perf | I1 | C1 | S | plausible | CPU placement ignores GB10's big.LITTLE split (X925 3.9 GHz vs A725 2.8 GHz)
+- system-uma-comm-MISSED-1 | system-uma-comm | missed | - | - | - | from-verifier | The c=2 bench cell is not a real two-user test, and the reviewer used it as if it were. bench_decode.py:34-36 sends the same prompt to every stream with tempera
+- system-uma-comm-MISSED-2 | system-uma-comm | missed | - | - | - | from-verifier | Noise floor. Prose c=1 runs 23.40/18.75/21.18 (sd about 11%, n=3) make every 1-5% system knob in SYS-2/6/13/16 undetectable. A two-sample test for a 3% effect a
+- system-uma-comm-MISSED-3 | system-uma-comm | missed | - | - | - | from-verifier | SYS-7's prefill arithmetic used the logger's 10 s window average (engine.log.tail:385, 4438 tok/s). The measured needle prefill is 1443 tok/s (needle-20480-c2.t
+- system-uma-comm-MISSED-4 | system-uma-comm | missed | - | - | - | from-verifier | The h-snap wave2 TTFT stalls (prose c=1 run1 3.635 s, c=2 run1 6.630 s on a warm serve, after wave1's 0.403 s) are the strongest in-repo sign of swap or reclaim
+- system-uma-comm-MISSED-5 | system-uma-comm | missed | - | - | - | from-verifier | Tony's measured NVFP4-attention/MLP analogue (tony_nvfp4_attn.md: TP4 measured x1.14-1.30, TP2 predicted x1.21, frees 5.21 GiB/rank) is the best evidence for a 
+- system-uma-comm-MISSED-6 | system-uma-comm | missed | - | - | - | from-verifier | Tony's README also warns to use /health rather than /v1/models for liveness ('returns 200 from config alone, with a dead engine behind it'). run.sh wait_ready a
+- system-uma-comm-MISSED-7 | system-uma-comm | missed | - | - | - | from-verifier | The SYS-2 citation of tony's guidance is inverted. Per tony, swap OFF kills the worker during Marlin repack, and DEFAULT swappiness with swap on causes the mid-
+- PR11-1 | pr11-nvidia-vision | correctness | I5 | C4 | S | confirmed | Dense-MLP NVFP4 W4A4 (layers 0-2) bypasses --moe-backend marlin and auto-selects a JIT FlashInfer FP4 GEMM on sm_121
+- PR11-2 | pr11-nvidia-vision | correctness | I4 | C5 | S | confirmed | SPEC=mtp rollback is broken on the nvidia pack: MTP layer 45 is unquantized BF16 (13.84 GiB) and not in the ignore list
+- PR11-3 | pr11-nvidia-vision | correctness | I3 | C5 | S | confirmed | Rollback serves LibertAI weights under the nvidia name; SNAPSHOT/LIMIT overrides are not forwarded to the worker
+- PR11-4 | pr11-nvidia-vision | ops | I4 | C4 | S | plausible | MM processor cache defaults to 4 GiB x (API + EngineCore) of head-node UMA; now the real vision memory risk
+- PR11-5 | pr11-nvidia-vision | methodology | I2 | C5 | S | confirmed | 'Vision on by default' is not a behavior change; the mm cap does not alter profiling; README claims lack evidence
+- PR11-6 | pr11-nvidia-vision | quality | I4 | C5 | M | confirmed | smoke_vision.py cannot detect broken vision; replace it with a stdlib-only correctness suite
+- PR11-7 | pr11-nvidia-vision | quality | I3 | C4 | S | confirmed | LibertAI experts load with a mismatched gate/up global scale under Marlin; the nvidia pack may fix it (verify on first boot)
+- PR11-8 | pr11-nvidia-vision | quality | I2 | C5 | S | confirmed | The chat template is multimodal-correct (identical to the nvidia Hub template); lock it with a render-parity CI test
+- PR11-9 | pr11-nvidia-vision | perf | I2 | C4 | S | confirmed | Weight bytes and memory: nvidia is -0.30 GiB per rank resident, but reads +9.1 GiB more at load (unused BF16 MTP)
+- PR11-10 | pr11-nvidia-vision | methodology | I3 | C5 | M | confirmed | No Spark receipts; the PR changes several knobs at once and republishes LibertAI numbers under the nvidia default
+- PR11-11 | pr11-nvidia-vision | quality | I2 | C4 | S | confirmed | Generation defaults: vLLM applies T=1.0/top_p=0.95 from generation_config; published tok/s are greedy only
+- PR11-12 | pr11-nvidia-vision | correctness | I1 | C5 | S | plausible | LANGUAGE_MODEL_ONLY accepts non-0/1 values inconsistently; CI does not run render --check
+- PR11-13 | pr11-nvidia-vision | perf | I2 | C3 | S | plausible | Vision + DFlash2 + M-RoPE path has never been exercised; the drafter runs text-only on image prompts
+- pr11-nvidia-vision-MISSED-1 | pr11-nvidia-vision | missed | - | - | - | from-verifier | Ninja parallelism amplifies the PR11-1 JIT risk. flashinfer/jit/cpp_ext.py:346-365 passes -j only when MAX_JOBS is set. Neither the glm53-sm121-v11 image env (d
+- pr11-nvidia-vision-MISSED-2 | pr11-nvidia-vision | missed | - | - | - | from-verifier | Dense-MLP gate/up global-scale risk on the nvidia pack. In .quant_summary.txt, layers.0-2 have SEPARATE gate_proj/up_proj weight_quantizers with different calib
+- pr11-nvidia-vision-MISSED-3 | pr11-nvidia-vision | missed | - | - | - | from-verifier | The nvidia config.json quantization_config carries kv_cache_scheme {num_bits 8, type float, dynamic false}, but no k_scale/v_scale tensors exist. Glm5NextMLAAtt
+- pr11-nvidia-vision-MISSED-4 | pr11-nvidia-vision | missed | - | - | - | from-verifier | Published prose methodology is too noisy for the effects under discussion. rebench bench.txt prose c=1 runs are 23.40 / 18.75 / 21.18 tok/s (about ±11%) with me
+- pr11-nvidia-vision-MISSED-5 | pr11-nvidia-vision | missed | - | - | - | from-verifier | The rollback guard for PR11-2 should key on the SPEC and checkpoint layout, not only on the org. The layer-45 BF16 tensors sit in shards 1-3 (889 keys per model
+- SD-1 | spec-decode | perf | I5 | C2 | M | plausible | MoE-aware verification: skip routed experts for low-survival tail verify tokens (lossless, keeps static CUDA-graph shapes)
+- SD-2 | spec-decode | perf | I4 | C3 | S | plausible | Default k=7 is past the prose optimum; k=4-5 wins the published (prose) ruler
+- SD-3 | spec-decode | perf | I4 | C4 | L | refuted | Adaptive verification already exists in this vLLM but is gated to DSpark; DFlash2 has the needed confidence signal
+- SD-4 | spec-decode | ops | I3 | C5 | S | confirmed | k also sets KV-pool and UMA cost: 4 KDA spec-state block ids per slot per request; context guard constant is k=7-specific
+- SD-5 | spec-decode | perf | I3 | C4 | L | confirmed | v11 draft KV group puts ~17.6% tax on every pool block id; decouple it
+- SD-6 | spec-decode | correctness | I3 | C4 | S | confirmed | Losslessness: default greedy draft is exact; the DFlash2 probabilistic path reuses target Gumbel noise and biases the residual resample
+- SD-7 | spec-decode | perf | I2 | C5 | S | refuted | Sampled traffic (GLM's recommended T=1.0, top_p 0.95) gets one-hot acceptance p(x); block verification is a free lossless gain
+- SD-8 | spec-decode | ops | I3 | C4 | S | confirmed | SPEC=mtp rollback is likely broken on the nvidia pack and would add ~6.9 GiB/rank; MTP-4 has no performance case
+- SD-9 | spec-decode | quality | I3 | C4 | S | confirmed | v10 aux-hidden capture matches the sglang reference; the low prose acceptance is a distribution/quant gap, and acceptance doubles as a quant-fidelity metric
+- SD-10 | spec-decode | perf | I2 | C3 | M | plausible | Draft forward reads ~1.9 GB/rank per step (~8 ms, ~7% of step); FP8 draft and sharding replicated pieces trim ~3-4 ms
+- SD-11 | spec-decode | quality | I2 | C2 | S | plausible | Draft context K/V is stored in fp8_e4m3 (inherited) although the drafter was trained BF16; test only after SD-5
+- SD-12 | spec-decode | methodology | I3 | C4 | S | confirmed | Choose k (and judge spec changes) from per-position acceptance plus the step model, not single-prompt tok/s
+- SD-13 | spec-decode | perf | I1 | C3 | S | plausible | Spec-path runtime JIT and eager per-step work outside the CUDA graph
+- spec-decode-MISSED-1 | spec-decode | missed | - | - | - | from-verifier | SD-3 is blocked in hardware and backends, and the reviewer did not see it. The DSA indexer reports supports_varlen=False on sm_121 (engine.log.tail:70; indexer.
+- spec-decode-MISSED-2 | spec-decode | missed | - | - | - | from-verifier | Structured c=2 regressed 25-31% at k=5 (rebench-dflash5 summary.json: 41.56 per stream vs 55.50 parity and 60.41 rebench at k=7). Its step time (41.56/5.98 → 14
+- spec-decode-MISSED-3 | spec-decode | missed | - | - | - | from-verifier | The PR#9 H1 'render/lint failure' is a hard-coded check. H1 lint.log shows 'FAIL VALIDATE_ONLY=1 {} did not print "cudagraph_capture_sizes":[1,2,4,8,16]'. Any N
+- spec-decode-MISSED-4 | spec-decode | missed | - | - | - | from-verifier | Block verification gives zero gain with one-hot (greedy) drafts. Token-wise verification already achieves the upper bound P(accept≥i)=Π p(d_j). SD-7 should be d
+- spec-decode-MISSED-5 | spec-decode | missed | - | - | - | from-verifier | Every spec-decode receipt (acceptance vectors, step fits, k=5 results) is from LibertAI caca4e6. The PR#11 default nvidia pack is unmeasured. Headers show ident
+- spec-decode-MISSED-6 | spec-decode | missed | - | - | - | from-verifier | Old-era receipts give an independent check of step time vs k that the reviewer did not use: evidence/baseline-bench.txt (k=5), iter-h1 (k=6) and iter-h3 (k=7) g
+- spec-decode-MISSED-7 | spec-decode | missed | - | - | - | from-verifier | A first-run c=2 TTFT of ~6.3-6.5 s reproduces after every boot (rebench 6.286, H1 6.472, dflash5 6.422) with no jit_monitor warning in the window (engine.log.ta
+- spec-decode-MISSED-8 | spec-decode | missed | - | - | - | from-verifier | The reviewer's prose per-position vector labels engine.log.tail:270 as c=1, but that window is c=2-dominated (Running: 2 reqs from 21:07:25). The c=1-only vecto
+- FOR-1 | regression-bench | methodology | I4 | C4 | S | confirmed | ~70% of the 28.30 -> 21.2 prose drop is a ruler change from the thinking-off template, not a throughput regression
+- FOR-2 | regression-bench | perf | I4 | C4 | S | plausible | DFlash2-7 default is a real ~12-14% prose regression; its structured gain is +21%, not the +34% README claims
+- FOR-3 | regression-bench | correctness | I3 | C5 | S | confirmed | Snapshot aa28e1f -> caca4e6 contributes exactly zero under Marlin (bit-identical served weights)
+- FOR-4 | regression-bench | methodology | I4 | C4 | S | confirmed | 21.2 vs 19.23 vs 16.9-18.1 at an identical config is session noise (nondeterministic prose text + UMA swap), not a regression
+- FOR-5 | regression-bench | methodology | I2 | C3 | S | plausible | max-num-seqs 4 -> 2 costs ~0 at c=1 but silently dropped the c=4 capacity cell from the ruler
+- FOR-6 | regression-bench | methodology | I3 | C5 | S | confirmed | Published claims and ledger rows contain errors that steered decisions
+- BENCH-1 | regression-bench | methodology | I5 | C4 | M | confirmed | Current ruler (median of 3, ~98-token prose) can only detect about a 31% change; the 8% gate is close to a coin flip
+- BENCH-2 | regression-bench | methodology | I4 | C2 | S | plausible | Identical prompts on both c=2 streams share MoE experts and likely overstate the c=2 aggregate by 17-25%
+- BENCH-3 | regression-bench | correctness | I4 | C4 | S | confirmed | bench_decode.py timing is sound for thinking-off, but it breaks for thinking-on/tool calls and lacks warm-up, pairing and sampling
+- BENCH-4 | regression-bench | methodology | I4 | C3 | M | plausible | Coverage blind spots: prefill, long-context decode, vision, thinking-on and tool calls are unmeasured; prefill may have regressed about 38-52%
+- BENCH-5 | regression-bench | methodology | I3 | C4 | S | confirmed | A random-salt needle gate blocked a measured prose win by refusing on 'prompt injection' grounds
+- PROTO-1 | regression-bench | methodology | I5 | C4 | M | plausible | Cheap ruler v2: fixed-length multi-distribution decode panel with server-side step metrics
+- PROTO-2 | regression-bench | methodology | I5 | C3 | S | plausible | Noise model and decision rule: factorize tok/s = acceptance x steps/s, paired prompts, ABAB boots, swap gate
+- PROTO-3 | regression-bench | perf | I4 | C3 | S | plausible | Step-time byte-budget model supports the weight-bytes hypothesis and gives a k-selection objective
+- PROTO-4 | regression-bench | methodology | I5 | C4 | M | plausible | nsys protocol for a kernel-level breakdown of one CUDA-graph verify step on both ranks
+- PROTO-5 | regression-bench | methodology | I4 | C3 | S | plausible | Routed-expert capture boot to measure distinct experts per verify step (tests the bytes hypothesis and c=2 sharing)
+- PROTO-6 | regression-bench | ops | I4 | C3 | S | plausible | Make UMA/swap state a recorded, gated measurement precondition
+- regression-bench-MISSED-1 | regression-bench | missed | - | - | - | from-verifier | PR #11's first measurement will change several things at once, against AGENTS.md's one-knob rule: model LibertAI -> nvidia, vision on, and bench_decode.py:166's
+- regression-bench-MISSED-2 | regression-bench | missed | - | - | - | from-verifier | The DF5 vs DF7 decision is already resolvable from existing receipts with the factorized view, which no one applied. The same-night pair gives DF5 step 105.1 ms
+- regression-bench-MISSED-3 | regression-bench | missed | - | - | - | from-verifier | Structured c=1 already serves as a nearly noise-free step-time probe for lossless kernel changes. Acceptance is bit-deterministic (7.8441558 in 4 sessions), wit
+- regression-bench-MISSED-4 | regression-bench | missed | - | - | - | from-verifier | The CoT-era eager ladder in how-explanation.md:133 ('DF4 acc 2.8, c=1 -> 20.6', i.e. about 136 ms/step at a shorter verify) contradicts the linear step model. T
+- regression-bench-MISSED-5 | regression-bench | missed | - | - | - | from-verifier | README.md:22 and b12x result.txt use 'wave2' as the published ruler after a first wave. That selection rule is not justified by data: in h-snap wave2 was slower
+- NMK-1 | attn-kernels | perf | I5 | C3 | M | plausible | Quantize BF16 KDA/MLA/shared-expert projections to FP8 weight-only (Marlin W8A16)
+- NMK-2 | attn-kernels | methodology | I4 | C4 | S | plausible | Byte model explains the ~116 ms step; the ~15 ms per extra sequence is unexplained, so profile before kernel work
+- NMK-3 | attn-kernels | correctness | I4 | C3 | S | plausible | PR #11 nvidia pack: pin the NVFP4 dense-MLP linear kernel to Marlin (--linear-backend marlin)
+- NMK-4 | attn-kernels | ops | I3 | C4 | S | confirmed | mHC TileLang kernels JIT-compile during serving (~5 s each); add a Glm5Next mHC warmup and persist JIT caches
+- NMK-5 | attn-kernels | perf | I3 | C3 | L | plausible | KDA speculative verify writes 8 full fp32 state checkpoints per layer per sequence (612 MiB/step/seq); replace with commit-by-replay
+- NMK-6 | attn-kernels | perf | I2 | C3 | M | plausible | Indexer decode flattening on sm_12x re-reads the kpool K cache 8x per verify step (long-context cost)
+- NMK-7 | attn-kernels | perf | I2 | C4 | S | confirmed | Remove 4 .contiguous() copies per KDA layer and merge f_b/g_b GEMMs (bit-identical kernel trimming)
+- NMK-8 | attn-kernels | perf | I2 | C3 | S | plausible | lm_head FP8 per-channel (optional, after NMK-1): -302 MiB/step
+- NMK-9 | attn-kernels | methodology | I2 | C4 | S | confirmed | CUDA graph status: verify runs FULL graphs; breakable mode is not the bottleneck and Inductor fusions would not help cross-node
+- NMK-10 | attn-kernels | perf | I2 | C2 | M | plausible | Fixed per-step overhead: ~1,600 kernels plus ~90 inter-node PyNCCL allreduces with PDL off (est. 5-8 ms); measure before acting
+- NMK-11 | attn-kernels | perf | I1 | C3 | M | plausible | mHC is fused and graph-resident (<~2.5 ms/step); only a small bf16-fn saving remains
+- NMK-12 | attn-kernels | perf | I1 | C3 | L | plausible | MLA sparse attention (FA2, page_size=1) and absorbed BF16 BMMs are cheap and context-flat; deprioritize
+- attn-kernels-MISSED-1 | attn-kernels | missed | - | - | - | from-verifier | The byte model leaves out the DFlash2 drafter. Header of incoai snapshot 7d74cdd: 2233 MiB BF16, no lm_head or embed. Per rank per step it streams ~1162 MiB: sh
+- attn-kernels-MISSED-2 | attn-kernels | missed | - | - | - | from-verifier | A lower-risk FP8 target than KDA/MLA: the drafter's ~1162 MiB/rank of BF16 weights. W8A16 saves ~581 MiB/rank/step (~2.1-2.7 ms). Target outputs stay lossless b
+- attn-kernels-MISSED-3 | attn-kernels | missed | - | - | - | from-verifier | bench_decode.py sends the identical prompt at temperature 0 to every concurrent stream in BOTH phases (bench_decode.py:36, :97). The prose c=2 cell is identical
+- attn-kernels-MISSED-4 | attn-kernels | missed | - | - | - | from-verifier | Evidence misread: b12x-A wave1 18.98 tok/s at acc 2.281 and wave2 20.85 at acc 2.509 are both ~120 ms/step (8.32 vs 8.31 steps/s). The spread is acceptance-driv
+- attn-kernels-MISSED-5 | attn-kernels | missed | - | - | - | from-verifier | jit_monitor logs through logger.warning_once keyed on the kernel name (vllm/utils/jit_monitor.py _handle_jit_event). Only the first in-inference compile of mhc_
+- XP-1 | sibling-recipes | perf | I5 | C3 | S | plausible | Re-open the spec-k sweep: PR #9's k=5 win was reverted by a lint failure, and DSv4.1 found k=3 plus matched captures optimal
+- XP-2 | sibling-recipes | methodology | I4 | C5 | S | confirmed | Adopt DSv4.1's bench-honesty and ABAB protocol: GLM's prose ruler has a 22% within-boot spread and ±10% between boots
+- XP-3 | sibling-recipes | perf | I5 | C3 | L | plausible | A silu + swiglu_limit SM12x fused-MoE path exists: the standalone b12x TP-MoE (W4A16) used by Anemll, eugr and DSV4-Flash stacks
+- XP-4 | sibling-recipes | ops | I4 | C3 | S | plausible | Port DSv4.1's UMA headroom bundle (NCCL AR-tail set, indexer-workspace factor, fadvise page-cache drop, adaptive empty_cache): about 5 GiB per rank aimed at the nvidia-pack boot cliff
+- XP-5 | sibling-recipes | ops | I3 | C4 | M | confirmed | The flashinfer_cutlass OOM is a runtime-JIT artifact: GLM's image uninstalled flashinfer-jit-cache and runs ninja at default parallelism. Pre-build into a persistent cache and cap MAX_JOBS
+- XP-6 | sibling-recipes | perf | I3 | C2 | L | plausible | Build vLLM _C for 12.1a as eugr does, enabling the AOT VLLM_CUTLASS NVFP4 MoE: clamp-capable, family-120, no runtime JIT
+- XP-7 | sibling-recipes | perf | I3 | C3 | M | plausible | lm_head to MXFP8/FP8: DSv4.1 won +5.9% at no quality cost, and GLM reads its BF16 head twice per step because DFlash2 shares it
+- XP-8 | sibling-recipes | perf | I4 | C2 | L | plausible | BF16 attention projections are the largest non-expert stream (about 6 GB/rank/step); DSv4.1's exact MXFP8 dense path is the template
+- XP-9 | sibling-recipes | ops | I2 | C4 | S | confirmed | Port DSv4.1's post-ready warmup: GLM compiles the same lazy TileLang mHC kernels and pays Triton JIT on the first wave
+- XP-10 | sibling-recipes | methodology | I4 | C4 | S | confirmed | Measure routed-expert overlap with DSv4.1's census before sizing MoE levers; GLM's step time implies strongly correlated routing
+- XP-11 | sibling-recipes | perf | I2 | C2 | M | plausible | Comm and host-latency levers from DSv4.1 k3/comm: PM QoS (about −1.1 ms/step) and a NCCL eager-twin with graph mixing off (modeled about −3 ms/step); skip custom AR and dual-rail
+- XP-12 | sibling-recipes | quality | I4 | C4 | S | plausible | Reuse DSv4.1's quality_eval.py (baseline-gated NLL, decode-vs-prefill, tools, needle, self-consistency, vision) plus tool-eval-bench for the nvidia-vs-LibertAI and requant decisions
+- XP-13 | sibling-recipes | ops | I3 | C4 | S | plausible | Ops hardening from DSv4.1: one FORWARD_ENVS list (GLM's worker ssh line drops LIMIT_MM_PER_PROMPT), an engagement audit, and post-ready floors replacing PR #12's 16 GiB wait-abort
+- XP-14 | sibling-recipes | perf | I2 | C2 | S | plausible | Re-test VLLM_USE_BREAKABLE_CUDAGRAPH=0 on prose ms/step: cross-stack evidence conflicts, and GLM measured only structured c=2 on a single boot
+- XP-15 | sibling-recipes | ops | I2 | C3 | S | plausible | Head rank loads 3.8× slower than the worker (733 s vs 191 s): boot time is the throughput limit on ABAB experiments
+- sibling-recipes-MISSED-1 | sibling-recipes | missed | - | - | - | from-verifier | PR #9 k=5 was hand-applied and rebenched after the lint failure: commit 'perf(recipe): H1-20260903 NUM_SPECULATIVE_TOKENS=5 (hand-applied)', recipe.yaml:49 on a
+- sibling-recipes-MISSED-2 | sibling-recipes | missed | - | - | - | from-verifier | FlashInfer 0.6.18 in the v11 image already contains a clamp-capable b12x W4A16 NVFP4 MoE: flashinfer/fused_moe/cute_dsl/blackwell_sm12x/moe_w4a16_kernel.py:4280
+- sibling-recipes-MISSED-3 | sibling-recipes | missed | - | - | - | from-verifier | The nvidia-pack 'boot failures' were all 8 GiB watcher kills with no kernel OOM (glm53-nvidia-spark-proof.md:92,137). The recorded values are the first sample b
+- sibling-recipes-MISSED-4 | sibling-recipes | missed | - | - | - | from-verifier | The 'Your GPU does not have native support for FP4' warning is emitted unconditionally by prepare_nvfp4_moe_layer_for_marlin (marlin_utils_fp4.py:352-357) whene
+- sibling-recipes-MISSED-5 | sibling-recipes | missed | - | - | - | from-verifier | The fadvise page-cache drop gives almost nothing for GLM's MemAvailable. Page cache already counts as available, and post-stop buff/cache was only 0.6-0.8 GiB (
+- sibling-recipes-MISSED-6 | sibling-recipes | missed | - | - | - | from-verifier | Per-expert per-rank bytes are 7.08 MB (header: 14,155,800 B per expert at layer 10), not 7.5 MB. The 172.97 GiB routed total spans 43 layers including MTP layer
+- sibling-recipes-MISSED-7 | sibling-recipes | missed | - | - | - | from-verifier | The spark1 head's slow load recurs on DSv4.1 too (TP0 334 s vs TP1 191 s, k3-fusion-host flags.md:56), and spark1's root ext4 NVMe is 89% full (df: 3.1T/3.7T). 
+- MOE-1 | moe-kernels | perf | I4 | C3 | S | plausible | Verify-batch expert streaming dominates the decode step; DFlash2-7 pays ~15 ms/step of MoE bytes for drafts prose rarely accepts
+- MOE-2 | moe-kernels | methodology | I3 | C5 | S | confirmed | MoE share of step time is modeled, not measured: profile and microbench Marlin at the exact shapes, and measure the real distinct-expert count
+- MOE-3 | moe-kernels | quality | I2 | C4 | S | confirmed | Router logits are BF16-rounded on sm_121 even though the config asks for fp32 routing
+- MOE-4 | moe-kernels | perf | I3 | C2 | M | plausible | The image already contains a fused SM12x W4A16 NVFP4 MoE with a silu+clamp kernel; FlashInfer dispatch and the vLLM wrapper need a small patch to use it
+- MOE-5 | moe-kernels | methodology | I3 | C4 | S | confirmed | Native W4A4 is not a decode win: bytes are identical, W4A16 is measured faster at batch 1 on GB10, and W4A4 is the lower-fidelity path
+- MOE-6 | moe-kernels | correctness | I3 | C4 | M | confirmed | vLLM's b12x W4A4 wrapper has numerics bugs beyond the missing clamp: the scale bake-in underflows E4M3 and FC2 scale 1.0 underflows small blocks
+- MOE-7 | moe-kernels | ops | I3 | C3 | S | plausible | flashinfer_cutlass OOM came from a runtime JIT, not the kernel: pre-build it in the image, or use vLLM's already-compiled CUTLASS FP4 MoE with no JIT
+- MOE-8 | moe-kernels | perf | I3 | C2 | M | plausible | Prefill: native FP4 MoE helps, but at chunk 2048 its gain is capped by re-streaming all 288 experts every chunk; pair it with a larger chunk
+- MOE-9 | moe-kernels | quality | I2 | C3 | S | plausible | Dense layers 0-2 auto-select the FlashInfer CUTLASS W4A4 GEMM on sm_121; --linear-backend marlin would give W4A16 fidelity at no decode cost
+- MOE-10 | moe-kernels | perf | I2 | C3 | M | confirmed | Shared expert: BF16, already overlapped on an aux stream; the only lever is bytes (FP8 weight-only would save ~0.53 GB/step)
+- MOE-11 | moe-kernels | ops | I2 | C2 | S | plausible | Stability evidence: the Xid 31 concern about b12x is unsubstantiated in lab logs, b12x MoE runs in production on these Sparks, and upstream reports Marlin NVFP4 crashes on SM121
+- moe-kernels-MISSED-1 | moe-kernels | missed | - | - | - | from-verifier | An independent k=5 rebench exists and was not cited: git show origin/agent/hillclimb-20260903:evidence/rebench-dflash5-20260903T045815Z/summary.json (v11, Liber
+- moe-kernels-MISSED-2 | moe-kernels | missed | - | - | - | from-verifier | vLLM v11 already ships a HUMMING NvFp4 MoE backend. It is in NVFP4_BACKENDS_WITH_CLAMP (oracle/nvfp4.py:191-199) and selectable with --moe-backend humming (:149
+- moe-kernels-MISSED-3 | moe-kernels | missed | - | - | - | from-verifier | Upstream vLLM PR #52018 (merged 2026-08-21) adds a direct B12X MoE backend (vllm/model_executor/layers/fused_moe/b12x.py). It has modes (nvfp4,None)->w4a16 mode
+- moe-kernels-MISSED-4 | moe-kernels | missed | - | - | - | from-verifier | The FlashInfer B12xMoEWrapper.run() cannot accept pre-prepared W4A16 weights. It always goes through _get_w4a16_packed_weights, a data_ptr-keyed cache, and dupl
+- moe-kernels-MISSED-5 | moe-kernels | missed | - | - | - | from-verifier | The MTP layer (layers.45) routed experts are BF16 in the nvidia pack: 13.5 GiB versus 3.797 GiB for each NVFP4 MoE layer (safetensors headers). The AGENTS.md ro
+- moe-kernels-MISSED-6 | moe-kernels | missed | - | - | - | from-verifier | The non-MoE per-step byte budget leaves out the DFlash2 drafter: model.safetensors is 2,342,169,800 B, about 1.2-2.3 GB/rank per step depending on TP sharding, 
+- moe-kernels-MISSED-7 | moe-kernels | missed | - | - | - | from-verifier | The .quant_summary.txt holds only experts 0-17 per layer (756 = 42 x 18 weight quantizers). All per-expert amax statistics used in MOE-6 and elsewhere come from
+- EXT-1 | external-research | perf | I5 | C2 | M | plausible | Trim verify width on prose: backport adaptive verification (vLLM #52228) to DFlash2, or use k=3 for prose-heavy serving
+- EXT-2 | external-research | perf | I5 | C3 | M | refuted | Community lanes on the same GB10 pair decode prose 27-33 tok/s against our 21.2; the gap is step time (b12x MoE, smaller verify width), not acceptance
+- EXT-3 | external-research | perf | I4 | C4 | M | confirmed | The b12x MoE clamp blocker is solved upstream: v0.30.0 B12xExperts (--moe-backend b12x) passes swiglu_limit for SiLU
+- EXT-4 | external-research | perf | I4 | C3 | L | plausible | About 7.8 GB per rank of BF16 attention, shared-expert and lm_head weights is read every step; FP8 or MXFP8 packs exist but need a quality gate
+- EXT-5 | external-research | correctness | I4 | C3 | S | plausible | DFlash2 on the v11 draft-KV-group design very likely gets zero prefix-cache hits
+- EXT-6 | external-research | ops | I4 | C4 | S | refuted | Vision-on default (PR #11) has reported front-end memory costs of about 15.7 GiB on 2x Spark; the node is already at about 115/121 GiB
+- EXT-7 | external-research | quality | I3 | C4 | S | confirmed | Local DFlash2 drafter is the stale initial release; two retrained checkpoints followed
+- EXT-8 | external-research | correctness | I3 | C5 | S | confirmed | SPEC=mtp rollback cannot work on the nvidia pack: its MTP layer is 13.84 GiB BF16 and outside the quant ignore list
+- EXT-9 | external-research | ops | I3 | C4 | L | plausible | vLLM v0.30.0 image supports glm5_next natively but is not a drop-in; rebasing still needs about 4 patches plus b12x
+- EXT-10 | external-research | quality | I3 | C4 | S | confirmed | Checkpoint quality facts: nvidia pack is W4A4-calibrated and run as W4A16 by Marlin; ModelOpt corruption reports need a local UTF-8 probe
+- EXT-11 | external-research | ops | I3 | C3 | S | plausible | Long-context and concurrency caveats on SM121: indexer not varlen, persistent_topk SMEM limit, indexer logits churn
+- EXT-12 | external-research | perf | I2 | C3 | M | plausible | RoCEnante one-shot all-reduce and async scheduling: small c=1 gains with stability risks; low priority
+- external-research-MISSED-1 | external-research | missed | - | - | - | from-verifier | The adaptive-verification blocker on GB10 is structural. KpoolTailBackend subclasses DeepseekV32IndexerBackend (v11 indexer.py:130-139, 180), whose supports_dev
+- external-research-MISSED-2 | external-research | missed | - | - | - | from-verifier | Cross-stack step time is equal, so the gap is acceptance. 0rand (same nvidia pin, DFlash2 k=5, b12x, async) runs at about 9.3 steps/s (33.5/(1+5×0.52), 43.0/(1+
+- external-research-MISSED-3 | external-research | missed | - | - | - | from-verifier | Contradicting k evidence was not cited. Tony README:265-279 says lower k 'loses on every single-stream prompt' and later measured 'flat on prose' at single stre
+- external-research-MISSED-4 | external-research | missed | - | - | - | from-verifier | The decision record conflicts. PR #9 decision.tsv adds 'H1-20260903-apply ... NUM_SPECULATIVE_TOKENS=5 kept' (hand-applied to recipe.yaml serve.env), while PR #
+- external-research-MISSED-5 | external-research | missed | - | - | - | from-verifier | Vision was already on during all published measurements. rebench-20260902T204243Z/engine.log.tail:57 profiles the encoder cache with one max-size video item. Pr
+- external-research-MISSED-6 | external-research | missed | - | - | - | from-verifier | The fork's loader dequantizes FP8 attention projections to BF16 (glm5next model.py:1203-1218, _try_load_fp8_attn_proj). Swapping in any community FP8-attention 
+- external-research-MISSED-7 | external-research | missed | - | - | - | from-verifier | The drafter pin is hard-coded in the generated block (run.sh:52 DRAFT_SNAPSHOT path with 7d74cdd, from recipe.yaml:13). Any drafter A/B must go through recipe.y

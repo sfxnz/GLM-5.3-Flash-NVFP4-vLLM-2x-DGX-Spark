@@ -24,7 +24,7 @@ WEATHER_TOOL = {
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
-    p.add_argument("--model", default="LibertAIDAI/GLM-5.3-Flash-NVFP4")
+    p.add_argument("--model", default="nvidia/GLM-5.3-Flash-NVFP4")
     p.add_argument("--max-tokens", type=int, default=256)
     args = p.parse_args()
     body = json.dumps(
