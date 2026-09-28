@@ -1,0 +1,20 @@
+Tier 1 on E2e (v13, GLM53_NVFP4_W4A16=draft, nvidia 09b04e5, drafter 7d74cdd), label e2e-v13-nvfp4-draft-k7
+run: quality/tier1.py run (greedy, serve-default kwargs = thinking off, c=2), 1010 items, 0 errors, one pass,
+  22:43:33Z..00:37:18Z (1 h 54 min) under a 3.0 GiB client memguard (never fired; min spark1 5.51 / spark2 10.47 GiB)
+  results: ~/projects/data/glm53-evals/tier1/e2e-v13-nvfp4-draft-k7/tier1.jsonl (sha256 in tier1-sha256.txt)
+  meta ids_sha256 cb7277af... (same as nvidia-v11-k7)
+
+task          n  E0 nvidia-v11-k7   E2e              diff (pts)
+ifeval      150  106 (70.7%)        103 (68.7%)      -2.00  (A-only 13, B-only 10)
+gsm8k       200  190 (95.0%)        192 (96.0%)      +1.00
+mmlu_pro    280  234 (83.6%)        234 (83.6%)       0.00  (8 / 8 discordant)
+bfcl        120  114 (95.0%)        115 (95.8%)      +0.83
+chartqa     100   92                 91              -1.00
+ocrbench    100   82                 82               0.00
+mmmu         60   39                 39               0.00
+pooled     1010  857 (84.85%)       856 (84.75%)     -0.10, SE 0.68, 95% CI [-1.43, +1.23]; 47 discordant (24 / 23)
+
+quality/compare_tier1.py nvidia-v11-k7 vs e2e (compare-tier1-vs-nvidia-v11-k7.json, tier1-compare.console.txt):
+  pooled -0.10 >= -2.0 PASS; groups BFCL +0.83 p=1.00, GSM8K +1.00 p=0.63, IFEval -2.00 p=0.68, MMLU-Pro 0.00 p=1.00,
+  Vision -0.39 p=1.00: no group fails (fail needs McNemar p < 0.01 and a drop >= 5 points). VERDICT PASS.
+  With the target unchanged, the 47 discordant items are the Tier-1 run-to-run (cross-boot, v11 -> v13 image) noise.

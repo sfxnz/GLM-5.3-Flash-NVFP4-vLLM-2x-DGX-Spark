@@ -1,0 +1,59 @@
+== head (spark1) 2026-09-27T22:10:13Z
+GLM53_ lines: 1
+fp4_gemm / JIT-debug lines: 0
+(APIServer pid=1) INFO 09-27 21:54:56 [api_utils.py:273] non-default args: {'model_tag': '/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3', 'chat_template': '/chat_template.jinja', 'default_chat_tem
+(APIServer pid=1) INFO 09-27 21:55:03 [model.py:679] Resolved architecture: DFlash2DraftModel
+(APIServer pid=1) INFO 09-27 21:55:03 [speculative.py:1256] Overriding draft model max model len from 1048576 to 327680
+(APIServer pid=1) WARNING 09-27 21:55:03 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft 
+(EngineCore pid=177) INFO 09-27 21:55:11 [core.py:122] Initializing a V1 LLM engine (v0.1.dev20051+g487ecf187) with config: model='/cache/huggingface/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/09b04e5e74bca08ca8549fc736d4cdd8624bfde3', speculative_confi
+(Worker_TP0 pid=249) WARNING 09-27 21:55:22 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(Worker_TP0 pid=249) INFO 09-27 21:55:22 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+(Worker_TP0 pid=249) INFO 09-27 21:55:22 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+(Worker_TP0 pid=249) INFO 09-27 22:07:06 [default_loader.py:430] Loading weights took 700.32 seconds
+(Worker_TP0 pid=249) INFO 09-27 22:08:07 [default_loader.py:430] Loading weights took 5.29 seconds
+(Worker_TP0 pid=249) INFO 09-27 22:08:10 [glm53_fp8_w8a16.py:332] GLM53_NVFP4_W4A16: DFlash2Qwen3ForCausalLM draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 91.68 -> 90.92 GiB
+(Worker_TP0 pid=249) WARNING 09-27 22:08:10 [speculator.py:195] Draft model DFlash2Qwen3ForCausalLM does not support external multimodal embeddings. Embeddings from the target model will not be passed to the drafter; using text-only draft inputs instead.
+(Worker_TP0 pid=249) INFO 09-27 22:08:20 [model_runner.py:375] Model loading took 89.55 GiB and 778.518578 seconds
+(Worker_TP0 pid=249) INFO 09-27 22:08:22 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP0 pid=249) INFO 09-27 22:08:57 [gpu_worker.py:492] Initial free memory 109.29 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization confi
+(EngineCore pid=177) INFO 09-27 22:08:57 [kv_cache_utils.py:2204] GPU KV cache size: 372,877 tokens, Maximum concurrency for 327,680 tokens per request: 1.14x
+(Worker_TP0 pid=249) INFO 09-27 22:09:06 [speculator.py:137] Capturing model for DFlash2 speculator...
+(Worker_TP0 pid=249) INFO 09-27 22:09:06 [model_runner.py:1020] Graph capturing finished in 4 secs, took 0.25 GiB
+(Worker_TP0 pid=249) INFO 09-27 22:09:07 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(EngineCore pid=177) INFO 09-27 22:09:07 [core.py:363] init engine (profile, create kv cache, warmup model) took 46.74 s
+(EngineCore pid=177) WARNING 09-27 22:09:22 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(APIServer pid=1) INFO:     Application startup complete.
+== head JIT cache sizes
+132M	033847011721/
+12K	logs/
+39M	033847011721/flashinfer
+5.7M	033847011721/tilelang
+87M	033847011721/triton
+964K	033847011721/vllm
+2073
+== worker (spark2) 2026-09-27T22:10:13Z
+GLM53_ lines: 1
+fp4_gemm / JIT-debug lines: 0
+INFO 09-27 21:54:37 [model.py:679] Resolved architecture: DFlash2DraftModel
+INFO 09-27 21:54:37 [speculative.py:1256] Overriding draft model max model len from 1048576 to 327680
+WARNING 09-27 21:54:37 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or de
+(Worker_TP1 pid=192) WARNING 09-27 21:55:22 [vllm.py:1866] max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional dra
+(Worker_TP1 pid=192) INFO 09-27 21:55:22 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+(Worker_TP1 pid=192) INFO 09-27 21:55:22 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+(Worker_TP1 pid=192) INFO 09-27 21:59:03 [default_loader.py:430] Loading weights took 217.73 seconds
+(Worker_TP1 pid=192) INFO 09-27 21:59:37 [default_loader.py:430] Loading weights took 3.10 seconds
+(Worker_TP1 pid=192) INFO 09-27 21:59:42 [glm53_fp8_w8a16.py:332] GLM53_NVFP4_W4A16: DFlash2Qwen3ForCausalLM draft[nvfp4]=32 layers 1162.0->326.8 MiB; torch reserved 91.68 -> 90.92 GiB
+(Worker_TP1 pid=192) WARNING 09-27 21:59:42 [speculator.py:195] Draft model DFlash2Qwen3ForCausalLM does not support external multimodal embeddings. Embeddings from the target model will not be passed to the drafter; using text-only draft inputs instead.
+(Worker_TP1 pid=192) INFO 09-27 21:59:56 [model_runner.py:375] Model loading took 89.55 GiB and 274.221900 seconds
+(Worker_TP1 pid=192) INFO 09-27 22:08:22 [encoder_runner.py:119] Encoder cache will be initialized with a budget of 32242 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP1 pid=192) INFO 09-27 22:08:57 [gpu_worker.py:492] Initial free memory 110.92 GiB, reserved 4.14 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization confi
+(Worker_TP1 pid=192) INFO 09-27 22:09:06 [speculator.py:137] Capturing model for DFlash2 speculator...
+(Worker_TP1 pid=192) INFO 09-27 22:09:06 [model_runner.py:1020] Graph capturing finished in 4 secs, took 0.17 GiB
+(Worker_TP1 pid=192) INFO 09-27 22:09:07 [jit_monitor.py:79] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+== worker JIT cache sizes
+132M	033847011721/
+39M	033847011721/flashinfer
+5.7M	033847011721/tilelang
+87M	033847011721/triton
+936K	033847011721/vllm
+2066
