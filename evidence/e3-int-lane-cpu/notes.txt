@@ -1,0 +1,56 @@
+E3 (CPU only, no GPU, no serve): INT8 / INT4 GPTQ-Marlin modes for the BF16 non-MoE linears, and the post-swap
+memory release. Branch opt/lane-int8 from opt/nvidia-perf-quality @ 0308983. docker/README-v13.md, section
+"Weight-only Marlin for the BF16 linears", has the full write-up and the GPU validation order.
+
+Why. E2 put FP8 W8A16 (+22.6% A, step 115.3 -> 93.1 ms) and NVFP4 W4A16 (+34.7%, 84.5 ms) on every BF16 non-MoE
+group; both failed Tier 0 on KL (+5.2e-3 and +3.1e-2 over the cross-boot A/A, margin 1e-3). FP8 e4m3 per-channel
+carries ~2.6% relative weight error whatever the scale. INT8 with a BF16 scale per 128 elements along K costs 1.5%
+more bytes than FP8 and runs on vLLM's GPTQ-Marlin kernels (uint8b128), which the v11 image already ships.
+
+Patch (docker/patch_v13_fp8.py)
+  GLM53_INT8_W8A16=<groups>, GLM53_INT4_W4A16=<groups>, GLM53_INT_GROUP_SIZE=64|128 (default 128); a group may sit in
+  one of the four mode variables only. INT8 scale amax/127; INT4 scale ratio*amax/7 with the best of ratios 1.0, 0.95,
+  0.9, 0.85 per group (clamp [-8, 7]). GPTQ layout (bias 128 / 8), then MarlinLinearKernel's own marlin_padded_nk,
+  marlin_pad_qweight, gptq_marlin_repack, marlin_pad_scales, marlin_permute_scales, apply_gptq_marlin_linear. Unset
+  keeps v11 bytes; the INT variables key the compile cache only when set.
+  Shapes (checkpoint headers, TP=2, IntShapeTest and tools/bench_fp8_marlin.py --report-bytes): every per-rank K is a
+  multiple of 128, so no layer falls back at g64 or g128, row-parallel shards split on group boundaries and K is never
+  padded. Only kda_in pads N, 12576 -> 12608 (as FP8 and NVFP4 do).
+
+Reconstruction error (weight_error.txt; 79.5 MiB read with pread + POSIX_FADV_DONTNEED; mean over 1-3 tensors/group)
+  group      FP8     NVFP4   INT8 g128  INT8 g128 bf16*  INT8 g64  INT4 g128 amax  INT4 g128 clip  INT4 g64 clip
+  kda_in     0.0277  0.0858  0.0067     0.0071           0.0061    0.1201          0.1047          0.0971
+  kda_o      0.0261  0.0857  0.0068     0.0072           0.0062    0.1227          0.1072          0.0990
+  mla        0.0253  0.0835  0.0070     0.0072           0.0064    0.1278          0.1106          0.1019
+  shared     0.0250  0.0839  0.0067     0.0069           0.0062    0.1228          0.1061          0.0983
+  lm_head    0.0264  0.0860  0.0067     0.0069           0.0061    0.1207          0.1065          0.0982
+  draft      0.0264  0.0860  0.0065     0.0067           0.0060    0.1185          0.1046          0.0971
+  bf16* = the BF16 product GPTQ-Marlin forms (grouped scales are applied to the weight in BF16 before the MMA).
+  Output error on Gaussian activations equals the weight error to within 2% for every format.
+  INT8 g128 lands at the 0.4-0.8e-2 the lane expected: 3.6-4.1x below FP8. INT4 g128 does NOT land at 4-6e-2: RTN
+  with 16 levels per 128 Gaussian-like weights is ~0.12, 0.10-0.11 with the clip search, 0.097-0.102 at g64, all
+  above NVFP4 (0.083-0.086). INT4 is no lower-error NVFP4; only error-compensating (GPTQ/AWQ) quantization could be.
+
+Bytes per rank per step (all six groups, --report-bytes, g128): BF16 9.203 GB, FP8 4.608, INT8 4.678, NVFP4 2.591,
+  INT4 2.375. At FP8 Marlin's GB/s INT8 costs ~21.1 ms at M=8 (FP8 20.81, BF16 41.11): the E2a step, ~93-94 ms.
+Expected Tier 0 for INT8 on all groups: added KL grew ~error^1.5 from E2a to E2b; INT8's kernel-side error is 0.27x
+  FP8's, so ~+0.7e-3 (0.4e-3 quadratic, 1.4e-3 linear) against the 1e-3 margin and ~1e-3 boot noise. Unmeasured.
+
+Memory release after the swap (allocsim.py, allocsim.txt)
+  E2 target lines: reserved fell 1.52 of 3.42 GiB (E2a), 2.56 of 4.66 (E2b), 0.21 of 1.53 (E2c), 0.29 of 1.63 (E2d).
+  Cause: run.sh sets expandable_segments:True (20 MiB physical pages; empty_cache unmaps only whole free pages) and
+  vLLM loads under max_split_size_mb:20, so freed BF16 blocks are "oversized" for the packed tensors. Each packed
+  weight lands on newly mapped pages among the fp32 transients and keeps two partly used pages once they are unmapped.
+  The allocator model reproduces the four E2 numbers within ~0.3 GiB (1.64 / 2.85 / -0.06 / 0.33 GiB).
+  Fix (_compact, per layer: empty_cache, then copy the new weight/scale tensors) in the model: E2a 2.27, E2b 3.73,
+  E2c 0.39, E2d 0.96, INT8 all 1.78 -> 2.27 GiB. Other orders tried in the model (empty_cache before the repack, drop
+  after the repack, empty_cache before the drop) each beat the E2 order and lose to _compact. The rest (~1.1 GiB for
+  FP8/INT8 all) is pages the freed blocks share with live neighbours. To check on GPU: the swap log line.
+
+Tests (CPU, tvenv torch 2.14.0+cpu, GLM53_V11_SRC = v11 python tree)
+  docker/test_v13_fp8.py 34 OK (apply/idempotence, drift refusal, v11 GPTQ-Marlin API and scalar types, pack_rows
+  equality, error bounds, clip search, chunking, _compact order, per-rank shapes from headers, real-weight error).
+  docker/test_v13_{census,determinism,verify,kpool_tail,misc}.py OK (the Dockerfile chain still applies).
+  tests/ (recipe) 133 OK; kit/render.py --check OK.
+Not run: anything on GPU (bench, boot, Tier 0/1). Open risk: whether the image's Marlin build instantiates BF16 x
+  uint8b128 / uint4b8 for sm_121 (the microbench fails fast if not).
