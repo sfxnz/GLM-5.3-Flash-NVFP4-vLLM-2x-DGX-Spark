@@ -399,6 +399,8 @@ class StubbedLaunch(RunShCase):
         env = self.base_env(**{
             "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
             "IMAGE": "glm53-sm121-v13-test-stub", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
+            # No such interface anywhere, so the worker's VLLM_HOST_IP fallback runs on every host (as on CI).
+            "IFACE": "glm53-test-noif",
             "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
         del env["VALIDATE_ONLY"]
         return subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)

@@ -478,7 +478,8 @@ start_local() {
   env_args+=("${extra_env_args[@]}")
   local host_ip="$HEAD_IP"
   if [[ "$rank" != "0" ]]; then
-    host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    # || true: under pipefail a missing IFACE would exit here before the fallback below.
+    host_ip="$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
     host_ip="${host_ip:-10.100.8.2}"
   fi
   env_args+=(-e "VLLM_HOST_IP=$host_ip")
