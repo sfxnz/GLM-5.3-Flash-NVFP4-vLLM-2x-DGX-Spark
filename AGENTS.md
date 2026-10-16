@@ -1,6 +1,6 @@
 # AGENTS.md — GLM-5.3-Flash-NVFP4 · 2× DGX Spark
 
-Serve `nvidia/GLM-5.3-Flash-NVFP4` at TP=2. Local image chain through `glm53-sm121-v13` (v11 plus opt-in `GLM53_*` patches, `docker/README-v13.md`). Checkpoint `09b04e5`. Default drafter is DFlash2-7 (`SPEC=dflash2`, `7d74cdd`) with its linears in NVFP4 W4A16 (`DRAFT_WEIGHTS=nvfp4`), the kpool tail-ring fix (`KPOOL_TAIL_FIX=1`) and adaptive verify at tau 0.3 (`ADAPTIVE_VERIFY=1`); the target's non-MoE linears (shared, mla, kda_o, kda_in, lm_head) are INT8 W8A16 g128 (`TARGET_WEIGHT_GROUPS_INT8`; `none` keeps them BF16). Prefill dequant is off (`PREFILL_DEQUANT_MIN_M=0`). v11 rollback: `IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0`. MTP-4 rollback is the LibertAI pack plus `SPEC=mtp` (`MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0`); `run.sh` refuses `SPEC=mtp` on the nvidia pack. Vision is on (`LANGUAGE_MODEL_ONLY=0`).
+Serve `nvidia/GLM-5.3-Flash-NVFP4` at TP=2. Local image chain through `glm53-sm121-v14` (v11 plus opt-in `GLM53_*` patches: `docker/README-v13.md`, `docker/README-v14.md`). Checkpoint `09b04e5`. Default drafter is DFlash2-7 (`SPEC=dflash2`, `7d74cdd`) with its linears in NVFP4 W4A16 (`DRAFT_WEIGHTS=nvfp4`), the kpool tail-ring fix (`KPOOL_TAIL_FIX=1`) and adaptive verify at tau 0.4 (`ADAPTIVE_VERIFY=1`); the target's non-MoE linears (shared, mla, kda_o, kda_in, lm_head) are INT8 W8A16 g128 (`TARGET_WEIGHT_GROUPS_INT8`; `none` keeps them BF16). Prefill runs 4608-token chunks (`MAX_NUM_BATCHED_TOKENS=4624`) with `kda_in` dequantized to BF16 at M >= 512 (`PREFILL_DEQUANT_MIN_M=512`), and NCCL uses both RoCE rails (`HCA=rocep1s0f1,roceP2p1s0f1`). `DECODE_FIXES=1` turns on v14's router dedupe and head-gate GEMM. v13 rollback: `IMAGE=glm53-sm121-v13 DECODE_FIXES=0`. v11 rollback: `IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0`. MTP-4 rollback is the LibertAI pack plus `SPEC=mtp` (`MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0`); `run.sh` refuses `SPEC=mtp` on the nvidia pack. Vision is on (`LANGUAGE_MODEL_ONLY=0`).
 
 Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq recipe. Do not copy those flags onto 2× Spark. LibertAI's GB10 recipe is a different stack (MTP-3, eager, 64K). Rollback: `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177`.
 
@@ -8,11 +8,12 @@ Humans read [README.md](README.md). NVIDIA's card is a GB200 TP=4 / EP / 32-seq 
 
 - `recipe.yaml` is the source of truth for pins and generated blocks. Edit it, then `python3 kit/render.py`. Do not hand-edit `# BEGIN generated` or `<!-- BEGIN generated` blocks.
 - Change one knob at a time against `python3 bench_decode.py`. Revert if it does not beat noise or it regresses another cell. Record the revert in `evidence/` (`trail.tsv`, `decision.tsv`).
-- The v13 switches are recipe knobs: `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `PREFILL_DEQUANT_MIN_M`, `KPOOL_TAIL_FIX`, `ADAPTIVE_VERIFY`, `ADAPTIVE_VERIFY_TAU`. Change their defaults in `recipe.yaml`, or set one per boot as env. `run.sh` turns them into `GLM53_*` env on both ranks; do not set those variables through `EXTRA_ENV`. Other `GLM53_*` switches still go through `EXTRA_ENV`. `VALIDATE_ONLY=1 ./run.sh` prints every `GLM53_*` the containers get (`==> glm53_env:`).
-- `PREFILL_DEQUANT_MIN_M` stays `0` unless a long-context A/B (cell E, `python3 bench_decode.py --cells E`) clears +5% prefill at both 32k and 128k. E6's `512` gave +6.4% / +3.5% and was reverted (`evidence/e6-prefill/notes.txt`).
+- The v13 and v14 switches are recipe knobs: `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `PREFILL_DEQUANT_MIN_M`, `KPOOL_TAIL_FIX`, `ADAPTIVE_VERIFY`, `ADAPTIVE_VERIFY_TAU`, `DECODE_FIXES`. Change their defaults in `recipe.yaml`, or set one per boot as env. `run.sh` turns them into `GLM53_*` env on both ranks; do not set those variables through `EXTRA_ENV`. Other `GLM53_*` switches still go through `EXTRA_ENV`. `VALIDATE_ONLY=1 ./run.sh` prints every `GLM53_*` the containers get (`==> glm53_env:`).
+- `PREFILL_DEQUANT_MIN_M` is `512` because it pays at 4608-row chunks: r2 B3 +13.8% prefill at both 32k and 128k (`evidence/r2/`). At 1152-row chunks (vLLM's 2048 batched tokens) E6 got only +6.4% / +3.5%, so re-check cell E (`python3 bench_decode.py --cells E`) if `MAX_NUM_BATCHED_TOKENS` changes.
+- Do not edit `run.sh` (or run `kit/render.py`, which rewrites it) while a `./run.sh` is running. Bash reads the script as it goes, so an edit shifts its offsets; r2 B4 hit `line 691: ID: command not found` after ready.
 - Read unified memory with `free -h`. Never `nvidia-smi` VRAM.
 - Exclusive GPUs. Do not start this while another `--gpus all` serve is up.
-- Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `enp1s0f1np1` / `rocep1s0f1`.
+- Pin `NCCL_IB_HCA`. GB10 exposes four HCAs and two are DOWN. Unpinned NCCL picks a dead one and fails with `unhandled system error`. Defaults in `run.sh` are `IFACE=enp1s0f1np1` and `HCA=rocep1s0f1,roceP2p1s0f1`, the two UP rails (two PCIe functions of one CX-7 port; r2 B1). `HCA=rocep1s0f1` is the one-rail rollback.
 - Keep `chat_template.jinja`. The stock HF template and the official NVIDIA Hub template always open `<think>`, so `enable_thinking: false` used to leak chain-of-thought into `content`. `thinking` is an alias of `enable_thinking` (the `glm45` parser's rule). The only allowed difference from the Hub copy in `tests/data/` is the generation prompt; `tests/test_chat_template.py` enforces it.
 - Leave vision on. `LANGUAGE_MODEL_ONLY=1` is refused unless `FORCE_UNSAFE_VISION=1`. Cap is `--limit-mm-per-prompt '{"image":4,"video":1}'`. Do not skip MM profiling. Vision was already on in every LibertAI measurement; the cap is new.
 - Published decode score is prose only. Do not score decode from structured, code, or other cells.
@@ -33,12 +34,20 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 - `LANGUAGE_MODEL_ONLY` other than `0` unless `FORCE_UNSAFE_VISION=1`, and anything other than exactly `0` or `1` always.
 - KV pin at or below `3886945403` (3.62 GiB) cannot hold 327680. Tony's 3.0 GiB pin is a 262144-ctx budget.
 - `EXTRA_ENV` with `FLASHINFER_JIT_VERBOSE=1` unless it also sets `FLASHINFER_JIT_DEBUG=0`. This image's FlashInfer reads verbose as debug when debug is unset (`flashinfer/jit/core.py:525-528`), so every JIT kernel builds `-O0 --device-debug`; on 2026-09-27 that pushed spark1 under the PROFILE floor.
-- Any v13 knob that is on while `IMAGE` is not a `glm53-sm121-v13*` tag, unless `FORCE_UNSAFE_IMAGE=1`. Older images ignore `GLM53_*`.
+- Any v13 knob that is on while `IMAGE` is not a `glm53-sm121-v13*` or `glm53-sm121-v14*` tag, and `DECODE_FIXES=1` on anything but a `glm53-sm121-v14*` tag, unless `FORCE_UNSAFE_IMAGE=1`. Older images ignore `GLM53_*`.
 - `ADAPTIVE_VERIFY=1` with any `SPEC` but `dflash2`. The verify width comes from DFlash2's selector scores.
-- `TARGET_WEIGHT_GROUPS_INT8` with `draft` (`DRAFT_WEIGHTS` owns the drafter) or a name outside `patch_v13_fp8.py`'s groups; `DRAFT_WEIGHTS` other than `bf16` / `nvfp4`; `PREFILL_DEQUANT_MIN_M` that is not `0` or an integer of at least 64 (1-63 would reach the captured decode graphs); `KPOOL_TAIL_FIX` or `ADAPTIVE_VERIFY` other than `0` / `1`; `ADAPTIVE_VERIFY_TAU` that is not a decimal strictly between 0 and 1.
-- `EXTRA_ENV` setting a knob's variable: `GLM53_NVFP4_W4A16`, `GLM53_INT8_W8A16`, `GLM53_WQ_DEQUANT_MIN_M`, `GLM53_WQ_DEQUANT_GROUPS`, `GLM53_KPOOL_TAIL_FIX`, `GLM53_ADAPTIVE_VERIFY`, `GLM53_ADAPTIVE_VERIFY_TAU`.
+- `TARGET_WEIGHT_GROUPS_INT8` with `draft` (`DRAFT_WEIGHTS` owns the drafter) or a name outside `patch_v13_fp8.py`'s groups; `DRAFT_WEIGHTS` other than `bf16` / `nvfp4`; `PREFILL_DEQUANT_MIN_M` that is not `0` or an integer of at least 64 (1-63 would reach the captured decode graphs); `KPOOL_TAIL_FIX` or `ADAPTIVE_VERIFY` other than `0` / `1`; `ADAPTIVE_VERIFY_TAU` that is not a decimal strictly between 0 and 1; `DECODE_FIXES` other than `0` / `1`.
+- `EXTRA_ENV` setting a knob's variable: `GLM53_NVFP4_W4A16`, `GLM53_INT8_W8A16`, `GLM53_WQ_DEQUANT_MIN_M`, `GLM53_WQ_DEQUANT_GROUPS`, `GLM53_KPOOL_TAIL_FIX`, `GLM53_ADAPTIVE_VERIFY`, `GLM53_ADAPTIVE_VERIFY_TAU`, `GLM53_ROUTER_DEDUPE`, `GLM53_HEADGATE_MM`.
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
+
+## Measured (r2, 2026-10-16)
+
+- Published decode, three plain `./run.sh` boots (R1-R3): prose A 31.23 tok/s (step 69.3 ms, acceptance 2.17), H 21.46 per stream / 40.50 aggregate. Against the 2026-09-28 defaults: A +4.0% [+3.2, +4.8], H +3.8% [+1.7, +5.8], both KEEP (`evidence/r2/compare-r123-vs-f12g2.txt`).
+- Prefill (cell E): 1593 / 1562 tok/s at 32k / 128k against 1187 / 1183 (+34.3% / +32.0%); TTFT at 128k 109.8 → 83.8 s. Per lever, one boot each: both rails +3.3% / +2.1%, 4608-token chunks +13.7% / +14.5%, `kda_in` dequant +13.8% / +13.8% (`evidence/r2/prefill-table.txt`).
+- Quality: Tier 0 on R1 inside the cross-boot A/A (KL top-20 6.82e-3, limit 6.86e-3); count-200, thinking-off, needles 8k/32k and vision 13/13 pass.
+- Reverted: tau 0.5 (plateau), `GLM53_LATE_MLA_PLAN` (no decode change), every NCCL protocol/algorithm/channel override (slower at 64 KiB).
+- The fp8 pool is 360,448 tokens at 4624 batched tokens (372,877 at 2048), still 1.10x of 327680.
 
 ## Measured (E0-E6, 2026-09-27/28)
 
@@ -56,6 +65,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 python3 kit/render.py --check
 python3 -m unittest discover -s tests      # CPU: VALIDATE_ONLY guards, v13 knobs, worker forwarding, JIT cache, template kwargs + Hub parity
 GLM53_V11_SRC=/path/to/v11src python3 docker/test_v13_misc.py   # v13 patches; the fp8 test reads the same var
+GLM53_V13_SRC=/path/to/v13src python3 -m unittest docker/test_v14_decode.py   # v14 patch
 python3 bench_decode.py                    # ruler v2 fast gate after serve is up; cells A (prose, c=1) and H (prose, c=2) are the published rows
 python3 smoke_vision.py                    # must not return HTTP 400 "is not a multimodal model"
 ```
@@ -67,7 +77,7 @@ Thinking-off smoke must not start `content` with chain-of-thought. Greedy count 
 ## Never touch
 
 - Live HF tokens
-- Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` as the serve image. `run.sh` refuses it. Build v8 → v9 → v10 → v11 → v13.
+- Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` as the serve image. `run.sh` refuses it. Build v8 → v9 → v10 → v11 → v13 → v14.
 - Hand-edited generated README / `run.sh` blocks
 - Advertising a 1M window on this fp8 pin
 - Copying NVIDIA's TP=4 / `--enable-expert-parallel` / `--max-num-seqs 32` / `--max-num-batched-tokens 8192` onto 2× Spark

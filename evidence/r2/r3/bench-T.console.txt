@@ -1,0 +1,15 @@
+ruler=v2 url=http://127.0.0.1:8000/v1/chat/completions model=nvidia/GLM-5.3-Flash-NVFP4 cells=T runs=1 tokens=512 git=5120ea3daf0dab0a2dfa74468e6b1c83608e8e0a
+T c=1 [T/00] tok/s=41.72 step_ms=73.3 acc_len=3.060 ttft=0.239s tokens=[512]
+T c=1 [T/01] tok/s=35.08 step_ms=71.4 acc_len=2.515 ttft=0.298s tokens=[512]
+T c=1 [T/02] tok/s=35.86 step_ms=70.5 acc_len=2.535 ttft=0.235s tokens=[512]
+T c=1 [T/03] tok/s=33.69 step_ms=72.6 acc_len=2.445 ttft=0.227s tokens=[512]
+T c=1 [T/04] tok/s=32.69 step_ms=69.8 acc_len=2.281 ttft=0.276s tokens=[512]
+T c=1 [T/05] tok/s=34.51 step_ms=68.6 acc_len=2.366 ttft=0.298s tokens=[512]
+T c=1 [T/06] tok/s=35.16 step_ms=70.6 acc_len=2.485 ttft=0.241s tokens=[512]
+T c=1 [T/07] tok/s=40.68 step_ms=72.2 acc_len=2.937 ttft=0.288s tokens=[512]
+
+cell     c   n   tok/s            95% CI  step_ms acc_len  ttft_s     agg  prefill  valid
+-----------------------------------------------------------------------------------------
+T        1   8   36.17     [33.45,38.90]     71.1   2.578   0.259       -      198  ok
+published decode score = cell A tok/s (prose, c=1); K is the legacy continuity row
+SUMMARY [{"group": "T", "cell": "T", "c": 1, "n_waves": 8, "n_failed": 0, "n_requests": 8, "tok_s": {"n": 8, "median": 35.119402860512295, "mean": 36.173349358419664, "stdev": 3.2616953579258023, "ci95": [33.446070492365536, 38.90062822447379]}, "stream_tok_s": {"n": 8, "median": 35.119402860512295, "mean": 36.173349358419664, "stdev": 3.2616953579258023, "ci95": [33.446070492365536, 38.90062822447379]}, "step_ms": {"n": 8, "median": 70.97954429357767, "mean": 71.11896967685905, "stdev": 1.5720349665548587, "ci95": [69.80450671496257, 72.43343263875553]}, "acceptance_len": {"n": 8, "median": 2.500071387778412, "mean": 2.5779281133644356, "stdev": 0.27417295974335737, "ci95": [2.3486773597848374, 2.807178866944034]}, "agg_tok_s": null, "ttft_s": {"n": 8, "median": 0.25873434264212847, "mean": 0.2626982856891118, "stdev": 0.03016084394857914, "ci95": [0.23747918235273346, 0.28791738902549013]}, "prompt_tokens": {"n": 8, "median": 45.5, "mean": 45.25, "stdev": 1.7525491637693282, "ci95": [43.784599411789195, 46.715400588210805]}, "client_prefill_tok_s": {"n": 8, "median": 173.14313741797372, "mean": 173.94319161802028, "stdev": 17.914019524850204, "ci95": [158.9643166788003, 188.92206655724027]}, "server_prefill_tok_s": {"n": 8, "median": 198.79981485060244, "mean": 197.9555210566985, "stdev": 5.469265297901425, "ci95": [193.38237426554772, 202.52866784784928]}, "itl_ms": {"n": 8, "median": 70.9799813651634, "mean": 71.11927903458495, "stdev": 1.5724212856301911, "ci95": [69.80449305053769, 72.43406501863221]}, "per_pos": [0.6910112359550562, 0.38264669163545567, 0.2103620474406991, 0.12421972534332085, 0.07116104868913857, 0.04431960049937578, 0.03058676654182272], "sanity_max_err": 0.003898635477582846, "sanity_ok": true, "short_requests": 0, "valid": true, "invalid_reason": null}]
