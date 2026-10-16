@@ -1,0 +1,75 @@
+r2: prefill and decode round on the nvidia pack. 2026-10-16, branch opt/r2-prefill-decode. Both nodes exclusive (the
+Nemotron serve on spark1 was stopped with `docker stop -t 120` first; its inspect is in
+~/projects/data/glm53-r2/nemotron-inspect.json). Memory read from free -h / /proc/meminfo only.
+
+VERDICT  New defaults: HCA=rocep1s0f1,roceP2p1s0f1, MAX_NUM_BATCHED_TOKENS=4624, PREFILL_DEQUANT_MIN_M=512,
+         ADAPTIVE_VERIFY_TAU=0.4, IMAGE=glm53-sm121-v14 with DECODE_FIXES=1. Three plain ./run.sh boots (R1-R3) against
+         the 2026-09-28 defaults (F1, F2b, G2), kit/compare.py, boot = unit (compare-r123-vs-f12g2.txt):
+           A +4.0% [+3.2,+4.8] KEEP, H +3.8% [+1.7,+5.8] KEEP, K@c1 +10.0% KEEP, B +1.7% [+0.4,+2.9], J@c1 +0.6%,
+           J@c2 +0.3%, K@c2 +0.8% (no regression); step A -5.3%, acceptance A -1.5%.
+         Prefill, cell E (prefill-table.txt): 1593 / 1562 tok/s at 32k / 128k vs F 1187 / 1183 (+34.3% / +32.0%) and E0
+           1331 / 1329 (+19.7% / +17.5%); TTFT 128k 109.8 -> 83.8 s.
+
+METHOD   evidence/r2-tools/cycle.sh DIR [env]: VALIDATE_ONLY, evidence/e1-tools/boot.sh (uma_watch + ./run.sh), count-200 +
+         thinking-off probe, fast gate (A,B,J,H,K), cell E, stop. One knob per boot, stacked: each boot is the previous
+         one plus one change. table.sh prints one line per cell. final.sh is the same for plain ./run.sh, plus cell T
+         and (R1) Tier 0 compare and smoke_vision.py.
+
+PROFILE  Starting point: the E5 F3 traces (evidence/e5-final/f3/buckets). Prefill chunk (1152 rows, 1002 ms): routed
+         MoE 349 ms (35%), INT8 Marlin 221 ms (22%), indexer 107, NCCL 83, KDA 76, mHC 72. Decode verify step (79 ms
+         profiled): routed MoE 33.6, INT8 Marlin 18.6, BF16 GEMM 6.3, idle 5.5, drafter 5.2, NCCL 3.8.
+  chunk  The scheduler ends prefill chunks on the 1152-token mamba-align block (scheduler._mamba_block_aligned_split,
+         cache block 1152), so vLLM's 2048 budget gives 1152-token chunks. The routed-expert weights (~7 MB per expert
+         per rank, all experts touched by a 1152-token chunk) stream once per chunk: 76 GB/rank/chunk at ~230 GB/s =
+         the 349 ms. 4624 gives 4608-token chunks (+16 leaves room for two decoding requests' verify rows).
+  nccl   ~/projects/data/glm53-r2/ar_bench.py (torch all_reduce across the nodes in the serve image): one rail
+         (rocep1s0f1) 9 MiB 1085 us, 18 MiB 1725 us, 36 MiB 3455 us; both UP rails (rocep1s0f1,roceP2p1s0f1) 720 / 905 /
+         1777 us; 64 KiB 55 vs 51 us. Small-message sweep on both rails: default 49 us, NCCL_PROTO=LL 60, LL128 51,
+         NCCL_ALGO=Tree 65, NCCL_MAX_NCHANNELS=1 99. Defaults stay.
+  bf16   A subagent mapped the 6.3 ms BF16 bucket kernel by kernel (~/projects/data/glm53-r2/bf16map/): the "shared
+         expert x2" label is the MoE router, called twice per layer (Glm5NextMoE.forward computes router_logits and
+         the MoERunner, which holds the gate, recomputes them before reading the argument): 0.72 ms dead per step. The
+         indexer head-gate torch.mm(x.float(), W_fp32) [8x4096 x 4096x32] runs as gemmSN_NN<float> on a [1,2,1] grid,
+         72 us x 11 layers. Both became docker/patch_v14_decode.py.
+  idle   A second subagent split the 5.5 ms idle (~/projects/data/glm53-r2/idle/): ~2.4 ms after the SM90 sparse-MLA
+         plan's seq_lens.cpu() sync, where the four KDA metadata builders run on the host while the GPU waits. The F3
+         trace ran with GLM53_EXPERT_CENSUS on (a .cpu() per step), so its host timing is not the default serve's.
+
+v14      docker/Dockerfile.sm121-v14 (FROM glm53-sm121-v13) + patch_v14_decode.py: GLM53_ROUTER_DEDUPE,
+         GLM53_HEADGATE_MM, GLM53_LATE_MLA_PLAN, all off in the image. test_v14_decode.py (6 tests, GLM53_V13_SRC = the
+         vllm tree copied out of glm53-sm121-v13): anchors once, apply twice, py_compile, defaults off, drift refusal.
+         Head-gate microbench (spark1, headgate_bench.py): M=8 41.3 -> 20.7 us, M=16 42.7 -> 8.0, M=1152 168.9 -> 17.0,
+         M=4608 1135 -> 166 us; max relative difference 4e-6. Built on spark1 and shipped with docker save | ssh spark2
+         docker load: 7bed3aded5df (B4, B5), then 9599a9fc5fe5 (adds LATE_MLA_PLAN; B6, B7, R1-R3) on both nodes.
+
+BOOTS    single boot each; prefill tok/s at 32k / 128k (server metric), decode tok/s
+         B0 plain v13 defaults         A 30.09 H 20.48 B 46.30 J@c2 67.35   prefill 1183 / 1181   step A 74.1
+         B1 + both rails               A 29.77 H 20.86 B 45.76 J@c2 71.43   prefill 1222 / 1206   step A 74.5
+         B2 + 4624 batched tokens      A 29.15 H 21.06 B 46.04 J@c2 71.08   prefill 1389 / 1381   step A 72.8
+         B3 + PREFILL_DEQUANT_MIN_M=512 A 30.06 H 20.43 B 46.23 J@c2 71.51  prefill 1581 / 1571   step A 73.5
+         B4 + v14 dedupe + head-gate   A 30.10 H 20.98 B 46.29 J@c2 68.24   prefill 1597 / 1568   step A 72.8 (cold cache)
+         B5 + tau 0.4                  A 31.37 H 22.01 B 47.84 J@c2 71.85   prefill 1594 / 1586   step A 69.7
+         B6 + LATE_MLA_PLAN            A 31.11 H 21.77 B 47.52 J@c2 71.95   prefill 1579 / 1299   step A 69.9  REVERTED
+         B7 B5 + tau 0.5               A 31.20 H 22.15 B 47.42 J@c2 71.88   prefill 1588 / 1580   step A 67.1  REVERTED
+         Every boot: count-200 200/200, thinking-off PING. Ready 15-16 min on a warm cache (B4 cold: 19.6 min).
+  B4     run.sh exited 127 ("line 691: ID: command not found") after ready because run.sh was edited during the boot
+         (bash reads the script incrementally). The serve had been configured before the edit; the bench is valid.
+  B6     E@128k 1299 is one sample; the 9599a9fc5fe5 JIT cache was seeded from 7bed3aded5df and three root-owned files
+         (two modelinfos, the FlashInfer autotune json) did not copy. R1-R3 on the same image read 1575 / 1522 / 1588.
+  pool   KV pool 372,877 tokens at 2048 batched tokens, 360,448 at 4624 (1.14x -> 1.10x of 327680).
+
+FINAL    R1-R3 plain ./run.sh at 5120ea3 (final.sh), image 9599a9fc5fe5 on both nodes, ready 16.1 / 15.2 / 15.2 min.
+                 A      H      B      J@c1   J@c2   K@c1   K@c2   T      E 32k / 128k     after ready (spark1/2)
+         R1      31.32  21.40  47.42  85.54  71.62  30.32  21.17  37.14  1596 / 1575     9.4 / 12.8 GiB
+         R2      31.15  21.16  47.43  85.70  67.68  30.18  21.94  35.79  1587 / 1522     6.4 / 13.3 GiB
+         R3      31.24  21.83  46.84  85.76  72.33  31.84  21.51  36.17  1598 / 1588     8.4 / 13.0 GiB
+         Published rows (recipe.yaml measured): A 31.23 (agg 31.23, TTFT p50 0.27 s, step 69.3, acc 2.17); H 21.46 per
+         stream (agg 40.50, TTFT 0.39 s, step 99.7, acc 2.14).
+  tier0  R1, quality/tier0.py compare --ref nvidia-v11-k7 --stage fp8 (r1/tier0.json), judged against the cross-boot A/A
+         limits as in E5/E6: |dNLL| 0.000816 <= 0.005 PASS; top-1 0.981356 >= 0.97826 PASS; KL top-20 6.815e-3 <=
+         6.864e-3 PASS (F1 6.625e-3, G1 6.657e-3, E4b 6.826e-3); greedy hazard 0.013481 <= 0.0192 PASS. Tool verdict
+         9/11 (its same-boot KL limit and utf8), the same pair as F1/G1. count 200, kwargs 12/12, tools json 1.00
+         (args_ok 0.96), needle 8k 3/3 32k 3/3, vision 13/13. smoke_vision.py 12/13: video answered 3186 (E0's known
+         decision boundary); no HTTP 400.
+
+CLEANUP  After R3: stop_serve.sh, spark1 conduit only, spark2 no containers.

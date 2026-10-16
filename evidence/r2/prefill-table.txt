@@ -1,0 +1,12 @@
+server prefill tok/s and TTFT s per E cell (32k = 32,630 prompt tokens, 128k = 130,279); mean over boots
+arm                                 32k tok/s  128k tok/s  TTFT 32k  TTFT 128k  boots
+B0 (today, published defaults)           1183        1181     27.73     110.68  1  1183/1181
+B1 +dual rail                            1222        1206     26.84     108.37  1  1222/1206
+B2 +4608 chunks                          1389        1381     23.63      94.77  1  1389/1381
+B3 +kda_in dequant                       1581        1571     20.78      83.30  1  1581/1571
+R1-R3 (new defaults)                     1593        1562     20.61      83.81  3  1596/1575 1587/1522 1598/1588
+
+R1-R3 vs published F (F1+F2b E1/E2, 3 panels)   32k +34.3%  128k +32.0%
+R1-R3 vs G2 (published boot)                    32k +33.7%  128k +31.2%
+R1-R3 vs E0 (BF16 target, v11)                  32k +19.7%  128k +17.5%
+TTFT at 128k: G2 109.82 s -> 83.81 s; E0 98.4 s

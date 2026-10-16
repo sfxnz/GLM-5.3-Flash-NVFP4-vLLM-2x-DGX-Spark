@@ -1,0 +1,15 @@
+FROM glm53-sm121-v13
+
+# v14: opt-in decode-step patches, Python only. Every behaviour sits behind a
+# GLM53_* env var and is off by default, so with no new GLM53_* set v14 serves
+# like v13. docker/README-v14.md lists the switches and their checks.
+ARG VLLM_ROOT=/usr/local/lib/python3.12/dist-packages/vllm
+
+# Router dedupe, indexer head-gate GEMM.
+COPY patch_v14_decode.py /tmp/patch_v14_decode.py
+RUN touch /tmp/v14.stamp \
+    && python3 /tmp/patch_v14_decode.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v14_decode.py \
+    && find "$VLLM_ROOT" -name '*.py' -newer /tmp/v14.stamp -print0 \
+        | xargs -0 -r python3 -m compileall -q \
+    && rm /tmp/v14.stamp

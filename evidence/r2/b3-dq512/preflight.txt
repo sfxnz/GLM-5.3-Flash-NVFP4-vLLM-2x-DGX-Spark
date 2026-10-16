@@ -1,0 +1,57 @@
+== 2026-10-16T17:54:22Z preflight; env for run.sh: HCA=rocep1s0f1,roceP2p1s0f1 MAX_NUM_BATCHED_TOKENS=4624 PREFILL_DEQUANT_MIN_M=512
+git 072c3f68fe425edb141e08cc60576f4bb0477ed2 opt/r2-prefill-decode
+ M evidence/decision.tsv
+ M evidence/trail.tsv
+?? docker/Dockerfile.sm121-v14
+?? docker/README-v14.md
+?? docker/patch_v14_decode.py
+?? docker/test_v14_decode.py
+?? evidence/r2-tools/
+?? evidence/r2/
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+8902dd0a3708 vllm/vllm-openai Exited (0) About an hour ago nemotron-3.5-super-vl
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 3 weeks ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 3 weeks conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       6.5Gi       113Gi       1.3Mi       3.8Gi       115Gi
+Swap:           15Gi       4.9Gi        11Gi
+== spark1 image glm53-sm121-v13
+sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9
+== spark1 JIT cache
+total 28
+drwxr-xr-x  7 sfxnz sfxnz 4096 Sep 28 13:08 .
+drwxrwxr-x 29 sfxnz sfxnz 4096 Oct 16 17:29 ..
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 27 18:15 033847011721
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 13:09 14f7b1066fe3
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 01:52 56c6084f422c
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:58 c9729cc0738f
+drwxr-xr-x  2 sfxnz sfxnz 4096 Sep 27 19:13 logs
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+134M	/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+12K	/home/sfxnz/projects/data/glm53-jit-cache/logs
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.3Gi       108Gi       200Ki       9.6Gi       117Gi
+Swap:           15Gi       2.4Gi        13Gi
+== spark2 image glm53-sm121-v13
+sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9
+== spark2 JIT cache
+total 24
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 13:08 .
+drwxrwxr-x 10 sfxnz sfxnz 4096 Oct 16 17:29 ..
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 27 18:14 033847011721
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 13:08 14f7b1066fe3
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 01:51 56c6084f422c
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 05:57 c9729cc0738f
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+133M	/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+== spark2 GPU compute apps (process list, not memory)

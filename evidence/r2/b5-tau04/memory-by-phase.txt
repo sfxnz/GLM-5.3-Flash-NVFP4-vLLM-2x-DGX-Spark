@@ -1,0 +1,22 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3208 min= 13.52 @ 19:02:02  first=115.14 last= 21.48  swap_first=4.76 swap_max=8.26  span=18:48:57..19:02:32
+spark1 PROFILE  n=   111 min= 11.92 @ 19:03:00  first= 21.45 last= 13.60  swap_first=7.99 swap_max=7.99  span=19:02:32..19:03:00
+spark1 KV_READY n=   263 min=  6.24 @ 19:04:05  first= 11.51 last=  6.34  swap_first=7.99 swap_max=8.00  span=19:03:00..19:04:07
+spark1 SERVING  n=   114 min=  5.41 @ 19:04:13  first=  6.33 last=  5.62  swap_first=7.83 swap_max=7.83  span=19:04:07..19:12:30
+spark2 LOAD     n=  3211 min= 15.47 @ 18:54:09  first=116.78 last= 23.41  swap_first=2.25 swap_max=5.08  span=18:48:57..19:02:32
+spark2 PROFILE  n=   111 min= 14.27 @ 19:03:00  first= 23.41 last= 14.27  swap_first=5.05 swap_max=5.05  span=19:02:32..19:03:00
+spark2 KV_READY n=   264 min= 12.53 @ 19:03:07  first= 15.25 last= 13.37  swap_first=5.05 swap_max=5.05  span=19:03:00..19:04:07
+spark2 SERVING  n=   121 min= 13.00 @ 19:12:35  first= 13.32 last= 13.00  swap_first=5.05 swap_max=5.05  span=19:04:07..19:12:35
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-10-16T18:48:57.515Z
+PROFILE  from 2026-10-16T19:02:32.607Z
+KV_READY from 2026-10-16T19:03:00.816Z
+SERVING  from 2026-10-16T19:04:07.757Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        19:04:08..19:04:15  spark1 min=5.41@19:04:13 swap 7.83->7.83 | spark2 min=13.13@19:04:14 swap 5.03->5.02
+bench-fast                         19:04:15..19:10:38  spark1 min=5.49@19:04:18 swap 7.82->7.72 | spark2 min=13.12@19:05:09 swap 5.02->4.88
+bench-E                            19:10:38..19:12:34  spark1 min=5.56@19:12:25 swap 7.72->7.72 | spark2 min=13.02@19:12:29 swap 4.86->4.85
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+spark1 flashinfer:topk                                                    pids=   1 rows=    1 19:03:00..19:03:00 phases=['PROFILE'] peak_proc=    4 peak_sum=    4
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB
+spark1 PROFILE  busy_s=    1 peak_sum_rss=    4

@@ -1,0 +1,27 @@
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+[nll] {"docs": 96, "tokens": 184990, "mean_nll": 0.484033, "vs_ref": {"tokens": 184990, "nll_ref": 0.484849, "nll_cand": 0.484033, "delta": -0.000816, "top1_agree": 0.981356, "kl": 0.00681514, "mismatched_docs": [], "by_domain": {"chat": {"tokens": 11504, "nll_ref": 1.044623, "nll_cand": 1.044688, "delta": 6.5e-05, "top1_agree": 0.973835, "kl": 0.00797438}, "code": {"tokens": 36468, "nll_ref": 0.172989,
+[greedy] {"golden": {"hazard": 0.013481, "diverged": 17, "pairs": 20, "first_div": [25, 36, null, 20, 109, 83, null, 65, null, 83, 32, 121, 6, 26, 113, 9, 53, 46, 90, 169]}, "s": 69.2}
+[count] {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop", "s": 5.1}
+[kwargs] {"pass": true, "passed": 12, "total": 12, "s": 3.7}
+[utf8] {"pass": false, "fffd": 0, "rows": 40, "complete": true, "square_errors": 8, "cube_errors": 6, "chinese_numeral_errors": 5, "finish_reason": "length", "s": 51.0}
+[tools] {"n": 50, "json_valid": 1.0, "called": 1.0, "name_ok": 1.0, "args_ok": 0.96, "s": 65.3}
+[vision] {"pass": true, "passed": 13, "total": 13, "skipped": [], "s": 7.6}
+[needle] {"pass": true, "per_length": {"8192": 3, "32768": 3}, "s": 81.1}
+PASS nll.delta value=-0.000816 limit=0.005
+PASS nll.top1_stage value=0.981356 limit=0.979469
+FAIL nll.kl_stage value=0.00681514 limit=0.00613701
+PASS greedy.hazard value=0.013481 limit=0.019178
+PASS kwargs.core value=10 limit=10
+PASS kwargs.thinking_alias value=2 limit=2
+PASS count value=200 limit=200
+FAIL utf8 value=0 limit=0
+PASS vision value=13 limit=None
+PASS needle value={'8192': 3, '32768': 3} limit=>=2 each
+PASS tools.json_valid value=1.0 limit=0.98
+written: evidence/r2/r1/tier0.json
+FAIL tier0 compare vs nvidia-v11-k7: 9/11 criteria; failed nll.kl_stage, utf8

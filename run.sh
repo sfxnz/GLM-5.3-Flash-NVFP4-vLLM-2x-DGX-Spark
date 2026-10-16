@@ -5,14 +5,14 @@ set -euo pipefail
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-$MODEL}"
-IMAGE="${IMAGE:-glm53-sm121-v13}"
+IMAGE="${IMAGE:-glm53-sm121-v14}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
 HEAD_IP="${HEAD_IP:-10.100.8.1}"
 WORKER_HOST="${WORKER_HOST:-spark2}"
 IFACE="${IFACE:-enp1s0f1np1}"
-HCA="${HCA:-rocep1s0f1}"
+HCA="${HCA:-rocep1s0f1,roceP2p1s0f1}"
 TP="${TP:-2}"
 NNODES="${NNODES:-2}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-327680}"
@@ -20,9 +20,12 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-2}"
 UTIL="${UTIL:-0.85}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
 NUM_SPECULATIVE_TOKENS="${NUM_SPECULATIVE_TOKENS:-7}"
-# Empty: vLLM sets 2048 under DFlash2. 4096 at seqs=2 shrank the fp8 pool
-# (372877→363476) and slowed structured c=2 (55.5→51.6). Leave unset.
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"
+# Prefill chunks end on the 1152-token mamba-align block, so vLLM's 2048 gives
+# 1152-token chunks, and every chunk streams all routed experts once. 4624 gives
+# 4608-token chunks (+16 leaves room for two decoding requests). r2 B2: prefill
+# +14% at 32k / 128k, decode flat, fp8 pool 372,877 -> 360,448 (1.10x at 327680).
+# Empty falls back to vLLM's 2048.
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-4624}"
 FORCE_UNSAFE_CTX="${FORCE_UNSAFE_CTX:-0}"
 FORCE_UNSAFE_MOE="${FORCE_UNSAFE_MOE:-0}"
 FORCE_UNSAFE_LINEAR="${FORCE_UNSAFE_LINEAR:-0}"
@@ -89,8 +92,9 @@ TARGET_WEIGHT_GROUPS_INT8="${TARGET_WEIGHT_GROUPS_INT8:-shared,mla,kda_o,kda_in,
 # cuBLAS instead of Marlin (GLM53_WQ_DEQUANT_MIN_M, GLM53_WQ_DEQUANT_GROUPS=kda_in).
 # 0 is off. Values below 64 are refused: they would reach the captured decode graphs.
 # E5: INT8 Marlin kda_in is 3.6x BF16 at the 1152-row prefill chunk, 93% of the
-# -11% prefill. E6: 512 gave +6.4% / +3.5% at 32k / 128k, short of the +5% rule.
-PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-0}"
+# -11% prefill. E6: 512 gave +6.4% / +3.5% at 32k / 128k with 1152-row chunks.
+# r2 B3: with 4608-row chunks, +13.8% at both 32k and 128k, decode flat.
+PREFILL_DEQUANT_MIN_M="${PREFILL_DEQUANT_MIN_M:-512}"
 # 1: indexer tail ring sized for the verify window (GLM53_KPOOL_TAIL_FIX), so
 # rejected drafts no longer write committed pool keys. E3a: needles pass to
 # 128k, and decode-built pools match prefill within the prefill A/A.
@@ -98,9 +102,16 @@ KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # 1: verify only the leading drafts whose running DFlash2 confidence is at least
 # ADAPTIVE_VERIFY_TAU, at fixed shapes (GLM53_ADAPTIVE_VERIFY, _TAU). Lossless.
 # E3b at 0.2 vs E3a: prose A +14.9%, H +20.0%, B +5.3%, T +10.1%, J flat.
-# E4b at 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%.
+# E4b at 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. r2 B5 at 0.4 vs 0.3:
+# A +4.2%, H +4.9%, B +3.3%. r2 B7 at 0.5: A -0.5%, B -0.9% (plateau).
 ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
-ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.3}"
+ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.4}"
+# v14 switches (docker/README-v14.md), need a glm53-sm121-v14 image.
+# DECODE_FIXES=1: GLM53_ROUTER_DEDUPE=1 (skip the model-side MoE router GEMM the
+# runner recomputes) and GLM53_HEADGATE_MM=1 (indexer head-gate as one bf16 GEMM
+# with fp32 output instead of an fp32 gemv). 0 runs v13's code. The image's
+# GLM53_LATE_MLA_PLAN measured no gain (r2 B6); set it through EXTRA_ENV.
+DECODE_FIXES="${DECODE_FIXES:-1}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -146,7 +157,7 @@ if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
     COMPILATION_CONFIG='{"cudagraph_capture_sizes":[1,2,4,8,16,24]}'
   fi
 fi
-# fp8 hybrid pool is 372,877 tokens (1.14x at 327,680) on the 4.14 GiB pin at DFlash2-7. Native 1,048,576 does not
+# fp8 hybrid pool is 360,448 tokens (1.10x at 327,680; 372,877 with 2048 batched tokens) on the 4.14 GiB pin at DFlash2-7. Native 1,048,576 does not
 # fit. Packed NVFP4 KV is a different image/backend, not MAX_MODEL_LEN on this pin.
 if [[ "$KV_CACHE_DTYPE" == fp8_e4m3 && "$MAX_MODEL_LEN" -gt 327680 && "$FORCE_UNSAFE_CTX" != 1 ]]; then
   echo "fp8 KV pin (372,877 tokens at DFlash2-7, 4.14 GiB) cannot hold --max-model-len $MAX_MODEL_LEN. A 1M request needs ~8.2 GiB of this hybrid layout and GB10 UMA OOMs above ~5.1 GiB. Do not advertise a window the pool cannot serve. FORCE_UNSAFE_CTX=1 overrides." >&2
@@ -236,6 +247,10 @@ if [[ ! "$ADAPTIVE_VERIFY_TAU" =~ ^0?\.[0-9]*[1-9][0-9]*$ ]]; then
   echo "ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU: want a decimal strictly between 0 and 1, e.g. 0.2." >&2
   exit 1
 fi
+if [[ "$DECODE_FIXES" != 0 && "$DECODE_FIXES" != 1 ]]; then
+  echo "DECODE_FIXES=$DECODE_FIXES: want exactly 0 or 1." >&2
+  exit 1
+fi
 if [[ "$ADAPTIVE_VERIFY" == 1 && "$SPEC" != dflash2 ]]; then
   echo "ADAPTIVE_VERIFY=1 needs SPEC=dflash2: the verify width comes from the DFlash2 drafter's selector scores (docker/README-v13.md). Set ADAPTIVE_VERIFY=0 with SPEC=$SPEC." >&2
   exit 1
@@ -250,9 +265,17 @@ fi
 if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
 if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
-if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
-  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+# v14 is v13 plus its own layer, so it reads every v13 switch.
+if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 or v14 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
+fi
+if [[ "$DECODE_FIXES" == 1 ]]; then
+  if [[ "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+    echo "DECODE_FIXES=1 needs a glm53-sm121-v14 image (docker/README-v14.md); IMAGE=$IMAGE would ignore it. Build v14, or set DECODE_FIXES=0 for a v13 image. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+    exit 1
+  fi
+  glm53_env+=(GLM53_ROUTER_DEDUPE=1 GLM53_HEADGATE_MM=1)
 fi
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
@@ -283,6 +306,7 @@ for pair in "${extra_env_pairs[@]}"; do
     GLM53_KPOOL_TAIL_FIX) knob=KPOOL_TAIL_FIX ;;
     GLM53_ADAPTIVE_VERIFY) knob=ADAPTIVE_VERIFY ;;
     GLM53_ADAPTIVE_VERIFY_TAU) knob=ADAPTIVE_VERIFY_TAU ;;
+    GLM53_ROUTER_DEDUPE | GLM53_HEADGATE_MM) knob=DECODE_FIXES ;;
     *) knob="" ;;
   esac
   if [[ -n "$knob" ]]; then
@@ -605,7 +629,7 @@ FORWARD_ENVS=(
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
   DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR
-  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU
+  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU DECODE_FIXES
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )

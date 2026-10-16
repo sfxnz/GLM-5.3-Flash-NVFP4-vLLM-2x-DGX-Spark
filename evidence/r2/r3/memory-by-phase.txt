@@ -1,0 +1,23 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3229 min= 13.76 @ 21:22:35  first=115.18 last= 21.75  swap_first=4.95 swap_max=8.33  span=21:09:27..21:23:07
+spark1 PROFILE  n=   105 min= 12.07 @ 21:23:33  first= 21.71 last= 12.55  swap_first=8.00 swap_max=8.01  span=21:23:07..21:23:34
+spark1 KV_READY n=   240 min=  6.02 @ 21:24:32  first= 13.65 last=  8.41  swap_first=8.00 swap_max=8.00  span=21:23:34..21:24:35
+spark1 SERVING  n=   140 min=  7.62 @ 21:33:41  first=  8.39 last=  8.13  swap_first=7.80 swap_max=7.80  span=21:24:35..21:35:03
+spark2 LOAD     n=  3234 min= 15.44 @ 21:14:50  first=117.29 last= 23.39  swap_first=2.35 swap_max=5.12  span=21:09:27..21:23:07
+spark2 PROFILE  n=   105 min= 13.96 @ 21:23:34  first= 23.39 last= 13.96  swap_first=5.06 swap_max=5.06  span=21:23:07..21:23:34
+spark2 KV_READY n=   241 min= 12.29 @ 21:23:42  first= 14.95 last= 12.99  swap_first=5.05 swap_max=5.05  span=21:23:34..21:24:35
+spark2 SERVING  n=   162 min= 12.62 @ 21:35:04  first= 12.99 last= 12.62  swap_first=5.05 swap_max=5.05  span=21:24:35..21:35:04
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-10-16T21:09:27.008Z
+PROFILE  from 2026-10-16T21:23:07.622Z
+KV_READY from 2026-10-16T21:23:34.305Z
+SERVING  from 2026-10-16T21:24:35.323Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+probe-count                        21:24:38..21:24:44  spark1 min=8.35@21:24:39 swap 7.80->7.80 | spark2 min=12.86@21:24:43 swap 5.04->5.03
+bench-fast                         21:24:44..21:31:09  spark1 min=8.46@21:24:49 swap 7.80->7.78 | spark2 min=12.85@21:24:49 swap 5.02->4.88
+bench-E                            21:31:09..21:33:06  spark1 min=8.52@21:32:46 swap 7.78->7.78 | spark2 min=12.69@21:33:00 swap 4.88->4.86
+bench-T                            21:33:06..21:35:04  spark1 min=7.62@21:33:41 swap 7.78->7.77 | spark2 min=12.62@21:35:04 swap 4.84->4.84
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+spark2 flashinfer:topk                                                    pids=   1 rows=    1 21:23:33..21:23:33 phases=['PROFILE'] peak_proc=    4 peak_sum=    4
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB
+spark2 PROFILE  busy_s=    1 peak_sum_rss=    4

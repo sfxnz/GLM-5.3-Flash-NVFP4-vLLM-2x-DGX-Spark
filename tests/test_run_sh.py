@@ -230,23 +230,25 @@ def glm53_env(stdout):
 
 
 class V13Knobs(RunShCase):
-    V13 = {"IMAGE": "glm53-sm121-v13"}
+    V13 = {"IMAGE": "glm53-sm121-v13", "DECODE_FIXES": "0"}
     ALL_ON = {"DRAFT_WEIGHTS": "nvfp4", "TARGET_WEIGHT_GROUPS_INT8": "shared,mla", "PREFILL_DEQUANT_MIN_M": "512",
               "KPOOL_TAIL_FIX": "1", "ADAPTIVE_VERIFY": "1", "ADAPTIVE_VERIFY_TAU": "0.3"}
     ALL_ON_ENV = ["GLM53_NVFP4_W4A16=draft", "GLM53_INT8_W8A16=shared,mla", "GLM53_WQ_DEQUANT_MIN_M=512",
                   "GLM53_WQ_DEQUANT_GROUPS=kda_in", "GLM53_KPOOL_TAIL_FIX=1",
                   "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"]
     V11_ROLLBACK = {"IMAGE": "glm53-sm121-v11", "DRAFT_WEIGHTS": "bf16", "TARGET_WEIGHT_GROUPS_INT8": "none",
-                    "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0"}
+                    "PREFILL_DEQUANT_MIN_M": "0", "KPOOL_TAIL_FIX": "0", "ADAPTIVE_VERIFY": "0", "DECODE_FIXES": "0"}
 
     def test_defaults_are_the_validated_v13_switches(self):
         proc = self.run_sh()
         self.assertAccepted(proc)
         self.assertEqual(glm53_env(proc.stdout), ["GLM53_NVFP4_W4A16=draft",
                                                   "GLM53_INT8_W8A16=shared,mla,kda_o,kda_in,lm_head",
+                                                  "GLM53_WQ_DEQUANT_MIN_M=512", "GLM53_WQ_DEQUANT_GROUPS=kda_in",
                                                   "GLM53_KPOOL_TAIL_FIX=1",
-                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.3"])
-        self.assertIn("IMAGE=glm53-sm121-v13", shell_words(worker_command(proc.stdout)))
+                                                  "GLM53_ADAPTIVE_VERIFY=1", "GLM53_ADAPTIVE_VERIFY_TAU=0.4",
+                                                  "GLM53_ROUTER_DEDUPE=1", "GLM53_HEADGATE_MM=1"])
+        self.assertIn("IMAGE=glm53-sm121-v14", shell_words(worker_command(proc.stdout)))
 
     def test_int8_none_keeps_bf16_and_empty_means_default(self):
         proc = self.run_sh(**self.V13, TARGET_WEIGHT_GROUPS_INT8="none")
@@ -273,9 +275,10 @@ class V13Knobs(RunShCase):
                 continue  # only read when ADAPTIVE_VERIFY=1
             with self.subTest(name=name):
                 env = {**self.V11_ROLLBACK, name: value}
-                self.assertRefused(self.run_sh(**env), "is not a glm53-sm121-v13 image")
+                self.assertRefused(self.run_sh(**env), "is not a glm53-sm121-v13 or v14 image")
                 self.assertAccepted(self.run_sh(**env, FORCE_UNSAFE_IMAGE="1"))
                 self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v13-rc1"}))
+                self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v14"}))
 
     def test_bad_values_refused(self):
         cases = [("DRAFT_WEIGHTS", "fp8", "want bf16 or nvfp4"), ("DRAFT_WEIGHTS", "NVFP4", "want bf16 or nvfp4"),
@@ -317,17 +320,16 @@ class V13Knobs(RunShCase):
         self.assertIn('ENV_DEQUANT_MIN_M = "GLM53_WQ_DEQUANT_MIN_M"', src)
         self.assertIn('ENV_DEQUANT_GROUPS = "GLM53_WQ_DEQUANT_GROUPS"', src)
         self.assertIn('"kda_in"', re.search(r"^GROUPS = \((.*)\)$", src, re.M).group(1))
-        for off in ("0", ""):  # empty falls back to the default, 0
-            with self.subTest(off=off):
-                proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M=off)
-                self.assertAccepted(proc)
-                self.assertFalse([e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")])
-                self.assertIn("PREFILL_DEQUANT_MIN_M=0", shell_words(worker_command(proc.stdout)))
-        for rows in ("64", "512", "1024"):
+        proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M="0")
+        self.assertAccepted(proc)
+        self.assertFalse([e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")])
+        self.assertIn("PREFILL_DEQUANT_MIN_M=0", shell_words(worker_command(proc.stdout)))
+        for rows in ("", "64", "512", "1024"):  # empty falls back to the default, 512
             with self.subTest(rows=rows):
                 proc = self.run_sh(**self.V13, PREFILL_DEQUANT_MIN_M=rows)
                 self.assertAccepted(proc)
                 env = [e for e in glm53_env(proc.stdout) if e.startswith("GLM53_WQ_")]
+                rows = rows or "512"
                 self.assertEqual(env, [f"GLM53_WQ_DEQUANT_MIN_M={rows}", "GLM53_WQ_DEQUANT_GROUPS=kda_in"])
                 self.assertIn(f"PREFILL_DEQUANT_MIN_M={rows}", shell_words(worker_command(proc.stdout)))
 
@@ -342,11 +344,31 @@ class V13Knobs(RunShCase):
                   "GLM53_WQ_DEQUANT_MIN_M": "PREFILL_DEQUANT_MIN_M",
                   "GLM53_WQ_DEQUANT_GROUPS": "PREFILL_DEQUANT_MIN_M",
                   "GLM53_KPOOL_TAIL_FIX": "KPOOL_TAIL_FIX", "GLM53_ADAPTIVE_VERIFY": "ADAPTIVE_VERIFY",
-                  "GLM53_ADAPTIVE_VERIFY_TAU": "ADAPTIVE_VERIFY_TAU"}
+                  "GLM53_ADAPTIVE_VERIFY_TAU": "ADAPTIVE_VERIFY_TAU",
+                  "GLM53_ROUTER_DEDUPE": "DECODE_FIXES", "GLM53_HEADGATE_MM": "DECODE_FIXES"}
         for name, knob in owners.items():
             with self.subTest(name=name):
                 self.assertRefused(self.run_sh(**self.V13, EXTRA_ENV=f"MAX_JOBS=2 {name}=1"),
                                    f"EXTRA_ENV sets {name}, which run.sh sets from {knob}")
+
+    def test_decode_fixes_needs_a_v14_image(self):
+        self.assertRefused(self.run_sh(IMAGE="glm53-sm121-v13", DECODE_FIXES="1"), "needs a glm53-sm121-v14 image")
+        self.assertAccepted(self.run_sh(IMAGE="glm53-sm121-v13", DECODE_FIXES="1", FORCE_UNSAFE_IMAGE="1"))
+        for value, want in (("1", ["GLM53_ROUTER_DEDUPE=1", "GLM53_HEADGATE_MM=1"]), ("0", [])):
+            with self.subTest(value=value):
+                proc = self.run_sh(IMAGE="glm53-sm121-v14", DECODE_FIXES=value)
+                self.assertAccepted(proc)
+                self.assertEqual([e for e in glm53_env(proc.stdout)
+                                  if e.startswith(("GLM53_ROUTER_DEDUPE", "GLM53_HEADGATE_MM", "GLM53_LATE_MLA_PLAN"))], want)
+                self.assertIn(f"DECODE_FIXES={value}", shell_words(worker_command(proc.stdout)))
+        for bad in ("2", "yes", "on"):
+            with self.subTest(bad=bad):
+                self.assertRefused(self.run_sh(DECODE_FIXES=bad), f"DECODE_FIXES={bad}: want exactly 0 or 1")
+
+    def test_decode_fixes_follow_the_patch(self):
+        src = (REPO / "docker/patch_v14_decode.py").read_text()
+        for name in ("GLM53_ROUTER_DEDUPE", "GLM53_HEADGATE_MM"):
+            self.assertIn(f'os.environ.get(\\"{name}\\") == \\"1\\"', src)
 
     def test_adaptive_verify_needs_dflash2(self):
         mtp = {**self.V13, "SPEC": "mtp", **LIBERTAI}
@@ -398,7 +420,7 @@ class StubbedLaunch(RunShCase):
     def launch(self, **extra):
         env = self.base_env(**{
             "PATH": f"{self.home / 'bin'}:{os.environ['PATH']}", "STUB_LOG": str(self.log),
-            "IMAGE": "glm53-sm121-v13-test-stub", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
+            "IMAGE": "glm53-sm121-v14-test-stub", "CONTAINER_NAME": "glm53-test-stub", "HF_CACHE": str(self.home / "hf"),
             # No such interface anywhere, so the worker's VLLM_HOST_IP fallback runs on every host (as on CI).
             "IFACE": "glm53-test-noif",
             "SNAPSHOT": str(self.snap), "SKIP_DOWNLOAD": "1", **extra})
@@ -412,7 +434,7 @@ class StubbedLaunch(RunShCase):
         self.assertTrue(jit.is_dir())
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertIn(f"-v {jit}:/jit-cache -e FLASHINFER_WORKSPACE_BASE=/jit-cache/flashinfer", run)
-        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-sm121-v13-test-stub ", run)
+        self.assertIn("-e TILELANG_CACHE_DIR=/jit-cache/tilelang glm53-sm121-v14-test-stub ", run)
 
     def test_jit_cache_0(self):
         proc = self.launch(JIT_CACHE="0")
@@ -436,7 +458,7 @@ class StubbedLaunch(RunShCase):
         for role in ("head", "worker"):
             with self.subTest(role=role):
                 self.log.unlink(missing_ok=True)
-                proc = self.launch(ROLE=role, JIT_CACHE="0", EXTRA_ENV="MAX_JOBS=2", **V13Knobs.ALL_ON)
+                proc = self.launch(ROLE=role, JIT_CACHE="0", EXTRA_ENV="MAX_JOBS=2", DECODE_FIXES="0", **V13Knobs.ALL_ON)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
                 self.assertIn(want, run)
@@ -444,7 +466,7 @@ class StubbedLaunch(RunShCase):
 
     def test_knobs_off_pass_no_glm53_env(self):
         proc = self.launch(JIT_CACHE="0", DRAFT_WEIGHTS="bf16", TARGET_WEIGHT_GROUPS_INT8="none",
-                           KPOOL_TAIL_FIX="0", ADAPTIVE_VERIFY="0")
+                           PREFILL_DEQUANT_MIN_M="0", KPOOL_TAIL_FIX="0", ADAPTIVE_VERIFY="0", DECODE_FIXES="0")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         run = next(line for line in self.log.read_text().splitlines() if line.startswith("docker run "))
         self.assertNotIn("GLM53_", run)
@@ -483,8 +505,8 @@ class ImageParity(RunShCase):
     def test_mismatch_warns_with_sync_command(self):
         proc = self.run_auto("sha256:aaa", "sha256:bbb")
         self.assertAccepted(proc)
-        self.assertIn("WARN image glm53-sm121-v13 differs", proc.stderr)
-        self.assertIn("docker save glm53-sm121-v13 | ssh worker.invalid docker load", proc.stderr)
+        self.assertIn("WARN image glm53-sm121-v14 differs", proc.stderr)
+        self.assertIn("docker save glm53-sm121-v14 | ssh worker.invalid docker load", proc.stderr)
         self.assertNotIn("docker run", self.log.read_text())
 
     def test_orchestrate_0_never_sshes(self):
