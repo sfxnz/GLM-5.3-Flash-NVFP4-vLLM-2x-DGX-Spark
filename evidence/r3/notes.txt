@@ -1,0 +1,69 @@
+r3: research, bug fixes, measured decode and quality. 2026-11-02, branch opt/r3-research-decode on PR #16 (95e1880).
+Both nodes exclusive for GLM; spark1 shared its CPU and RAM with another project's Playwright and node runs (8-22 GiB
+RSS bursts). Memory read from free -h / /proc/meminfo only.
+
+VERDICT  New defaults: SNAPSHOT_REV 1d00738, chat_template thinking-off effort Low, IMAGE glm53-sm121-v15 with
+         KDA_RECOVER=1, MLA_PLAN_NOSYNC=1, PREFIX_CACHE_DFLASH=1, VIDEO_FRAMES_FIX=1 (KDA_TRIM stays 0).
+         FINALS below: three PR #16-default boots interleaved with three plain ./run.sh boots, kit/compare.py.
+
+METHOD   evidence/r3-tools/unit.sh DIR STEPS [env]: VALIDATE_ONLY, boot.sh (uma_watch + ./run.sh), the steps, memory
+         snapshots, GLM53_* read back from both running containers (glm53-env.txt), host load before every step
+         (load.log), stop. gate.sh waits for 3 quiet samples of host RSS < 11 GiB before each boot. One knob per boot,
+         stacked: each unit is the previous kept state plus one change (PV carries two fixes on disjoint request
+         paths). finals.sh interleaves A (PR #16 pins: v14, 09b04e5, the PR #16 template, no v15 knob) with B (plain
+         ./run.sh). Decision rule for bit-exact decode knobs, written before KR: keep if the paired per-prompt cell A
+         step drop matches the kernel prediction with acceptance flat, count5 5/5 and Tier 0 compare PASS.
+
+RESEARCH research/upstream.md (image = upstream 487ecf187 of 2026-08-25; gaps ranked), research/community.md (the
+         TP=2 lanes on the same build: per-step levers; none a drop-in), research/bugs.md (12 defects with live tests),
+         moe-microbench/ (Humming 0.1.19 vs Marlin at M=8 +1.4%, both at 95-102% of the measured DRAM read ceiling:
+         not booted), v15-gpu-check/ (KDA_RECOVER bitwise equal, KDA work 3.89 -> 2.22 ms at c=1, 7.52 -> 3.69 at c=2).
+
+UNITS    single boot each; A tok/s, step ms, acceptance; host load average before the fast gate
+         B0   PR #16 defaults (09b04e5)       A 30.31  70.4  2.14   load 7.5 -> 30 during the gate: speed INVALID
+         X1   + 1d00738                       A 31.05  67.5  2.10   load 1.9   KEPT on quality (think subset)
+         T1   + template Low when thinking off A 32.38  68.4  2.22   load 1.7   KEPT (utf8 0/6 -> 6/6)
+         KR   + v15 KDA_RECOVER               A 32.56  67.3  2.20   load 2.0   KEPT, step -1.10 ms [-1.93,-0.27]
+         KT   + KDA_TRIM                      A 33.21  67.1  2.24   load 2.6   REVERTED, step -0.19 ms [-1.14,+0.77]
+         NS   KR + MLA_PLAN_NOSYNC            A 33.68  66.4  2.25   load 1.4   KEPT, step -0.91 ms [-1.76,-0.06]
+         PV   NS + PREFIX_CACHE_DFLASH + VIDEO A 33.15  66.0  2.20   load 1.2   KEPT, step -0.34 ms [-0.77,+0.10]
+         NS vs T1 (both decode knobs): step -2.01 ms [-2.48,-1.55], 8/8 prompts faster.
+  x1     thinking-on subset (50 GSM8K + 50 MMLU-Pro, greedy, think budget 8192), paired vs B0: 85 vs 82 correct
+         (4 vs 1 discordant, p=0.375), completion tokens 152047 vs 164752 (-7.7%; GSM8K -16.8%, MMLU-Pro -6.2%),
+         13 items >= 1.5x shorter vs 8 longer, budget-capped 8 vs 10 (think_compare.py).
+  utf8   utf8_ab.py, 40-row n / n^2 / n^3 table, greedy, 6 runs per arm. thinking off + Max (the old default):
+         0/6 clean on 09b04e5 (B0) and on 1d00738 (X1); off + Low 6/6; on + Low 6/6; on + Max 6/6. T1 (new
+         template): off_max 6/6.
+  prefix prefix_probe.py, a document sent twice. B0 (v14): 8k turn 2 TTFT 8.29 -> 3.79 s (hit 4608), 32k
+         25.40 -> 4.66 s (hit 32256 of 39104). PV: 8k 6.49 -> 0.76 s (hit 9216), 32k 24.78 -> 1.61 s (hit 36864).
+  video  video_probe.py, 2 s 20-frame mp4. KR (fix off): HTTP 500, EngineCore dead, worker "Attempted to assign 128 =
+         128 multimodal tokens to 384 placeholders". PV (fix on): HTTP 200, a correct description, /health 200.
+  count  B0's first count-200 failed once (202 numbers, first bad 172), then 3/3; every later unit 5/5.
+  tier0  B0 reference nvidia-09b04e5-r3b0 (rerun |dNLL| 1.0e-4, top-1 98.48%, KL 5.09e-3); T1 reference
+         nvidia-1d00738-tfix-r3; KR, KT, NS, PV compare against T1's: 10/11 or 11/11, the only miss the video
+         near-tie (vision 12/13).
+
+ABORTS   B0 attempt 1: uma_watch LOAD floor (9.90 < 10 GiB) with a v15 CPU test container on spark1. Attempt 2: SERVING
+         floor (1.90 < 2 GiB) when other host RSS grew 9.4 -> 22.5 GiB during the fast gate. gate.sh added after.
+
+FINALS   finals.sh, 2026-11-02 19:56-22:33, order A1 B1 A2 B2 A3 B3, load average 1.2-1.8 before every fast gate.
+         A = PR #16 pins (v14 9599a9fc5fe5, 09b04e5, PR #16 template, v15 knobs 0); B = plain ./run.sh (v15 d79e079c38c5).
+                 A      H      B      T      E 32k / 128k   count
+         A1      31.37  21.80  47.39  36.17  1588 / 1580    5/5
+         B1      33.48  23.56  52.57  37.83  1596 / 1583    5/5
+         A2      31.49  21.32  47.88  36.28  1589 / 1578    5/5
+         B2      32.83  23.64  54.30  37.91  1594 / 1581    5/5
+         A3      31.07  21.44  48.14  36.84  1587 / 1583    5/5
+         B3      33.70  23.22  52.76  37.10  1572 / 1565    5/5
+         kit/compare.py, boot = unit (compare-finals-fast.txt, compare-finals-T.txt, compare-finals-E.txt):
+           A +6.5% [+4.6,+8.3] KEEP (step -2.9%, acceptance +3.5%), H +9.1% [+7.2,+10.9] KEEP, B +11.3% KEEP,
+           J@c1 +7.6% KEEP, J@c2 +11.5% KEEP, K@c2 +9.1% KEEP, K@c1 -2.7% [-7.9,+2.5] INCONCLUSIVE (3 waves),
+           T +3.3% [+1.5,+5.1] KEEP; E decode tails (one 128-token wave) INCONCLUSIVE, E step -5%.
+         Arm A reproduces PR #16's published rows (A 31.31 vs 31.23, H 21.52 vs 21.46, prefill 1588 / 1580 vs
+         1593 / 1562). Published rows (recipe.yaml measured): A 33.34 (TTFT p50 0.27 s, step 66.6, acc 2.23);
+         H 23.47 per stream (agg 44.86, TTFT 0.35 s, step 94.7, acc 2.22).
+  tier1  final-b3, 1,010 items, greedy, serve defaults: 87.62% (errors 0). compare_tier1.py vs nvidia-v11-k7 84.85%:
+         pooled +2.77 [+1.07,+4.48] PASS; vs e4a-int8-av02 +2.18 [+0.49,+3.87]; vs e2e-v13-nvfp4-draft-k7 +2.87 [+1.05,+4.69].
+         IFEval +8.67 (22 vs 9, p 0.029), Vision +6.15 (16 vs 0), GSM8K +0.50, BFCL 0, MMLU-Pro -0.71 (10 vs 12).
+         finish_reason length 41 -> 3; the old serve trailed short answers with prose (ChartQA 289: 45 tokens vs 5).
+         Weights and template are not separated by this run. Ran 35 min (c=2), not the README's 2.75 h estimate.

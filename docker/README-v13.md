@@ -37,8 +37,9 @@ The patch script takes the vllm root as `argv[1]`. Each edit is an exact-substri
 | `PREFILL_DEQUANT_MIN_M=<rows>` | `GLM53_WQ_DEQUANT_MIN_M=<rows>` and `GLM53_WQ_DEQUANT_GROUPS=kda_in` unless `0` | `0` |
 | `KPOOL_TAIL_FIX=0\|1` | `GLM53_KPOOL_TAIL_FIX=1` when `1` | `1` |
 | `ADAPTIVE_VERIFY=0\|1`, `ADAPTIVE_VERIFY_TAU=<decimal in (0,1)>` | `GLM53_ADAPTIVE_VERIFY=1` and `GLM53_ADAPTIVE_VERIFY_TAU` when `1` (needs `SPEC=dflash2`) | `1`, `0.3` |
+| `KDA_TRIM=0\|1` | `GLM53_KDA_TRIM=1` when `1` | `0` |
 
-Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the seven knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
+Every other switch goes through `EXTRA_ENV`, which reaches both ranks too. `run.sh` refuses the knob variables in `EXTRA_ENV`, and refuses a knob that is on when `IMAGE` is not `glm53-sm121-v13*`. `VALIDATE_ONLY=1 ./run.sh` prints the resolved `GLM53_*` env.
 
 The GPU plans below predate the knobs. Read an `EXTRA_ENV` that sets a knob variable as the knob, for example `KPOOL_TAIL_FIX=1` for `EXTRA_ENV="GLM53_KPOOL_TAIL_FIX=1"` and `ADAPTIVE_VERIFY_TAU=0.000000001` for `1e-9`. "Nothing set" or "default settings" now means the v11-equivalent knobs: `DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0` (and `PREFILL_DEQUANT_MIN_M=0`). Three forms have no knob: `GLM53_ADAPTIVE_VERIFY_TAU=0` (cap only), INT8 on `draft`, and `GLM53_WQ_DEQUANT_GROUPS` other than `kda_in`.
 

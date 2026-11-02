@@ -5,7 +5,7 @@ set -euo pipefail
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-$MODEL}"
-IMAGE="${IMAGE:-glm53-sm121-v14}"
+IMAGE="${IMAGE:-glm53-sm121-v15}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -56,7 +56,7 @@ HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
 # Official NVIDIA ModelOpt pin. LibertAI rollback is
 # MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177
-SNAPSHOT_REV="${SNAPSHOT_REV:-09b04e5e74bca08ca8549fc736d4cdd8624bfde3}"
+SNAPSHOT_REV="${SNAPSHOT_REV:-1d00738646cbb0c6d0a9eb403dac5f366f1473a7}"
 MOE_BACKEND="${MOE_BACKEND:-marlin}"
 # --moe-backend covers routed experts only. --linear-backend covers the dense
 # NVFP4 linears (nvidia pack layers 0-2 MLP); auto picks a JIT FP4 GEMM on sm_121.
@@ -79,7 +79,8 @@ JIT_CACHE="${JIT_CACHE:-1}"
 JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # v13 switches (docker/README-v13.md). Each one that is on becomes GLM53_* env on
 # both ranks, and needs a glm53-sm121-v13 image. Off adds nothing. v11 rollback:
-# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0
+# DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0.
 # DRAFT_WEIGHTS: bf16, or nvfp4 for the DFlash2 drafter's linears in NVFP4 W4A16
 # (GLM53_NVFP4_W4A16=draft). E2e: the target is untouched, step A -4 ms, Tier 1
 # 856 vs 857 of 1010.
@@ -106,12 +107,26 @@ KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # A +4.2%, H +4.9%, B +3.3%. r2 B7 at 0.5: A -0.5%, B -0.9% (plateau).
 ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
 ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.4}"
+# 1: fused_recurrent_kda reads token-strided q/k/v/beta instead of copying them
+# (GLM53_KDA_TRIM). Bit-exact.
+KDA_TRIM="${KDA_TRIM:-0}"
 # v14 switches (docker/README-v14.md), need a glm53-sm121-v14 image.
 # DECODE_FIXES=1: GLM53_ROUTER_DEDUPE=1 (skip the model-side MoE router GEMM the
 # runner recomputes) and GLM53_HEADGATE_MM=1 (indexer head-gate as one bf16 GEMM
 # with fp32 output instead of an fp32 gemv). 0 runs v13's code. The image's
 # GLM53_LATE_MLA_PLAN measured no gain (r2 B6); set it through EXTRA_ENV.
 DECODE_FIXES="${DECODE_FIXES:-1}"
+# v15 switches (docker/README-v15.md), need a glm53-sm121-v15 image. Each 1 sets
+# its GLM53_* variable on both ranks (switch_knobs below).
+# KDA_RECOVER=1: the DFlash2 verify stores no per-token KDA state; a replay after
+# sampling stores the columns later steps read (docker/README-v15-kda-recover.md).
+KDA_RECOVER="${KDA_RECOVER:-1}"
+# MLA_PLAN_NOSYNC=1: the sparse-MLA plan without its D2H sync (vLLM #58684).
+MLA_PLAN_NOSYNC="${MLA_PLAN_NOSYNC:-1}"
+# PREFIX_CACHE_DFLASH=1: prefix-cache hits with DFlash2 (vLLM #54163, #55601).
+PREFIX_CACHE_DFLASH="${PREFIX_CACHE_DFLASH:-1}"
+# VIDEO_FRAMES_FIX=1: video placeholder count equals the encoder's (vLLM #55647).
+VIDEO_FRAMES_FIX="${VIDEO_FRAMES_FIX:-1}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -183,7 +198,7 @@ if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
-  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
+  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 (about 6.9 GiB per rank), which does not fit beside the routed experts on a 2x Spark. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 KDA_RECOVER=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
@@ -255,6 +270,10 @@ if [[ "$ADAPTIVE_VERIFY" == 1 && "$SPEC" != dflash2 ]]; then
   echo "ADAPTIVE_VERIFY=1 needs SPEC=dflash2: the verify width comes from the DFlash2 drafter's selector scores (docker/README-v13.md). Set ADAPTIVE_VERIFY=0 with SPEC=$SPEC." >&2
   exit 1
 fi
+if [[ "$KDA_RECOVER" == 1 && "$SPEC" != dflash2 ]]; then
+  echo "KDA_RECOVER=1 needs SPEC=dflash2: the replay commits the DFlash2 verify rows (docker/README-v15-kda-recover.md). Set KDA_RECOVER=0 with SPEC=$SPEC." >&2
+  exit 1
+fi
 # GLM53_* env for both ranks, from the knobs above.
 glm53_env=()
 if [[ "$DRAFT_WEIGHTS" == nvfp4 ]]; then glm53_env+=(GLM53_NVFP4_W4A16=draft); fi
@@ -266,17 +285,42 @@ if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
 if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
 # v14 is v13 plus its own layer, so it reads every v13 switch.
-if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
-  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 or v14 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$IMAGE" != glm53-sm121-v15* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13, v14 or v15 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
 fi
 if [[ "$DECODE_FIXES" == 1 ]]; then
-  if [[ "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  if [[ "$IMAGE" != glm53-sm121-v14* && "$IMAGE" != glm53-sm121-v15* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
     echo "DECODE_FIXES=1 needs a glm53-sm121-v14 image (docker/README-v14.md); IMAGE=$IMAGE would ignore it. Build v14, or set DECODE_FIXES=0 for a v13 image. FORCE_UNSAFE_IMAGE=1 overrides." >&2
     exit 1
   fi
   glm53_env+=(GLM53_ROUTER_DEDUPE=1 GLM53_HEADGATE_MM=1)
 fi
+# On/off switches, one row each: the knob, the GLM53_* variable it owns, and the
+# image layer that added it (an image reads its own layer's switches and every
+# earlier layer's). The EXTRA_ENV check below refuses these variables too.
+switch_knobs=(
+  "KDA_TRIM GLM53_KDA_TRIM 13"
+  "KDA_RECOVER GLM53_KDA_RECOVER 15"
+  "MLA_PLAN_NOSYNC GLM53_MLA_PLAN_NOSYNC 15"
+  "PREFIX_CACHE_DFLASH GLM53_PREFIX_CACHE_DFLASH 15"
+  "VIDEO_FRAMES_FIX GLM53_VIDEO_FRAMES_FIX 15"
+)
+image_layer=0
+if [[ "$IMAGE" =~ ^glm53-sm121-v([0-9]+) ]]; then image_layer="${BASH_REMATCH[1]}"; fi
+for row in "${switch_knobs[@]}"; do
+  read -r knob var layer <<<"$row"
+  if [[ "${!knob}" != 0 && "${!knob}" != 1 ]]; then
+    echo "$knob=${!knob}: want exactly 0 or 1." >&2
+    exit 1
+  fi
+  [[ "${!knob}" == 1 ]] || continue
+  if (( image_layer < layer )) && [[ "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+    echo "$knob=1 needs a glm53-sm121-v$layer image (docker/README-v$layer.md); IMAGE=$IMAGE would ignore it. Build v$layer, or set $knob=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+    exit 1
+  fi
+  glm53_env+=("$var=1")
+done
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
@@ -307,7 +351,13 @@ for pair in "${extra_env_pairs[@]}"; do
     GLM53_ADAPTIVE_VERIFY) knob=ADAPTIVE_VERIFY ;;
     GLM53_ADAPTIVE_VERIFY_TAU) knob=ADAPTIVE_VERIFY_TAU ;;
     GLM53_ROUTER_DEDUPE | GLM53_HEADGATE_MM) knob=DECODE_FIXES ;;
-    *) knob="" ;;
+    *)
+      knob=""
+      for row in "${switch_knobs[@]}"; do
+        read -r owner var _ <<<"$row"
+        if [[ "$name" == "$var" ]]; then knob="$owner"; fi
+      done
+      ;;
   esac
   if [[ -n "$knob" ]]; then
     echo "EXTRA_ENV sets $name, which run.sh sets from $knob on both ranks. Set $knob instead, so one setting owns $name." >&2
@@ -629,7 +679,8 @@ FORWARD_ENVS=(
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
   DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR
-  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU DECODE_FIXES
+  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU KDA_TRIM DECODE_FIXES
+  KDA_RECOVER MLA_PLAN_NOSYNC PREFIX_CACHE_DFLASH VIDEO_FRAMES_FIX
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )

@@ -126,6 +126,12 @@ class JudgeTests(unittest.TestCase):
         sup = table + "\n| ³ | 9 | 27 | 三 |"
         self.assertTrue(tier0.judge_utf8({"content": sup, "finish_reason": "stop"})["pass"])
 
+    def test_utf8_runaway_table_fails_instead_of_raising(self):
+        rows = "\n".join(f"| {n} | {n * n} | {n ** 3} | {tier0.chinese_numeral(n)} |" for n in range(1, 41))
+        runaway = rows + "\n| 120 | 14400 | 1728000 | 一百二十 |"
+        r = tier0.judge_utf8({"content": runaway, "finish_reason": "length"})
+        self.assertEqual((r["pass"], r["complete"]), (False, False))
+
     def test_tool_item(self):
         item = {"id": "t", "expect": {"name": "f", "args": {"city": "Paris", "n": 2}}, "ignore": ["note"]}
         good = {"tool_calls": [{"name": "f", "arguments": '{"city": "paris", "n": 2.0, "note": "x"}'}]}

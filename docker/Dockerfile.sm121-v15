@@ -1,0 +1,24 @@
+FROM glm53-sm121-v14
+
+# v15: opt-in fixes, Python only. Every behaviour sits behind a GLM53_* env
+# var and is off by default, so with no new GLM53_* set v15 serves like v14.
+# docker/README-v15.md lists the switches and their checks.
+ARG VLLM_ROOT=/usr/local/lib/python3.12/dist-packages/vllm
+
+# DFlash prefix cache, video placeholder count, sync-free sparse-MLA plan.
+COPY patch_v15_fixes.py /tmp/patch_v15_fixes.py
+RUN touch /tmp/v15.stamp \
+    && python3 /tmp/patch_v15_fixes.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v15_fixes.py \
+    && find "$VLLM_ROOT" -name '*.py' -newer /tmp/v15.stamp -print0 \
+        | xargs -0 -r python3 -m compileall -q \
+    && rm /tmp/v15.stamp
+
+# KDA verify without per-token state stores (docker/README-v15-kda-recover.md).
+COPY patch_v15_kda_recover.py /tmp/patch_v15_kda_recover.py
+RUN touch /tmp/v15kr.stamp \
+    && python3 /tmp/patch_v15_kda_recover.py "$VLLM_ROOT" \
+    && rm /tmp/patch_v15_kda_recover.py \
+    && find "$VLLM_ROOT" -name '*.py' -newer /tmp/v15kr.stamp -print0 \
+        | xargs -0 -r python3 -m compileall -q \
+    && rm /tmp/v15kr.stamp

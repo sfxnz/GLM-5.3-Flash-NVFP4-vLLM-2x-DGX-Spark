@@ -250,6 +250,7 @@ def judge_kwarg_cell(out: dict, think: bool, reasoning_optional: bool = False) -
 
 
 CN_DIGITS = "零一二三四五六七八九"
+UTF8_ROWS = 40
 
 
 def chinese_numeral(n: int) -> str:
@@ -268,11 +269,13 @@ def judge_utf8(out: dict) -> dict:
             rows[int(cells[0])] = cells
     sq_err = cube_err = cn_err = 0
     for n, cells in rows.items():
+        if not 1 <= n <= UTF8_ROWS:
+            continue
         sq_err += cells[1].replace(",", "") != str(n * n)
         cube_err += cells[2].replace(",", "") != str(n ** 3)
         cn_err += cells[3] != chinese_numeral(n)
     fffd = text.count("�")
-    complete = sorted(rows) == list(range(1, 41))
+    complete = sorted(rows) == list(range(1, UTF8_ROWS + 1))
     return {"pass": fffd == 0 and complete and sq_err == 0 and out.get("finish_reason") == "stop",
             "fffd": fffd, "rows": len(rows), "complete": complete, "square_errors": sq_err,
             "cube_errors": cube_err, "chinese_numeral_errors": cn_err, "finish_reason": out.get("finish_reason")}

@@ -1,0 +1,32 @@
+torch 2.13.0+cu130 on NVIDIA GB10
+[KDA_TRIM=0] OK   every accepted count 0..7
+[KDA_TRIM=0] OK   chain none c=1
+[KDA_TRIM=0] OK   chain align c=1 (1 boundary blocks)
+[KDA_TRIM=0] OK   graph replay == eager c=1
+[KDA_TRIM=0] OK   chain none c=2
+[KDA_TRIM=0] OK   chain align c=2 (2 boundary blocks)
+[KDA_TRIM=0] OK   graph replay == eager c=2
+[KDA_TRIM=1] OK   every accepted count 0..7
+[KDA_TRIM=1] OK   chain none c=1
+[KDA_TRIM=1] OK   chain align c=1 (1 boundary blocks)
+[KDA_TRIM=1] OK   graph replay == eager c=1
+[KDA_TRIM=1] OK   chain none c=2
+[KDA_TRIM=1] OK   chain align c=2 (2 boundary blocks)
+[KDA_TRIM=1] OK   graph replay == eager c=2
+timing c=1, 34 layers, median of 50 (ms per step):
+  stock (graph)                          3.894
+  recover verify+records (graph)         1.093
+  recover commit (graph)                 1.131
+  recover commit (eager, as served)      1.234
+  recover total (graph+graph)            2.224
+  saved per step (graph+graph)          1.671
+  state bytes per layer and request: stock 18 MiB, recover 6 MiB (+2 MiB per block boundary)
+timing c=2, 34 layers, median of 50 (ms per step):
+  stock (graph)                          7.524
+  recover verify+records (graph)         1.764
+  recover commit (graph)                 1.926
+  recover commit (eager, as served)      1.995
+  recover total (graph+graph)            3.691
+  saved per step (graph+graph)          3.833
+  state bytes per layer and request: stock 18 MiB, recover 6 MiB (+2 MiB per block boundary)
+ALL BITWISE EQUAL

@@ -1,0 +1,1118 @@
+{
+ "ruler_version": "v2",
+ "timestamp": "2026-11-02T13:52:17Z",
+ "git_sha": "95e1880cd6303c1d8c1aa400e5417eb75954e156-dirty",
+ "url": "http://127.0.0.1:8000/v1/chat/completions",
+ "model": "nvidia/GLM-5.3-Flash-NVFP4",
+ "served_models": [
+  "nvidia/GLM-5.3-Flash-NVFP4"
+ ],
+ "boot_id": 1793626716.23,
+ "args": {
+  "url": "http://127.0.0.1:8000/v1/chat/completions",
+  "model": null,
+  "cells": "A,B,J,H,K",
+  "full": false,
+  "runs": 1,
+  "tokens": 512,
+  "remote_meminfo": "spark2",
+  "out": "evidence/r3/b0/bench-fast"
+ },
+ "cells": {
+  "A": {
+   "desc": "prose 8x512 forced, greedy, c=1 (published score)",
+   "meminfo_before": {
+    "local": {
+     "swap_used_mib": 6629.9765625,
+     "mem_available_mib": 4625.62890625
+    },
+    "spark2": {
+     "swap_used_mib": 2883.578125,
+     "mem_available_mib": 13537.0859375
+    }
+   },
+   "meminfo_after": {
+    "local": {
+     "swap_used_mib": 7127.671875,
+     "mem_available_mib": 1891.11328125
+    },
+    "spark2": {
+     "swap_used_mib": 517.0,
+     "mem_available_mib": 17731.5390625
+    }
+   },
+   "invalid_reason": "local swap +498 MiB",
+   "hygiene_unverified": [],
+   "warmup": {
+    "group": "A:warmup",
+    "c": 1,
+    "requests": [
+     {
+      "prompt_id": "warm",
+      "max_tokens": 64,
+      "forced": true,
+      "t_start": 8.411204908043146e-05,
+      "t_first": 0.22390145109966397,
+      "t_end": 2.5187228670110926,
+      "ttft_s": 0.22381733905058354,
+      "decode_s": 2.2948214159114286,
+      "prompt_tokens": 27,
+      "completion_tokens": 64,
+      "decode_tokens": 63,
+      "tok_s": 27.45311664044169,
+      "finish_reason": "length",
+      "sha256": "06f4df1b2f09457262136cb6f66917694ee091a9cc86d28885fbb69f91c4147e",
+      "short": false,
+      "client_prefill_tok_s": 120.6340854311466
+     }
+    ],
+    "ok": true,
+    "tok_s": 27.45311664044169,
+    "ttft_s": 0.22381733905058354,
+    "itl_ms": 76.63927800022066,
+    "itl_minus_drafts": 0.0,
+    "server_prefill_s": 0.20602151402272284,
+    "drafts": 30.0,
+    "acceptance_len": 2.1333333333333333,
+    "step_ms": 76.49404719704762,
+    "draft_acceptance_rate": 0.1619047619047619,
+    "per_pos": [
+     0.6666666666666666,
+     0.3333333333333333,
+     0.1,
+     0.03333333333333333,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "sanity_err": -0.015625,
+    "server_prefill_tok_s": 131.0542742493489
+   }
+  },
+  "B": {
+   "desc": "code 8x512 forced, greedy, c=1",
+   "meminfo_before": {
+    "local": {
+     "swap_used_mib": 5585.76953125,
+     "mem_available_mib": 6169.87109375
+    },
+    "spark2": {
+     "swap_used_mib": 452.23828125,
+     "mem_available_mib": 17778.9453125
+    }
+   },
+   "meminfo_after": {
+    "local": {
+     "swap_used_mib": 4289.609375,
+     "mem_available_mib": 8073.58984375
+    },
+    "spark2": {
+     "swap_used_mib": 452.23828125,
+     "mem_available_mib": 17884.09765625
+    }
+   },
+   "invalid_reason": null,
+   "hygiene_unverified": [],
+   "warmup": {
+    "group": "B:warmup",
+    "c": 1,
+    "requests": [
+     {
+      "prompt_id": "warm",
+      "max_tokens": 64,
+      "forced": true,
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+     }
+    ],
+    "ok": false
+   }
+  },
+  "J": {
+   "desc": "structured count 1..200, max 200, c=1 and c=2 (legacy structured phase; sanity_err > 3% expected: max_tokens cuts the last verify step)",
+   "meminfo_before": {
+    "local": {
+     "swap_used_mib": 3545.703125,
+     "mem_available_mib": 8158.8359375
+    },
+    "spark2": {
+     "swap_used_mib": 452.23828125,
+     "mem_available_mib": 17997.49609375
+    }
+   },
+   "meminfo_after": {
+    "local": {
+     "swap_used_mib": 3480.31640625,
+     "mem_available_mib": 8113.39453125
+    },
+    "spark2": {
+     "swap_used_mib": 452.23828125,
+     "mem_available_mib": 20301.3984375
+    }
+   },
+   "invalid_reason": null,
+   "hygiene_unverified": [],
+   "warmup": {
+    "group": "J:warmup",
+    "c": 1,
+    "requests": [
+     {
+      "prompt_id": "warm",
+      "max_tokens": 200,
+      "forced": false,
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+     }
+    ],
+    "ok": false
+   }
+  },
+  "H": {
+   "desc": "prose distinct prompts, 512 forced, c=2 (A's prompts: prefix-cache hit, TTFT not comparable to A)",
+   "meminfo_before": {
+    "local": {
+     "swap_used_mib": 3480.31640625,
+     "mem_available_mib": 8047.8359375
+    },
+    "spark2": {
+     "swap_used_mib": 452.23828125,
+     "mem_available_mib": 106871.22265625
+    }
+   },
+   "meminfo_after": {
+    "local": {
+     "swap_used_mib": 3480.31640625,
+     "mem_available_mib": 8135.15625
+    },
+    "spark2": {
+     "swap_used_mib": 446.546875,
+     "mem_available_mib": 120430.9453125
+    }
+   },
+   "invalid_reason": null,
+   "hygiene_unverified": [],
+   "warmup": {
+    "group": "H:warmup",
+    "c": 2,
+    "requests": [
+     {
+      "prompt_id": "warm0",
+      "max_tokens": 64,
+      "forced": true,
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+     },
+     {
+      "prompt_id": "warm1",
+      "max_tokens": 64,
+      "forced": true,
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+     }
+    ],
+    "ok": false
+   }
+  },
+  "K": {
+   "desc": "legacy prose (~98 natural tokens, max 200), c=1 and c=2 (continuity)",
+   "meminfo_before": {
+    "local": {
+     "swap_used_mib": 3479.3671875,
+     "mem_available_mib": 8077.2890625
+    },
+    "spark2": {
+     "swap_used_mib": 446.546875,
+     "mem_available_mib": 120442.64453125
+    }
+   },
+   "meminfo_after": {
+    "local": {
+     "swap_used_mib": 3479.3046875,
+     "mem_available_mib": 22076.4375
+    },
+    "spark2": {
+     "swap_used_mib": 446.546875,
+     "mem_available_mib": 120438.046875
+    }
+   },
+   "invalid_reason": null,
+   "hygiene_unverified": [],
+   "warmup": {
+    "group": "K:warmup",
+    "c": 1,
+    "requests": [
+     {
+      "prompt_id": "warm",
+      "max_tokens": 200,
+      "forced": false,
+      "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+     }
+    ],
+    "ok": false
+   }
+  }
+ },
+ "waves": [
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/00",
+     "max_tokens": 512,
+     "forced": true,
+     "t_start": 5.8399979025125504e-05,
+     "t_first": 0.2808146959869191,
+     "t_end": 14.904629581957124,
+     "ttft_s": 0.280756296007894,
+     "decode_s": 14.623814885970205,
+     "prompt_tokens": 48,
+     "completion_tokens": 512,
+     "decode_tokens": 511,
+     "tok_s": 34.94300249179461,
+     "finish_reason": "length",
+     "sha256": "80bcbab20f07bf1773cc79aaf3dcad29b25c7387fd3e4c522838c2a681a8d74c",
+     "short": false,
+     "client_prefill_tok_s": 170.96678038041358
+    }
+   ],
+   "ok": true,
+   "tok_s": 34.94300249179461,
+   "ttft_s": 0.280756296007894,
+   "itl_ms": 71.75615638227421,
+   "itl_minus_drafts": 0.0,
+   "server_prefill_s": 0.2509489660151303,
+   "drafts": 204.0,
+   "acceptance_len": 2.5098039215686274,
+   "step_ms": 71.68536708808924,
+   "draft_acceptance_rate": 0.21568627450980393,
+   "per_pos": [
+    0.7254901960784313,
+    0.4117647058823529,
+    0.20588235294117646,
+    0.10294117647058823,
+    0.04411764705882353,
+    0.00980392156862745,
+    0.00980392156862745
+   ],
+   "sanity_err": -0.001953125,
+   "server_prefill_tok_s": 191.27395008715027
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/01",
+     "max_tokens": 512,
+     "forced": true,
+     "t_start": 4.230393096804619e-05,
+     "t_first": 0.24908036598935723,
+     "t_end": 17.508495257934555,
+     "ttft_s": 0.2490380620583892,
+     "decode_s": 17.259414891945198,
+     "prompt_tokens": 46,
+     "completion_tokens": 512,
+     "decode_tokens": 511,
+     "tok_s": 29.60702916055855,
+     "finish_reason": "length",
+     "sha256": "31d352924e94f28a8c6c3a553d3b3fd64ad85bbbe177f462b65506bb1700dfbf",
+     "short": false,
+     "client_prefill_tok_s": 184.71072100302038
+    }
+   ],
+   "ok": true,
+   "tok_s": 29.60702916055855,
+   "ttft_s": 0.2490380620583892,
+   "itl_ms": 67.95697902763762,
+   "itl_minus_drafts": 0.0,
+   "server_prefill_s": 0.22672169702127576,
+   "drafts": 254.0,
+   "acceptance_len": 2.0118110236220472,
+   "step_ms": 67.95045233049291,
+   "draft_acceptance_rate": 0.14454443194600675,
+   "per_pos": [
+    0.6220472440944882,
+    0.2559055118110236,
+    0.0984251968503937,
+    0.023622047244094488,
+    0.011811023622047244,
+    0.0,
+    0.0
+   ],
+   "sanity_err": 0.0,
+   "server_prefill_tok_s": 202.89191817262784
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/02",
+     "max_tokens": 512,
+     "forced": true,
+     "t_start": 7.451209239661694e-05,
+     "t_first": 0.31133999105077237,
+     "t_end": 16.344605354010127,
+     "ttft_s": 0.31126547895837575,
+     "decode_s": 16.033265362959355,
+     "prompt_tokens": 44,
+     "completion_tokens": 512,
+     "decode_tokens": 511,
+     "tok_s": 31.871236983361552,
+     "finish_reason": "length",
+     "sha256": "c75a0b52494aa3333033549ec518096e17fa55a3f5099ba0a5656daf734d3e94",
+     "short": false,
+     "client_prefill_tok_s": 141.35843186736406
+    }
+   ],
+   "ok": true,
+   "tok_s": 31.871236983361552,
+   "ttft_s": 0.31126547895837575,
+   "itl_ms": 70.37212997787273,
+   "itl_minus_drafts": 0.0,
+   "server_prefill_s": 0.2322292299941182,
+   "drafts": 228.0,
+   "acceptance_len": 2.245614035087719,
+   "step_ms": 70.32133931122524,
+   "draft_acceptance_rate": 0.17794486215538846,
+   "per_pos": [
+    0.6535087719298246,
+    0.32894736842105265,
+    0.16228070175438597,
+    0.06140350877192982,
+    0.03070175438596491,
+    0.0043859649122807015,
+    0.0043859649122807015
+   ],
+   "sanity_err": -0.001953125,
+   "server_prefill_tok_s": 189.4679666341503
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/03",
+     "max_tokens": 512,
+     "forced": true,
+     "t_start": 5.32959820702672e-05,
+     "t_first": 0.2842639300506562,
+     "t_end": 16.743516950984485,
+     "ttft_s": 0.28421063406858593,
+     "decode_s": 16.45925302093383,
+     "prompt_tokens": 44,
+     "completion_tokens": 512,
+     "decode_tokens": 511,
+     "tok_s": 31.046366402538478,
+     "finish_reason": "length",
+     "sha256": "df2cb5b590e572378d7cc328256ff299bda04eb518eacb4a8f44033ba36f45c1",
+     "short": false,
+     "client_prefill_tok_s": 154.81475611986386
+    }
+   ],
+   "ok": true,
+   "tok_s": 31.046366402538478,
+   "ttft_s": 0.28421063406858593,
+   "itl_ms": 68.62649404599021,
+   "itl_minus_drafts": 0.0,
+   "server_prefill_s": 0.2211855660425499,
+   "drafts": 240.0,
+   "acceptance_len": 2.1291666666666664,
+   "step_ms": 68.58022092055762,
+   "draft_acceptance_rate": 0.16130952380952382,
+   "per_pos": [
+    0.6375,
+    0.30833333333333335,
+    0.12083333333333333,
+    0.03333333333333333,
+    0.016666666666666666,
+    0.008333333333333333,
+    0.004166666666666667
+   ],
+   "sanity_err": 0.0,
+   "server_prefill_tok_s": 198.92798968417148
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/04",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "stream ended without [DONE]"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/05",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/06",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "A",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "A/07",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/00",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/01",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/02",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/03",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/04",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/05",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/06",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "B",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "B/07",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "J@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "J/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "H",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "H/00",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "H/01",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "H",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "H/02",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "H/03",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "H",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "H/04",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "H/05",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "H",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "H/06",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "H/07",
+     "max_tokens": 512,
+     "forced": true,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c1",
+   "c": 1,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  },
+  {
+   "group": "K@c2",
+   "c": 2,
+   "requests": [
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    },
+    {
+     "prompt_id": "K/00",
+     "max_tokens": 200,
+     "forced": false,
+     "error": "URLError: <urlopen error [Errno 111] Connection refused>"
+    }
+   ],
+   "ok": false
+  }
+ ],
+ "summary": [
+  {
+   "group": "A",
+   "cell": "A",
+   "c": 1,
+   "n_waves": 4,
+   "n_failed": 4,
+   "n_requests": 4,
+   "tok_s": {
+    "n": 4,
+    "median": 31.458801692950015,
+    "mean": 31.866908759563298,
+    "stdev": 2.2540864331744768,
+    "ci95": [
+     28.280657244382706,
+     35.453160274743894
+    ]
+   },
+   "stream_tok_s": {
+    "n": 4,
+    "median": 31.458801692950015,
+    "mean": 31.866908759563298,
+    "stdev": 2.2540864331744768,
+    "ci95": [
+     28.280657244382706,
+     35.453160274743894
+    ]
+   },
+   "step_ms": {
+    "n": 4,
+    "median": 69.45078011589143,
+    "mean": 69.63434491259125,
+    "stdev": 1.6956144301074376,
+    "ci95": [
+     66.93662235429031,
+     72.33206747089218
+    ]
+   },
+   "acceptance_len": {
+    "n": 4,
+    "median": 2.187390350877193,
+    "mean": 2.224098911736265,
+    "stdev": 0.2130481414845696,
+    "ci95": [
+     1.8851393186343146,
+     2.563058504838215
+    ]
+   },
+   "agg_tok_s": null,
+   "ttft_s": {
+    "n": 4,
+    "median": 0.28248346503823996,
+    "mean": 0.2813176177733112,
+    "stdev": 0.025478937262777834,
+    "ci95": [
+     0.24078062858823168,
+     0.32185460695839074
+    ]
+   },
+   "prompt_tokens": {
+    "n": 4,
+    "median": 45.0,
+    "mean": 45.5,
+    "stdev": 1.9148542155126762,
+    "ci95": [
+     42.45346694311933,
+     48.54653305688067
+    ]
+   },
+   "client_prefill_tok_s": {
+    "n": 4,
+    "median": 162.8907682501387,
+    "mean": 162.96267234266548,
+    "stdev": 18.887165936172586,
+    "ci95": [
+     132.91319133821492,
+     193.01215334711605
+    ]
+   },
+   "server_prefill_tok_s": {
+    "n": 4,
+    "median": 195.10096988566087,
+    "mean": 195.64045614452496,
+    "stdev": 6.339231820551918,
+    "ci95": [
+     185.55473831802686,
+     205.72617397102306
+    ]
+   },
+   "itl_ms": {
+    "n": 4,
+    "median": 69.49931201193147,
+    "mean": 69.6779398584437,
+    "stdev": 1.7193146230915983,
+    "ci95": [
+     66.94251029310496,
+     72.41336942378243
+    ]
+   },
+   "per_pos": [
+    0.6565874730021598,
+    0.32181425485961124,
+    0.14362850971922247,
+    0.052915766738660906,
+    0.024838012958963283,
+    0.005399568034557235,
+    0.004319654427645789
+   ],
+   "sanity_max_err": 0.001953125,
+   "sanity_ok": true,
+   "short_requests": 0,
+   "valid": false,
+   "invalid_reason": "local swap +498 MiB"
+  },
+  {
+   "group": "B",
+   "cell": "B",
+   "c": 1,
+   "n_waves": 0,
+   "n_failed": 8,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  },
+  {
+   "group": "J@c1",
+   "cell": "J",
+   "c": 1,
+   "n_waves": 0,
+   "n_failed": 3,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  },
+  {
+   "group": "J@c2",
+   "cell": "J",
+   "c": 2,
+   "n_waves": 0,
+   "n_failed": 3,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  },
+  {
+   "group": "H",
+   "cell": "H",
+   "c": 2,
+   "n_waves": 0,
+   "n_failed": 4,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  },
+  {
+   "group": "K@c1",
+   "cell": "K",
+   "c": 1,
+   "n_waves": 0,
+   "n_failed": 3,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  },
+  {
+   "group": "K@c2",
+   "cell": "K",
+   "c": 2,
+   "n_waves": 0,
+   "n_failed": 3,
+   "n_requests": 0,
+   "tok_s": null,
+   "stream_tok_s": null,
+   "step_ms": null,
+   "acceptance_len": null,
+   "agg_tok_s": null,
+   "ttft_s": null,
+   "prompt_tokens": null,
+   "client_prefill_tok_s": null,
+   "server_prefill_tok_s": null,
+   "itl_ms": null,
+   "per_pos": [],
+   "sanity_max_err": null,
+   "sanity_ok": null,
+   "short_requests": 0,
+   "valid": true,
+   "invalid_reason": null
+  }
+ ],
+ "failed_cells": [],
+ "hygiene_unverified": []
+}

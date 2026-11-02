@@ -1,0 +1,73 @@
+== 2026-11-02T21:15:21Z preflight; env for run.sh: 
+git 24d7bd6adead90509cee4401be4c51cbfe9dfef3 opt/r3-research-decode
+ M README.md
+ M docker/gpu_check_v15_kda_recover.py
+ M docker/test_v15_fixes.py
+ M docker/test_v15_kda_recover.py
+ M evidence/decision.tsv
+ M evidence/trail.tsv
+ M quality/tier0.py
+ M tests/test_chat_template.py
+ M tests/test_quality_tier0.py
+ M tests/test_run_sh.py
+?? evidence/r3-tools/
+?? evidence/r3/
+GLM53_* in this shell: 0
+sudo -n: no (drop_caches no-ops)
+== spark1 docker ps -a
+37646c287fa5 dsv41-exl3-nfs:local Exited (137) 5 weeks ago dsv41-exl3-nfs
+6f15eeb08110 matrixconduit/matrix-conduit:latest Up 11 days conduit
+== spark1 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       5.6Gi       111Gi       1.3Mi       5.6Gi       116Gi
+Swap:           15Gi       3.1Gi        12Gi
+== spark1 image glm53-sm121-v13
+sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9
+== spark1 JIT cache
+total 40
+drwxr-xr-x 10 sfxnz sfxnz 4096 Nov  2 17:10 .
+drwxrwxr-x 31 sfxnz sfxnz 4096 Nov  2 12:30 ..
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 27 18:15 033847011721
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 13:09 14f7b1066fe3
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 01:52 56c6084f422c
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 7bed3aded5df
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 9599a9fc5fe5
+drwxr-xr-x  6 sfxnz sfxnz 4096 Sep 28 05:58 c9729cc0738f
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 d79e079c38c5
+drwxr-xr-x  2 sfxnz sfxnz 4096 Sep 27 19:13 logs
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+134M	/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+128M	/home/sfxnz/projects/data/glm53-jit-cache/7bed3aded5df
+132M	/home/sfxnz/projects/data/glm53-jit-cache/9599a9fc5fe5
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+134M	/home/sfxnz/projects/data/glm53-jit-cache/d79e079c38c5
+12K	/home/sfxnz/projects/data/glm53-jit-cache/logs
+== spark1 GPU compute apps (process list, not memory)
+== spark2 docker ps -a
+469f14c7c3a0 48722b20d2d7 Exited (128) 2 weeks ago wizardly_haslett
+== spark2 free -h
+               total        used        free      shared  buff/cache   available
+Mem:           121Gi       4.0Gi       108Gi       204Ki        11Gi       117Gi
+Swap:           15Gi       398Mi        15Gi
+== spark2 image glm53-sm121-v13
+sha256:14f7b1066fe3c9f582de513791ba3621f716848a157d9c260c0a5b4bd8e9cfe9
+== spark2 JIT cache
+total 36
+drwxrwxr-x  9 sfxnz sfxnz 4096 Nov  2 17:10 .
+drwxrwxr-x 12 sfxnz sfxnz 4096 Oct 21 12:23 ..
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 27 18:14 033847011721
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 13:08 14f7b1066fe3
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 01:51 56c6084f422c
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 7bed3aded5df
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 9599a9fc5fe5
+drwxrwxr-x  6 sfxnz sfxnz 4096 Sep 28 05:57 c9729cc0738f
+drwxrwxr-x  6 sfxnz sfxnz 4096 Oct 16 19:19 d79e079c38c5
+132M	/home/sfxnz/projects/data/glm53-jit-cache/033847011721
+134M	/home/sfxnz/projects/data/glm53-jit-cache/14f7b1066fe3
+132M	/home/sfxnz/projects/data/glm53-jit-cache/56c6084f422c
+128M	/home/sfxnz/projects/data/glm53-jit-cache/7bed3aded5df
+132M	/home/sfxnz/projects/data/glm53-jit-cache/9599a9fc5fe5
+133M	/home/sfxnz/projects/data/glm53-jit-cache/c9729cc0738f
+134M	/home/sfxnz/projects/data/glm53-jit-cache/d79e079c38c5
+== spark2 GPU compute apps (process list, not memory)

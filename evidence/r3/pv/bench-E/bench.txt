@@ -1,0 +1,9 @@
+ruler=v2 url=http://127.0.0.1:8000/v1/chat/completions model=nvidia/GLM-5.3-Flash-NVFP4 cells=E runs=1 tokens=512 git=a1cc710d32a8b37eeb85e9b9f3d9db3a84ded452-dirty
+E@32k c=1 [E/32k] tok/s=41.33 step_ms=68.3 acc_len=2.911 ttft=20.687s tokens=[128]
+E@128k c=1 [E/128k] tok/s=32.40 step_ms=65.3 acc_len=2.133 ttft=82.936s tokens=[128]
+
+cell     c   n   tok/s            95% CI  step_ms acc_len  ttft_s     agg  prefill  valid
+-----------------------------------------------------------------------------------------
+E@32k    1   1   41.33                 -     68.3   2.911  20.687       -     1589  ok sanity_err=0.031
+E@128k   1   1   32.40                 -     65.3   2.133  82.936       -     1576  ok
+published decode score = cell A tok/s (prose, c=1); K is the legacy continuity row
