@@ -5,23 +5,6 @@
 GLM53_V14_SRC is the directory that holds the vllm/ package copied out of
 glm53-sm121-v14 (read-only; the tests patch temporary copies). Without it
 only the plan tests run. The interpreter tests also need torch and triton.
-They run v14's own fused_recurrent_gated_delta_rule_fwd_kernel and its
-fused_recurrent_kda wrappers (lifted unchanged from v14's ops/kda.py) under
-the Triton CPU interpreter (TRITON_INTERPRET=1), once with GLM53_KDA_TRIM=0
-and once with 1, next to the shipped module. Each compares the stock verify
-(per-token state stores, initial state at column num_accepted - 1) with the
-recover path (verify without stores, records, commit replay) bit for bit:
-
-  single step  every accepted count 0..7, mamba cache mode none and align
-               (block 12, so the 1152-token boundary case recurs), padded
-               FULL-graph rows, a mixed batch whose spec rows are not the
-               batch rows, and a row with an idx_mapping of -1. Outputs, the
-               states a later step reads, and every other block untouched.
-  chains       several steps with random acceptance, where the next step reads
-               the column the last one left. Align mode runs the V2 pre-copy
-               and post-copy rules (preprocess_mamba_align_fused_kernel,
-               postprocess_mamba_fused_kernel) on both pools; outputs and
-               every cached boundary block must match at each step.
 """
 
 import ast
@@ -94,13 +77,10 @@ class SourceTest(unittest.TestCase):
         self.assertIn(flag, gdn)
         self.assertIn(flag, hybrid)
         self.assertIn(flag, P.MODULE)
-        # Off: no builder state, so no metadata field is set and kda.py passes
-        # v14's index arguments; the model state never keeps a step.
         self.assertIn("self.glm53_rs = None\n        if _GLM53_KDA_RECOVER:", gdn)
         self.assertIn("spec_state_indices_tensor if rs_index is None else rs_index", kda)
         self.assertIn("num_accepted_tokens\n                    if rs_index is None", kda)
         self.assertIn("if self._glm53_kda_recover:\n            self._glm53_rs_step", hybrid)
-        # The conv update keeps the real num_accepted_tokens.
         self.assertIn(
             "conv_state_indices=conv_idx,\n                num_accepted_tokens=num_accepted_tokens,",
             kda,
@@ -153,9 +133,6 @@ class SourceTest(unittest.TestCase):
             P.main(self.root)
 
 
-# ---------------------------------------------------------------------------
-# Triton CPU interpreter: v14's recurrent kernel and wrappers + the module
-# ---------------------------------------------------------------------------
 STUBS = {
     "vllm/__init__.py": "",
     "vllm/triton_utils/__init__.py": "import triton\nimport triton.language as tl\n",
@@ -195,7 +172,6 @@ KDA_WRAPPERS = ("_glm53_kda_trim_ok", "fused_recurrent_kda_fwd", "fused_recurren
 
 
 def lifted_kda_module(src: str) -> str:
-    """v14's ops/kda.py reduced to its recurrent wrappers, unchanged."""
     tree = ast.parse(src)
     parts = []
     for node in tree.body:
@@ -229,7 +205,7 @@ SCRIPT = textwrap.dedent(
 
     H, K, Q, BLOCKS, LB = 2, 16, 8, 96, -5.0
     P = H * K
-    WIDTH = 3 * P + H + 2 * K + 6  # the merged projection row: q|k|v|b|f_a|g_a
+    WIDTH = 3 * P + H + 2 * K + 6
     BF = torch.bfloat16
     rng = random.Random(1234)
     torch.manual_seed(1234)
@@ -249,14 +225,13 @@ SCRIPT = textwrap.dedent(
 
     def make_inputs(t):
         projected = (torch.randn(t, WIDTH) * 1.5).to(BF)
-        qkv = projected[:, : 3 * P]  # row stride WIDTH, as in kda.py
+        qkv = projected[:, : 3 * P]
         beta = projected[:, 3 * P : 3 * P + H].unsqueeze(0)
         g = (torch.randn(1, t, H, K) * 2.0).to(BF)
         return qkv, g, beta
 
 
     def verify(layer, pool, qkv, g, beta, cu, idx, nacc, out):
-        """kda.py's spec-path call, argument for argument."""
         q, k, v = qkv.split(P, dim=-1)
 
         def rearr(x):
@@ -290,8 +265,6 @@ SCRIPT = textwrap.dedent(
 
 
     class Pair:
-        """The stock path on pool A, the recover path on pool B."""
-
         def __init__(self, rows, tokens, align):
             self.layer = make_layer()
             self.rs = R.Recover([self.layer], Q, rows, tokens, align, BF, "cpu")
@@ -300,7 +273,6 @@ SCRIPT = textwrap.dedent(
             self.b = self.pool0.clone()
 
         def step(self, S, nacc, lens, mask_cpu=None):
-            """One verify on both pools; returns the recover metadata."""
             t = sum(lens)
             qkv, g, beta = make_inputs(max(t, 1))
             qkv, g, beta = qkv[:t], g[:, :t], beta[:, :t]
@@ -341,9 +313,6 @@ SCRIPT = textwrap.dedent(
 
 
     def single_step(align, n0, mixed):
-        """Spec rows 0..2. Pure: a FULL-graph batch, plus a padded row (NULL
-        indices, no tokens). Mixed: batch row 0 is a prefill, spec row r is
-        batch row r + 1, and spec row 2's request is filtered (idx_mapping -1)."""
         pair = Pair(rows=8, tokens=40, align=align)
         blocks = distinct_blocks(3 * Q)
         S_rows = [blocks[r * Q : (r + 1) * Q] for r in range(3)]
@@ -366,7 +335,6 @@ SCRIPT = textwrap.dedent(
             idx_mapping[batch_of[2]] = -1
         computed_pre = [rng.randint(0, 60) for _ in range(batch)]
         if align:
-            # Spec row 0 reaches a block boundary at accepted token j - 1.
             computed_pre[batch_of[0]] = align * 3 - rng.randint(1, spec_n[0])
         for r in range(3):
             num_sampled[batch_of[r]] = spec_n[r]
@@ -419,9 +387,6 @@ SCRIPT = textwrap.dedent(
 
 
     def chain_align(steps, nreq, B):
-        """The V2 align rules from mamba_utils.py / mamba_hybrid.py, applied to
-        both pools: pre-copy into the new running block, post-copy of the
-        boundary state, num_accepted resets."""
         width = (3 * B + steps * Q) // B + 2 + Q
         pair = Pair(rows=nreq, tokens=nreq * Q, align=B)
         flat = distinct_blocks(nreq * width)
@@ -431,7 +396,7 @@ SCRIPT = textwrap.dedent(
         nacc = [1] * nreq
         cached = set()
         for _ in range(steps):
-            for r in range(nreq):  # preprocess + pre-copy (both pools)
+            for r in range(nreq):
                 new = (computed[r] + Q - 1) // B
                 if state_idx[r] != new:
                     src = bt[r][state_idx[r] + nacc[r] - 1]
@@ -449,7 +414,7 @@ SCRIPT = textwrap.dedent(
                 torch.tensor(n, dtype=torch.int32),
                 torch.tensor(new_computed, dtype=torch.int32),
             )
-            for r in range(nreq):  # postprocess_mamba_fused_kernel (both pools)
+            for r in range(nreq):
                 nacc[r] = n[r]
                 running = new_computed[r] - n[r] + 1
                 aligned = new_computed[r] // B * B

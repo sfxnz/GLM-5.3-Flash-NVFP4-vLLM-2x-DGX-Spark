@@ -95,11 +95,6 @@ class SourceTest(unittest.TestCase):
             P.main(self.root)
 
 
-# --------------------------------------------------------------------------
-# Behaviour tests: the patched modules run in a subprocess per switch setting,
-# importing from an overlay tree (the v14 tree symlinked, patched files real).
-# --------------------------------------------------------------------------
-
 PREFIX_CACHE = r'''
 import json, math
 from types import SimpleNamespace
@@ -119,8 +114,6 @@ from vllm.v1.worker.gpu.model_states.mamba_hybrid import MambaHybridModelState
 ATTN, KPOOL, K, MNBT = 4608, 4, 7, 4624
 
 def layout():
-    # The serve's layout: attention block 4608 (fp8 KV), kpool tail, the v11
-    # DFlash draft group at a quarter block, KDA groups in align mode.
     specs = {}
     for i in range(4):
         specs[f"l{i}.attn"] = MLAAttentionSpec(block_size=ATTN, num_kv_heads=1,
@@ -149,7 +142,7 @@ def scenario(budget, L):
     kvc = layout()
     groups = kvc.kv_cache_groups
     engine_bs = min(g.kv_cache_spec.block_size for g in groups
-                    if g.kv_cache_spec.participates_in_prefix_caching)  # core.py
+                    if g.kv_cache_spec.participates_in_prefix_caching)
     cfg = SimpleNamespace(
         cache_config=SimpleNamespace(block_size=engine_bs, enable_prefix_caching=True,
                                      prefix_match_unit=None),
@@ -174,8 +167,6 @@ def scenario(budget, L):
     mamba_gid = next(i for i, g in enumerate(groups) if isinstance(g.kv_cache_spec, MambaSpec))
     draft_gid = next(i for i, g in enumerate(groups)
                      if type(g.kv_cache_spec) is SlidingWindowSpec)
-    # Worker model: the forward writes the state after `end` tokens into the
-    # running column (end - 1) // mamba_block (mamba_get_block_table_tensor).
     state_at = {}
     out = {"engine_block_size": engine_bs, "stalls": 0}
 
@@ -308,8 +299,6 @@ TOPK, KPOOL, WIDTH, HEADS, SMS = 2048, 4, 2176, 32, 48
 MAX_WORKS = 16384
 
 def mla_plan(lens):
-    # Python mirror of MLAPlan (scheduler.cuh), non-causal, one query row per
-    # batch entry: split each row's kv_len into kv_len_limit chunks.
     f = lambda x: 32 if x <= 8 else 64 if x <= 16 else 128 if x <= 32 else (
         192 if x <= 64 else -(-x // 256) * 256)
     limit = f(max(-(-sum(lens) // SMS), 1))
@@ -386,8 +375,6 @@ def step(state, seq_lens, q_lens, upper):
                 state._lens_cpu[:num_rows] - exact))}
 
 st = State()
-# Two requests, 8 verify rows each: one past index_topk, one below it. The
-# host bound assumes every draft was accepted (async spec decode).
 s1 = step(st, [3000, 1500], [8, 8], [3007, 1507])
 s2 = step(st, [3003, 1502], [8, 8], [3011, 1510])
 s3 = step(st, [3009, 1540], [8, 8], [3017, 1545])
@@ -396,8 +383,6 @@ print(json.dumps({"s1": s1, "s2": s2, "s3": s3}))
 
 
 def _overlay(src_root: Path, dst_root: Path) -> None:
-    """Symlink the v14 vllm tree into dst_root, copy and patch the files v15
-    edits."""
     src_pkg = src_root / "vllm"
     for dirpath, dirnames, filenames in os.walk(src_pkg):
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
@@ -440,19 +425,12 @@ class BehaviourTest(unittest.TestCase):
     def test_prefix_cache_dflash(self):
         off = _run(PREFIX_CACHE, self.tmp, {})
         on = _run(PREFIX_CACHE, self.tmp, {"GLM53_PREFIX_CACHE_DFLASH": "1"})
-        # The scheduler's split unit is the draft group's quarter block.
         self.assertEqual(off["c1_9216"]["engine_block_size"], 1152)
-        # Off: DFlash counts as EAGLE, so a 2-block prompt never hits.
         self.assertTrue(off["drop_dflash"])
         self.assertEqual(off["c1_9216"]["hit"], 0)
-        # Off, prefill budget under one mamba block (more than two decoding
-        # requests): a chunk crosses 4608 without stopping, and the block
-        # hashed for 4608 holds the KDA state after 3456 tokens.
         bad = off["short_budget_13000"]
         self.assertEqual(bad["hit"], 4608)
         self.assertNotEqual(bad["hit_state"], bad["hit"])
-        # On: no drop for DFlash (MTP keeps it), hits at mamba boundaries with
-        # the matching state and the draft window's KV.
         self.assertFalse(on["drop_dflash"])
         self.assertTrue(on["drop_mtp"])
         for case, hit in [("c1_9216", 4608), ("c1_13000", 9216), ("short_budget_13000", 9216)]:
@@ -461,7 +439,6 @@ class BehaviourTest(unittest.TestCase):
             self.assertEqual(got["hit_state"], hit, case)
             self.assertGreater(got["hit_draft_blocks"], 0, case)
             self.assertTrue(all(e % 4608 == 0 for e in got["a_ends"][:-1]), case)
-        # The price of the right unit: a budget under 4608 waits a step.
         self.assertGreater(on["short_budget_13000"]["stalls"], 0)
         self.assertEqual(off["c1_13000"]["stalls"], 0)
         # vLLM #55601: the resumed KDA column is in mamba blocks.
@@ -496,12 +473,9 @@ class BehaviourTest(unittest.TestCase):
         res = _run(MLA_PLAN, self.tmp, {"GLM53_MLA_PLAN_NOSYNC": "1", "TRITON_INTERPRET": "1"})
         for name in ("s1", "s2", "s3"):
             got = res[name]
-            # Each row's clamped works cover exactly its valid count, starting
-            # with a non-empty chunk at kv_start 0.
             self.assertEqual(got["covered"], got["exact"], name)
             self.assertTrue(got["first_chunk_nonempty"], name)
             self.assertGreaterEqual(got["planned_minus_exact_max"], 0, name)
-        # Growth inside the slack reuses the plan; growth past it replans.
         self.assertEqual(res["s1"]["plans"], 1)
         self.assertEqual(res["s2"]["plans"], 1)
         self.assertEqual(res["s3"]["plans"], 2)

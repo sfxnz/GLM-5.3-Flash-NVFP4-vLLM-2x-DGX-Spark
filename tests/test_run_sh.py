@@ -229,7 +229,6 @@ def glm53_env(stdout):
     return m.group(1).split()
 
 
-# The v15 knobs default on, so a run pinned to an older image turns them off, as the rollbacks in AGENTS.md do.
 V15_OFF = {"KDA_RECOVER": "0", "MLA_PLAN_NOSYNC": "0", "PREFIX_CACHE_DFLASH": "0", "VIDEO_FRAMES_FIX": "0"}
 
 
@@ -398,7 +397,6 @@ class V13Knobs(RunShCase):
 
 
 class SwitchKnobs(RunShCase):
-    """On/off knobs that each own one GLM53_* variable: v13's KDA_TRIM and v15's four."""
     OWNERS = {"KDA_TRIM": "GLM53_KDA_TRIM", "KDA_RECOVER": "GLM53_KDA_RECOVER",
               "MLA_PLAN_NOSYNC": "GLM53_MLA_PLAN_NOSYNC", "PREFIX_CACHE_DFLASH": "GLM53_PREFIX_CACHE_DFLASH",
               "VIDEO_FRAMES_FIX": "GLM53_VIDEO_FRAMES_FIX"}

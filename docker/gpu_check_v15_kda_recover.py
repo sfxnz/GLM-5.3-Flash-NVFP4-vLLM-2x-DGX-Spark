@@ -2,27 +2,6 @@
 
     docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work \\
         glm53-sm121-v15 docker/gpu_check_v15_kda_recover.py [--layers 34] [--iters 50]
-
-One GPU, no serve, no model weights: random inputs at the TP=2 serve shapes
-(32 heads, head dim 128, fp32 state, bf16 activations, DFlash2-7 so 8 rows per
-request). It runs the image's own fused_recurrent_kda both ways, with
-GLM53_KDA_TRIM off and on:
-
-  stock    the v14 spec verify: per-token state stores, initial state at
-           column num_accepted - 1
-  recover  the v15 path: verify through [NULL x 8, src] with num_accepted 9,
-           records, then the commit replay
-
-and requires bitwise equality of every verify output and of every state a
-later step reads, over chains of steps at c=1 and c=2 in mamba cache modes
-none and align (block 1152, started next to a boundary). It captures the
-recover verify and the commit in CUDA graphs and requires their replays to
-match eager bit for bit. Then it times one decode step's KDA recurrence over
---layers layers (each with its own state pool) for both paths. Exit status 0
-only if every comparison is bitwise equal.
-
-The module comes from the image when the v15 patch is installed, otherwise
-from docker/patch_v15_kda_recover.py next to this script.
 """
 
 import argparse
@@ -41,7 +20,7 @@ from vllm.third_party.flash_linear_attention.ops import kda as fla_kda
 
 H, K, Q, LB, ALIGN = 32, 128, 8, -5.0, 1152
 P = H * K
-WIDTH = 3 * P + H + 2 * K  # merged projection row: q|k|v|b|f_a|g_a
+WIDTH = 3 * P + H + 2 * K
 BF = torch.bfloat16
 DEV = "cuda"
 
@@ -85,7 +64,6 @@ def make_inputs(t):
 
 
 def verify(layer, pool, qkv, g, beta, cu, idx, nacc, out):
-    """kda.py's spec-path call, argument for argument."""
     q, k, v = qkv.split(P, dim=-1)
 
     def rearr(x):
@@ -117,8 +95,6 @@ def same(a, b):
 
 
 class Pair:
-    """Stock path on pool A, recover path on pool B, same layer parameters."""
-
     def __init__(self, nreq, blocks, align):
         self.layer = make_layer(blocks)
         self.a = self.layer.kv_cache[1]
@@ -170,7 +146,6 @@ def chain_none(rng, nreq, steps):
 
 
 def chain_align(rng, nreq, steps):
-    """V2 align rules (pre-copy, post-copy, num_accepted resets) on both pools."""
     width = steps * Q // ALIGN + 3 + Q
     blocks = nreq * width + 1
     pair = Pair(nreq, blocks, ALIGN)
@@ -223,7 +198,6 @@ def chain_align(rng, nreq, steps):
 
 
 def every_n(rng):
-    """One step per accepted count 0..7: the state at column n - 1."""
     ok = True
     for n in range(1, Q + 1):
         pair = Pair(1, Q + 2, 0)
@@ -236,7 +210,6 @@ def every_n(rng):
 
 
 def graphs_match(rng, nreq):
-    """Recover verify (records + call) and the commit, captured and replayed."""
     pair = Pair(nreq, nreq * Q + 2, 0)
     layer = pair.layer
     t = nreq * Q
@@ -285,7 +258,6 @@ def graphs_match(rng, nreq):
 
 
 def time_step(layers_n, nreq, iters, rng):
-    """One decode step's KDA recurrence over layers_n layers, both paths."""
     t = nreq * Q
     blocks = nreq * Q + 2
     layers = [make_layer(blocks) for _ in range(layers_n)]

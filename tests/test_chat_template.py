@@ -19,9 +19,6 @@ LOCAL = REPO / "chat_template.jinja"
 HUB = Path(__file__).resolve().parent / "data" / "nvidia_hub_chat_template.jinja"
 GEN_START = "{%- if add_generation_prompt -%}\n"
 
-# The two documented differences from the Hub template, both keyed on the parser's thinking rule: the
-# generation prompt closes an empty think block when thinking is off, and the system effort line then says
-# Low instead of Max unless low or high was requested (Max beside a closed think block corrupted tables).
 HUB_EFFORT_LINE = "{%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else 'max' -%}\n"
 LOCAL_EFFORT_LINES = (
     "{#- Thinking off with no low/high effort renders Low, not Max: Max beside a closed think block corrupted dense numeric output (evidence/r3/b0 utf8 A/B). -#}\n"
@@ -96,7 +93,6 @@ class KwargMatrix(unittest.TestCase):
                 self.assertTrue(out.startswith(f"[gMASK]<sop><|system|>Reasoning Effort: {label}"), out[:60])
 
     def test_thinking_off_default_matches_clean_ab_arm(self):
-        # The r3 utf8 A/B's clean thinking-off arm sent enable_thinking false with reasoning_effort low.
         self.assertEqual(render(LOCAL, enable_thinking=False), render(LOCAL, enable_thinking=False, reasoning_effort="low"))
         self.assertEqual(render(LOCAL, enable_thinking=True), render(HUB, enable_thinking=True))
 
