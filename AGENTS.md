@@ -42,6 +42,12 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 `--kv-cache-memory 4445787956` (4.14 GiB) stays the pin. Dropping it OOMs. Raising it boots but backfires under UMA pressure.
 
+## Measured (r3, 2026-11-02)
+
+- Published decode, three plain `./run.sh` boots (final-b1..b3) interleaved with three PR #16-default boots (final-a1..a3): prose A 33.34 tok/s (step 66.6 ms, acceptance 2.23), H 23.47 per stream / 44.86 aggregate. Against the interleaved r2 arm: A +6.5% [+4.6, +8.3], H +9.1% [+7.2, +10.9], both KEEP (`evidence/r3/compare-finals-fast.txt`). Prefill 1587 / 1576 tok/s at 32k / 128k, flat.
+- spark1 can be shared with other projects' processes (8-22 GiB RSS bursts on 2026-11-02). Boot behind `evidence/r3-tools/gate.sh 11`, log host load, and claim decode only from interleaved boots; a boot at load average 7-30 read 3% low on A and 7% low on prefill (r3 B0).
+- Quality: on 100 paired thinking-on items `1d00738` answers 85 vs 82 with 7.7% fewer completion tokens (X1). The thinking-off template fix turned the 40-row table probe from 0/6 to 6/6 clean (T1). `evidence/r3/notes.txt` has every unit.
+
 ## Measured (r2, 2026-10-16)
 
 - Published decode, three plain `./run.sh` boots (R1-R3): prose A 31.23 tok/s (step 69.3 ms, acceptance 2.17), H 21.46 per stream / 40.50 aggregate. Against the 2026-09-28 defaults: A +4.0% [+3.2, +4.8], H +3.8% [+1.7, +5.8], both KEEP (`evidence/r2/compare-r123-vs-f12g2.txt`).

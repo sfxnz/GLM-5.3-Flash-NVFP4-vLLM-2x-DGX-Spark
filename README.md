@@ -4,21 +4,21 @@ Serve [nvidia/GLM-5.3-Flash-NVFP4](https://huggingface.co/nvidia/GLM-5.3-Flash-N
 
 320B total / 18B active. Official NVIDIA ModelOpt 0.47.0 NVFP4 W4A4 on routed experts and dense MLP (`nvfp4_experts_dense_mlp-kv_fp8_cast`, ~190.5 GiB). Attention, shared experts, and vision stay BF16. Checkpoint KV scheme is `kv_fp8_cast`. Native context is 1,048,576. This recipe serves `--max-model-len` 327680 with the DFlash2 block-diffusion drafter (7 speculative tokens, two sequences). Vision is on (`LANGUAGE_MODEL_ONLY=0`). Do not copy the NVIDIA card's TP=4 / expert-parallel / 32-sequence / 8192 batched-token flags onto 2× Spark.
 
-Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v14` first.
+Stock `vllm/vllm-openai:glm53-flash-arm64-cu130` loads on sm_121 and echoes the prompt. Build the local image chain through `glm53-sm121-v15` first.
 
 ## Measured on 2× DGX Spark (L.A.I.L lab)
 
-Published decode is prose only. Do not score decode from structured, code, or other cells. The table is ruler v2 (`bench_decode.py`) on the current defaults (see Defaults). c=1 is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off. c=2 is cell H: the same prompts as two distinct streams; its TTFT includes prefix-cache hits, so it is not comparable to A's. Each value is the mean of three boots of plain `./run.sh` on 2026-10-16 (R1, R2, R3, one panel each). Step ms and acceptance length are per verify step.
+Published decode is prose only. Do not score decode from structured, code, or other cells. The table is ruler v2 (`bench_decode.py`) on the current defaults (see Defaults). c=1 is cell A: 8 distinct prose prompts, 512 forced tokens, greedy, thinking off. c=2 is cell H: the same prompts as two distinct streams; its TTFT includes prefix-cache hits, so it is not comparable to A's. Each value is the mean of three boots of plain `./run.sh` on 2026-11-02 (final-b1, final-b2, final-b3, one panel each). Step ms and acceptance length are per verify step.
 
-Against the previous defaults (F1, F2b and G2 of 2026-09-28: A 30.04, H 20.69), `kit/compare.py` puts the three boots at A +4.0% [+3.2, +4.8] and H +3.8% [+1.7, +5.8], both KEEP, with step A −5.3% ([`evidence/r2/compare-r123-vs-f12g2.txt`](evidence/r2/compare-r123-vs-f12g2.txt)). Long-context prefill (cell E) rose from 1187 / 1183 to 1593 / 1562 tok/s at 32k / 128k (+34.3% / +32.0%), and TTFT at 128k fell from 109.8 s to 83.8 s ([`evidence/r2/prefill-table.txt`](evidence/r2/prefill-table.txt)). E0, the nvidia pack on `glm53-sm121-v11` without the v13 knobs, measured A 19.73 and H 13.87 tok/s per stream and prefilled 1331 / 1329 tok/s.
+Those three boots alternated with three boots of the previous (r2) defaults on the same day, so both arms saw the same host. The r2 arm reproduced its published numbers (A 31.31 against 31.23, H 21.52 against 21.46). `kit/compare.py` puts the new defaults at A +6.5% [+4.6, +8.3] and H +9.1% [+7.2, +10.9], both KEEP, with step A −2.9% and acceptance A +3.5%. Code (B) is +11.3%, structured (J) +7.6% / +11.5% at c=1 / c=2, and thinking on (T) +3.3% ([`evidence/r3/compare-finals-fast.txt`](evidence/r3/compare-finals-fast.txt), [`compare-finals-T.txt`](evidence/r3/compare-finals-T.txt)). Long-context prefill (cell E) held at 1587 / 1576 tok/s at 32k / 128k against 1588 / 1580. The r2 round before it had raised prefill from 1187 / 1183 to 1593 / 1562 (+34.3% / +32.0%; [`evidence/r2/prefill-table.txt`](evidence/r2/prefill-table.txt)). E0, the nvidia pack on `glm53-sm121-v11` without the v13 knobs, measured A 19.73 and H 13.87 tok/s per stream and prefilled 1331 / 1329 tok/s.
 
 A request that omits sampling params is served at `generation_config.json`'s T=1.0 / top_p 0.95 (vLLM `--generation-config auto`). Cell G (A's prompts sampled that way) ran 28.44 / 28.46 tok/s on F1 / G2. Quality on that path is unmeasured. Prose is the low-acceptance regime. Structured (cell J, count 1→200) measures occupancy and acceptance only.
 
 <!-- BEGIN generated measured from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Phase | Concurrency | Decode tok/s per stream | Aggregate tok/s | TTFT p50 | Step ms | Acceptance length |
 |---|---|---:|---:|---:|---:|---:|
-| prose | 1 | 31.23 | 31.23 | 0.27 s | 69.3 | 2.17 |
-| prose | 2 | 21.46 | 40.50 | 0.39 s | 99.7 | 2.14 |
+| prose | 1 | 33.34 | 33.34 | 0.27 s | 66.6 | 2.23 |
+| prose | 2 | 23.47 | 44.86 | 0.35 s | 94.7 | 2.22 |
 <!-- END generated measured -->
 
 ### From E0 to the defaults
@@ -41,9 +41,18 @@ The r2 round (2026-10-16, [`evidence/r2/`](evidence/r2/)) stacked one lever per 
 - **v14 decode fixes** (B4, `DECODE_FIXES=1`): the model computed the MoE router logits that the runner recomputes, and the indexer head-gate ran as an fp32 gemv. Step A 73.5 → 72.8 ms, inside single-boot noise. Both changes are exact or reorder fp32 sums only ([`docker/README-v14.md`](docker/README-v14.md)).
 - **tau 0.4** (B5): A +4.2%, H +4.9%, B +3.3% against tau 0.3. Acceptance is unchanged.
 
+The r3 round (2026-11-02, [`evidence/r3/`](evidence/r3/), [`notes.txt`](evidence/r3/notes.txt)) stacked one change per boot again. The host was shared with another project, so `evidence/r3-tools/gate.sh` waited for a quiet minute before each boot and the decode claim above comes from interleaved boots:
+
+- **Checkpoint `1d00738`** (X1): NVIDIA's re-export of the routed experts; `09b04e5` had an uncalibrated `weight_scale_2` on about a third of them. On 100 paired thinking-on items (50 GSM8K, 50 MMLU-Pro, greedy) it answers 85 against 82 and writes 7.7% fewer completion tokens (GSM8K −16.8%). Decode bytes are unchanged.
+- **Thinking-off prompt fix** (T1, `chat_template.jinja`): thinking off now renders `Reasoning Effort: Low` instead of Max beside the closed think block. A 40-row number table came out clean 0 of 6 times before and 6 of 6 after. Outputs also draft better: A +4.3%, H +6.9% (single boot).
+- **KDA verify without per-row state stores** (KR, `KDA_RECOVER=1`, v15): bitwise equal on the GPU; step A −1.10 ms [−1.93, −0.27] paired by prompt, H −3.1 ms.
+- **Sparse-MLA plan without the D2H sync** (NS, `MLA_PLAN_NOSYNC=1`, vLLM #58684): step A −0.91 ms [−1.76, −0.06]. With KR: −2.01 ms [−2.48, −1.55] against T1, faster on all 8 prompts.
+- **Prefix cache keeps its last block** (PV, `PREFIX_CACHE_DFLASH=1`): turn-2 TTFT on a repeated 32k document 4.66 → 1.61 s, on 8k 3.79 → 0.76 s.
+- **Short-video crash** (PV, `VIDEO_FRAMES_FIX=1`): a 2 s, 20-frame mp4 used to kill the engine (128 encoder tokens against 384 placeholders, HTTP 500). It now answers.
+
 ### Quality
 
-Tier 1 (1,010 items, greedy) scored 863 on the INT8 defaults (E4a) against E0's 857: pooled +0.59 points [−0.86, +2.05], PASS. Adaptive verify is lossless, so tau 0.4 keeps that result ([E4a notes](evidence/e4a-int8/notes.txt)). Tier 0 on R1 (the r2 defaults) sits inside the same cross-boot A/A limits: |dNLL| 0.00082, top-1 98.14%, KL top-20 6.82e-3 (limit 6.86e-3, as thin as E4b's 6.83e-3) and greedy hazard 0.0135; needles 3/3 at 8k and 32k, vision 13/13 ([`evidence/r2/r1/tier0-compare.console.txt`](evidence/r2/r1/tier0-compare.console.txt)). Tier 0 on F1 sits inside the cross-boot A/A limits: |dNLL| 0.00046 (limit 0.005), top-1 98.14% (limit 97.83%), KL top-20 6.63e-3 (limit 6.86e-3, a thin margin) and greedy hazard 0.0135 (limit 0.0192) ([E5 notes](evidence/e5-final/notes.txt)). Count-200 is lossless and thinking-off leaks no chain-of-thought on every final boot. The utf8-table probe fails most runs on every boot, E0 included, and E0's video answer sits on a model decision boundary.
+Tier 1 (1,010 items, greedy) scored 863 on the INT8 defaults (E4a) against E0's 857: pooled +0.59 points [−0.86, +2.05], PASS. Adaptive verify is lossless, so tau 0.4 keeps that result ([E4a notes](evidence/e4a-int8/notes.txt)). Tier 0 on R1 (the r2 defaults) sits inside the same cross-boot A/A limits: |dNLL| 0.00082, top-1 98.14%, KL top-20 6.82e-3 (limit 6.86e-3, as thin as E4b's 6.83e-3) and greedy hazard 0.0135; needles 3/3 at 8k and 32k, vision 13/13 ([`evidence/r2/r1/tier0-compare.console.txt`](evidence/r2/r1/tier0-compare.console.txt)). Tier 0 on F1 sits inside the cross-boot A/A limits: |dNLL| 0.00046 (limit 0.005), top-1 98.14% (limit 97.83%), KL top-20 6.63e-3 (limit 6.86e-3, a thin margin) and greedy hazard 0.0135 (limit 0.0192) ([E5 notes](evidence/e5-final/notes.txt)). Count-200 is lossless and thinking-off leaks no chain-of-thought on every final boot. Until r3 the utf8-table probe failed most runs on every boot, E0 included; the cause was the thinking-off prompt (Max effort beside a closed think block), not the weights or the drafter, and the r3 template fixes it. E0's video answer sits on a model decision boundary.
 
 ### Long-context prefill
 
@@ -59,6 +68,8 @@ The INT8 target used to cost about 10.5% of prefill against E0 (G2 1192 / 1190 t
 - `ADAPTIVE_VERIFY_TAU=0.5` (r2 B7): the step got shorter, but acceptance fell as fast. A −0.5%, B −0.9% against 0.4.
 - `GLM53_LATE_MLA_PLAN` (r2 B6): building the syncing sparse-MLA metadata after the KDA groups did not move decode (A 31.11 vs 31.37). The switch stays in v14, off.
 - NCCL `NCCL_PROTO=LL` / `LL128`, `NCCL_ALGO=Tree` and one channel were all slower than the default for 64 KiB decode all-reduces (49 µs default).
+- `KDA_TRIM=1` (r3 KT): step −0.19 ms [−1.14, +0.77] on top of KR, inside noise. The knob stays, off.
+- Humming MoE (r3 microbench, not booted): +1.4% over Marlin at 8 rows with humming 0.1.19; both kernels stream at 95-102% of the measured DRAM read ceiling ([`evidence/r3/moe-microbench/notes.txt`](evidence/r3/moe-microbench/notes.txt)).
 
 Every row is in [`evidence/decision.tsv`](evidence/decision.tsv), with the run log in [`evidence/trail.tsv`](evidence/trail.tsv). To reproduce the numbers, see Repeat the decode bench.
 
@@ -89,7 +100,8 @@ docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
 docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
 docker build -f docker/Dockerfile.sm121-v13 -t glm53-sm121-v13 docker
 docker build -f docker/Dockerfile.sm121-v14 -t glm53-sm121-v14 docker
-docker save glm53-sm121-v14 | ssh spark2 docker load
+docker build -f docker/Dockerfile.sm121-v15 -t glm53-sm121-v15 docker
+docker save glm53-sm121-v15 | ssh spark2 docker load
 ```
 
 Build once on the head and copy the image to the worker with `docker save | docker load` as above. That took 253 s in E1 and gave both nodes the same image ID (`evidence/e1-v13-build/`). Separate builds on each node give different image IDs, so nothing proves the two ranks run the same bits; E0 ran two different v11 builds. With `ORCHESTRATE=auto` (and in `VALIDATE_ONLY=1` when SSH works) `run.sh` compares the image IDs on both nodes and warns on a mismatch.
@@ -105,10 +117,19 @@ The next three layers are all required for `SPEC=dflash2` (MTP works on v8):
 v13 adds Python-only runtime patches on top of v11 (misc, fp8, census, verify, kpool_tail; [`docker/README-v13.md`](docker/README-v13.md)). Every one is off unless its `GLM53_*` variable is set; with none set, v13 serves like v11 (E1a passed Tier 0 against the v11 reference). The recipe sets them from the knobs `DRAFT_WEIGHTS`, `TARGET_WEIGHT_GROUPS_INT8`, `PREFILL_DEQUANT_MIN_M`, `KPOOL_TAIL_FIX` and `ADAPTIVE_VERIFY` / `ADAPTIVE_VERIFY_TAU` (see Defaults), passes them to both ranks, and refuses any knob that is on unless `IMAGE` is a `glm53-sm121-v13*` or `glm53-sm121-v14*` tag (`FORCE_UNSAFE_IMAGE=1` overrides). v11 stays the rollback:
 
 ```bash
-IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0 ./run.sh
+IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0 ./run.sh
 ```
 
-v14 adds one more Python-only layer on top of v13 (`patch_v14_decode.py`, [`docker/README-v14.md`](docker/README-v14.md)): the router dedupe and the head-gate GEMM, both behind `GLM53_*` switches that are off in the image. `DECODE_FIXES=1` (default) turns them on and needs a `glm53-sm121-v14*` image. The v13 rollback is `IMAGE=glm53-sm121-v13 DECODE_FIXES=0`. The v13 knobs work on both images.
+v14 adds one more Python-only layer on top of v13 (`patch_v14_decode.py`, [`docker/README-v14.md`](docker/README-v14.md)): the router dedupe and the head-gate GEMM, both behind `GLM53_*` switches that are off in the image. `DECODE_FIXES=1` (default) turns them on and needs a `glm53-sm121-v14*` image. The v13 rollback is `IMAGE=glm53-sm121-v13 DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0`. The v13 knobs work on every image from v13 on.
+
+v15 adds two more Python-only layers on top of v14 ([`docker/README-v15.md`](docker/README-v15.md), [`docker/README-v15-kda-recover.md`](docker/README-v15-kda-recover.md)). Each switch is off in the image and has its own knob; all four are on by default and need a `glm53-sm121-v15*` image:
+
+- `KDA_RECOVER=1`: the DFlash2 verify stops storing a full fp32 KDA state per verified row (2 MiB per KDA layer per row per rank) and replays the accepted tokens through the same kernel instead. Bitwise equal to the old path on the GPU; KDA work per step 3.89 to 2.22 ms at c=1.
+- `MLA_PLAN_NOSYNC=1`: vLLM [#58684](https://github.com/vllm-project/vllm/pull/58684), the sparse-MLA plan without a device-to-host sync per verify step.
+- `PREFIX_CACHE_DFLASH=1`: vLLM [#54163](https://github.com/vllm-project/vllm/pull/54163) and [#55601](https://github.com/vllm-project/vllm/pull/55601), plus prefill chunks that stop on 4608-token KDA blocks, so a repeated prefix keeps its last cached block.
+- `VIDEO_FRAMES_FIX=1`: vLLM [#55647](https://github.com/vllm-project/vllm/pull/55647). A native video of 32 frames or fewer used to advertise 3x the encoder's frames and kill the engine.
+
+The v14 rollback is `IMAGE=glm53-sm121-v14 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0`.
 
 ## DFlash2 drafter
 
