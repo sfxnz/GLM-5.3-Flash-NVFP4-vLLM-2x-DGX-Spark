@@ -46,6 +46,7 @@ Default occupancy is DFlash2-7 at two sequences. Four-way admission needs the ro
 
 - Published decode, three plain `./run.sh` boots (final-b1..b3) interleaved with three PR #16-default boots (final-a1..a3): prose A 33.34 tok/s (step 66.6 ms, acceptance 2.23), H 23.47 per stream / 44.86 aggregate. Against the interleaved r2 arm: A +6.5% [+4.6, +8.3], H +9.1% [+7.2, +10.9], both KEEP (`evidence/r3/compare-finals-fast.txt`). Prefill 1587 / 1576 tok/s at 32k / 128k, flat.
 - spark1 can be shared with other projects' processes (8-22 GiB RSS bursts on 2026-11-02). Boot behind `evidence/r3-tools/gate.sh 11`, log host load, and claim decode only from interleaved boots; a boot at load average 7-30 read 3% low on A and 7% low on prefill (r3 B0).
+- Tier 1 on the r3 defaults: 87.62% vs 84.85% (`nvidia-v11-k7`), pooled +2.77 points [+1.07, +4.48], PASS; +2.18 and +2.87 against the other two `09b04e5` runs. `max_tokens` hits fell from 41 to 3 (`evidence/r3/final-b3`).
 - Quality: on 100 paired thinking-on items `1d00738` answers 85 vs 82 with 7.7% fewer completion tokens (X1). The thinking-off template fix turned the 40-row table probe from 0/6 to 6/6 clean (T1). `evidence/r3/notes.txt` has every unit.
 
 ## Measured (r2, 2026-10-16)
