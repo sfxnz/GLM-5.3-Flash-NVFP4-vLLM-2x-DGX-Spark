@@ -1,0 +1,22 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3150 min= 14.34 @ 17:23:05  first=115.29 last= 22.09  swap_first=2.66 swap_max=6.21  span=17:10:11..17:23:33
+spark1 PROFILE  n=   105 min= 12.63 @ 17:23:59  first= 22.05 last= 12.63  swap_first=6.20 swap_max=6.20  span=17:23:33..17:23:59
+spark1 KV_READY n=   233 min=  7.09 @ 17:24:50  first= 13.55 last=  7.99  swap_first=6.20 swap_max=6.25  span=17:24:00..17:24:59
+spark1 SERVING  n=   334 min=  6.73 @ 17:38:38  first=  7.99 last=  8.94  swap_first=6.25 swap_max=6.25  span=17:24:59..17:48:11
+spark2 LOAD     n=  3163 min= 16.24 @ 17:15:13  first=117.58 last= 24.20  swap_first=0.47 swap_max=2.92  span=17:10:11..17:23:33
+spark2 PROFILE  n=   105 min= 14.07 @ 17:23:59  first= 24.20 last= 14.07  swap_first=2.85 swap_max=2.85  span=17:23:33..17:23:59
+spark2 KV_READY n=   235 min= 12.38 @ 17:24:05  first= 15.13 last= 13.12  swap_first=2.85 swap_max=2.85  span=17:24:00..17:24:59
+spark2 SERVING  n=   290 min= 12.94 @ 17:42:40  first= 13.12 last= 12.99  swap_first=2.85 swap_max=2.85  span=17:24:59..17:48:12
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-11-02T17:10:11.201Z
+PROFILE  from 2026-11-02T17:23:33.453Z
+KV_READY from 2026-11-02T17:24:00.109Z
+SERVING  from 2026-11-02T17:24:59.524Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+bench-fast                         17:25:02..17:31:06  spark1 min=7.59@17:25:12 swap 6.25->6.24 | spark2 min=13.04@17:26:26 swap 2.85->2.85
+bench-E                            17:31:06..17:33:04  spark1 min=7.52@17:32:51 swap 6.24->6.24 | spark2 min=13.18@17:33:04 swap 2.85->2.85
+count5                             17:33:04..17:33:28  spark1 min=7.52@17:33:11 swap 6.24->6.24 | spark2 min=13.25@17:33:09 swap 2.85->2.85
+utf8-ab                            17:33:28..17:38:20  spark1 min=7.38@17:34:25 swap 6.24->6.23 | spark2 min=13.21@17:36:39 swap 2.85->2.85
+tier0-record                       17:38:20..17:48:12  spark1 min=6.73@17:38:38 swap 6.23->6.18 | spark2 min=12.94@17:42:40 swap 2.85->2.85
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB

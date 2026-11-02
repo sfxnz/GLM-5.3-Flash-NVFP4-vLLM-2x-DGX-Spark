@@ -1,0 +1,10 @@
+2026-11-02T13:21:23.666Z ssh ControlMaster up for spark2
+2026-11-02T13:21:23.668Z watching glm53-flash-nvfp4 head=spark1 worker=spark2 phase=LOAD floors={'LOAD': 10.0, 'PROFILE': 8.0, 'KV_READY': 3.0, 'SERVING': 2.0} kill_log_regex='' kill_compiler_regex=''
+2026-11-02T13:22:37.881Z worker: (Worker_TP1 pid=190) INFO 11-02 13:22:37 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-11-02T13:22:37.909Z head: (Worker_TP0 pid=249) INFO 11-02 13:22:37 [__init__.py:1073] Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+2026-11-02T13:22:37.971Z worker: (Worker_TP1 pid=190) INFO 11-02 13:22:37 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-11-02T13:22:37.988Z head: (Worker_TP0 pid=249) INFO 11-02 13:22:37 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+2026-11-02T13:26:55.122Z worker: (Worker_TP1 pid=190) INFO 11-02 13:26:55 [model_runner.py:375] Model loading took 86.32 GiB and 257.585702 seconds
+2026-11-02T13:35:54.404Z KILL reason=spark1 MemAvailable 9.90 GiB < LOAD floor 10 GiB | sample=2026-11-02T13:35:51.156Z node=spark1 phase=LOAD memavail_gib=9.904 swap_used_gib=9.411 | kill_started=2026-11-02T13:35:51.161566+00:00 | kill_latency_s=3.187 (both docker kill returned, run in parallel) | stopped_confirmed_s=3.239 running_after head=false worker=false | head: rc=0 t=3.187s out='glm53-flash-nvfp4' | worker: rc=0 t=3.187s out='glm53-flash-nvfp4'
+2026-11-02T13:35:55.583Z logs saved, containers removed; watcher exiting
+2026-11-02T13:35:55.584Z exit; min MemAvailable GiB per phase/node: LOAD/spark1=9.90 LOAD/spark2=16.16

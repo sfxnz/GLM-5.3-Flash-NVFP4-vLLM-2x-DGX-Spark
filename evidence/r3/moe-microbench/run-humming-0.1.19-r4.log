@@ -1,0 +1,68 @@
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+
+{"argv": ["evidence/r3/moe-microbench/moe_bench.py", "--json", "evidence/r3/moe-microbench/run-humming-0.1.19-r4.json"], "torch": "2.13.0+cu130", "device": "NVIDIA GB10", "capability": "12.1", "sms": 48, "l2_bytes": 25165824, "humming_cache_dir": "/tmp/humming-cache", "layers": 5, "expert_bytes": 7077900, "start": "2026-11-02T12:59:33+0000", "mem_available_kib_start": 109158392, "vllm": "0.1.dev20051+g487ecf187", "humming-kernels": "0.1.19", "flashinfer-python": "0.6.18.dev20260819"}
+INFO 11-02 12:59:33 [scheduler.py:242] Chunked prefill is enabled with max_num_batched_tokens=4624.
+INFO 11-02 12:59:34 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+INFO 11-02 12:59:34 [parallel_state.py:1638] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:29517 backend=nccl
+INFO 11-02 12:59:34 [parallel_state.py:1982] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
+DRAM ceiling: copy 209.9 GB/s (read+write), sum 217.5 GB/s (read); dense BF16 GEMM 4608x4096x2048 89.5 TFLOP/s
+INFO 11-02 12:59:37 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+WARNING 11-02 12:59:37 [modelopt.py:1012] Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4). Please note that the format is experimental and could change in future.
+INFO 11-02 12:59:37 [nvfp4.py:244] Using 'MARLIN' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTEDSL_BATCHED', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+WARNING 11-02 12:59:37 [marlin_utils_fp4.py:354] Your GPU does not have native support for FP4 computation but FP4 quantization is being used. Weight-only FP4 compression will be used leveraging the Marlin kernel. This may degrade performance for compute-heavy workloads.
+INFO 11-02 12:59:38 [nvfp4.py:564] Using MoEPrepareAndFinalizeNoDPEPModular
+built marlin: {"nvfp4_backend": "MARLIN", "experts_cls": "MarlinExperts", "humming_input_schema": null, "gemm_type_env": null, "build_s": 3.8611061479896307, "weight_bytes_per_layer": 2038436147, "cubins_compiled_at_build": 0}
+INFO 11-02 12:59:41 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+WARNING 11-02 12:59:41 [modelopt.py:1012] Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4). Please note that the format is experimental and could change in future.
+INFO 11-02 12:59:41 [fused_humming_moe.py:91] Using indexed gemm for humming moe
+INFO 11-02 12:59:41 [nvfp4.py:244] Using 'HUMMING' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTEDSL_BATCHED', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
+built humming: {"nvfp4_backend": "HUMMING", "experts_cls": "HummingIndexedExperts", "humming_input_schema": "HummingInputSchema(quant_method='humming', a_dtype=None, input_scale_group_size=0, input_scale_dtype=None, input_quant_mode=None)", "gemm_type_env": "indexed", "build_s": 2.801729256985709, "weight_bytes_per_layer": 2038439219, "cubins_compiled_at_build": 1}
+INFO 11-02 12:59:43 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
+WARNING 11-02 12:59:43 [modelopt.py:1012] Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4). Please note that the format is experimental and could change in future.
+INFO 11-02 12:59:43 [fused_humming_moe.py:91] Using grouped_contiguous gemm for humming moe
+built humming-grouped: {"nvfp4_backend": "HUMMING", "experts_cls": "HummingGroupedExperts", "humming_input_schema": "HummingInputSchema(quant_method='humming', a_dtype=None, input_scale_group_size=0, input_scale_dtype=None, input_quant_mode=None)", "gemm_type_env": "grouped", "build_s": 2.4245086079463363, "weight_bytes_per_layer": 2038439219, "cubins_compiled_at_build": 0}
+first call {"case": "1", "backend": "marlin", "first_call_s": 0.010394089040346444, "cubins_compiled": 0, "mem_available_kib_before": 75147524, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "1", "backend": "humming", "first_call_s": 5.1975122429430485, "cubins_compiled": 27, "mem_available_kib_before": 75032724, "low_mem_available_kib": 73455204, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "1", "backend": "humming-grouped", "first_call_s": 5.14976696902886, "cubins_compiled": 29, "mem_available_kib_before": 75590508, "low_mem_available_kib": 73937336, "graph_vs_eager_max_abs": 0.0}
+M=1     marlin           graph median    0.286 ms  [0.283, 0.296]   198.0 GB/s    0.70 TFLOP/s  uniq    8.0  vs ref max_rel 4.94e-03 fro 4.80e-03
+M=1     humming          graph median    0.275 ms  [0.268, 0.280]   205.8 GB/s    0.73 TFLOP/s  uniq    8.0  vs ref max_rel 5.03e-03 fro 4.96e-03  vs marlin fro 6.03e-03
+M=1     humming-grouped  graph median    0.287 ms  [0.282, 0.290]   197.4 GB/s    0.70 TFLOP/s  uniq    8.0  vs ref max_rel 5.03e-03 fro 4.96e-03  vs marlin fro 6.03e-03
+first call {"case": "2", "backend": "marlin", "first_call_s": 0.0031747000757604837, "cubins_compiled": 0, "mem_available_kib_before": 75077352, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "2", "backend": "humming", "first_call_s": 0.06678931100759655, "cubins_compiled": 0, "mem_available_kib_before": 75045340, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "2", "backend": "humming-grouped", "first_call_s": 0.0033145080087706447, "cubins_compiled": 0, "mem_available_kib_before": 75000192, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+M=2     marlin           graph median    0.544 ms  [0.541, 0.561]   208.1 GB/s    0.74 TFLOP/s  uniq   16.0  vs ref max_rel 5.64e-03 fro 4.85e-03
+M=2     humming          graph median    0.534 ms  [0.528, 0.549]   212.0 GB/s    0.75 TFLOP/s  uniq   16.0  vs ref max_rel 4.88e-03 fro 4.59e-03  vs marlin fro 4.81e-03
+M=2     humming-grouped  graph median    0.550 ms  [0.539, 0.560]   206.0 GB/s    0.73 TFLOP/s  uniq   16.0  vs ref max_rel 4.88e-03 fro 4.59e-03  vs marlin fro 4.81e-03
+first call {"case": "4", "backend": "marlin", "first_call_s": 0.005694453953765333, "cubins_compiled": 0, "mem_available_kib_before": 75170360, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "4", "backend": "humming", "first_call_s": 0.005602453951723874, "cubins_compiled": 0, "mem_available_kib_before": 75132060, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0078125}
+first call {"case": "4", "backend": "humming-grouped", "first_call_s": 0.005708661978133023, "cubins_compiled": 0, "mem_available_kib_before": 75116064, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0078125}
+M=4     marlin           graph median    1.012 ms  [0.994, 1.026]   211.2 GB/s    0.80 TFLOP/s  uniq   30.2  vs ref max_rel 4.66e-03 fro 4.93e-03
+M=4     humming          graph median    0.994 ms  [0.984, 0.998]   215.1 GB/s    0.81 TFLOP/s  uniq   30.2  vs ref max_rel 4.65e-03 fro 4.39e-03  vs marlin fro 4.44e-03
+M=4     humming-grouped  graph median    0.996 ms  [0.988, 1.010]   214.6 GB/s    0.81 TFLOP/s  uniq   30.2  vs ref max_rel 4.65e-03 fro 4.40e-03  vs marlin fro 4.39e-03
+first call {"case": "8", "backend": "marlin", "first_call_s": 0.010566200013272464, "cubins_compiled": 0, "mem_available_kib_before": 74815572, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "8", "backend": "humming", "first_call_s": 0.08832116599660367, "cubins_compiled": 0, "mem_available_kib_before": 74755616, "low_mem_available_kib": 74742296, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "8", "backend": "humming-grouped", "first_call_s": 0.01110224996227771, "cubins_compiled": 0, "mem_available_kib_before": 74708680, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+M=8     marlin           graph median    1.972 ms  [1.952, 2.015]   213.2 GB/s    0.82 TFLOP/s  uniq   59.4  vs ref max_rel 6.96e-03 fro 4.78e-03
+M=8     humming          graph median    1.953 ms  [1.924, 2.003]   215.3 GB/s    0.82 TFLOP/s  uniq   59.4  vs ref max_rel 5.40e-03 fro 4.24e-03  vs marlin fro 4.18e-03
+M=8     humming-grouped  graph median    1.940 ms  [1.928, 1.985]   216.7 GB/s    0.83 TFLOP/s  uniq   59.4  vs ref max_rel 5.40e-03 fro 4.24e-03  vs marlin fro 4.18e-03
+first call {"case": "8p24", "backend": "marlin", "first_call_s": 0.004514944972470403, "cubins_compiled": 0, "mem_available_kib_before": 73444928, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "8p24", "backend": "humming", "first_call_s": 0.004316192003898323, "cubins_compiled": 0, "mem_available_kib_before": 73418756, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.00390625}
+first call {"case": "8p24", "backend": "humming-grouped", "first_call_s": 0.004403617000207305, "cubins_compiled": 0, "mem_available_kib_before": 73412924, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0078125}
+M=8p24  marlin           graph median    0.785 ms  [0.771, 0.806]   209.3 GB/s    2.05 TFLOP/s  uniq   23.2  vs ref max_rel 6.01e-03 fro 4.72e-03
+M=8p24  humming          graph median    0.769 ms  [0.766, 0.791]   213.5 GB/s    2.09 TFLOP/s  uniq   23.2  vs ref max_rel 4.79e-03 fro 4.43e-03  vs marlin fro 4.57e-03
+M=8p24  humming-grouped  graph median    0.775 ms  [0.772, 0.792]   211.9 GB/s    2.08 TFLOP/s  uniq   23.2  vs ref max_rel 4.79e-03 fro 4.43e-03  vs marlin fro 4.57e-03
+first call {"case": "16", "backend": "marlin", "first_call_s": 0.0174248960101977, "cubins_compiled": 0, "mem_available_kib_before": 74170300, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0}
+first call {"case": "16", "backend": "humming", "first_call_s": 0.09664075705222785, "cubins_compiled": 0, "mem_available_kib_before": 74010088, "low_mem_available_kib": 73975456, "graph_vs_eager_max_abs": 0.0078125}
+first call {"case": "16", "backend": "humming-grouped", "first_call_s": 0.01725979207549244, "cubins_compiled": 0, "mem_available_kib_before": 73847992, "low_mem_available_kib": null, "graph_vs_eager_max_abs": 0.0078125}
+M=16    marlin           graph median    3.491 ms  [3.434, 3.560]   213.3 GB/s    0.92 TFLOP/s  uniq  105.2  vs ref max_rel 6.49e-03 fro 4.88e-03
+M=16    humming          graph median    3.442 ms  [3.420, 3.481]   216.3 GB/s    0.94 TFLOP/s  uniq  105.2  vs ref max_rel 4.67e-03 fro 4.30e-03  vs marlin fro 4.14e-03
+M=16    humming-grouped  graph median    3.454 ms  [3.412, 3.571]   215.6 GB/s    0.93 TFLOP/s  uniq  105.2  vs ref max_rel 4.67e-03 fro 4.29e-03  vs marlin fro 4.12e-03
+first call {"case": "4608", "backend": "marlin", "first_call_s": 0.13301238301210105, "cubins_compiled": 0, "mem_available_kib_before": 73510200, "low_mem_available_kib": 72901616}
+first call {"case": "4608", "backend": "humming", "first_call_s": 0.16946573101449758, "cubins_compiled": 0, "mem_available_kib_before": 72894496, "low_mem_available_kib": 72862860}
+first call {"case": "4608", "backend": "humming-grouped", "first_call_s": 0.10856000694911927, "cubins_compiled": 0, "mem_available_kib_before": 72839724, "low_mem_available_kib": 72820272}
+M=4608  marlin           eager median   20.317 ms  [20.016, 20.897]   100.3 GB/s   45.66 TFLOP/s  uniq  288.0  vs ref max_rel 8.76e-03 fro 4.80e-03
+M=4608  humming          eager median   18.451 ms  [18.104, 18.597]   110.5 GB/s   50.28 TFLOP/s  uniq  288.0  vs ref max_rel 5.15e-03 fro 4.20e-03  vs marlin fro 4.02e-03
+M=4608  humming-grouped  eager median   20.447 ms  [20.217, 20.778]    99.7 GB/s   45.37 TFLOP/s  uniq  288.0  vs ref max_rel 5.15e-03 fro 4.20e-03  vs marlin fro 4.02e-03
+compilers seen: {"nvrtc_compile": {"pids": 57, "peak_rss_kib": 214484, "phases": ["build humming", "first-call humming M=1", "first-call humming-grouped M=1"]}, "ptxas": {"pids": 1, "peak_rss_kib": 12184, "phases": ["first-call humming M=4608"]}}
+humming cubins: {"count": 57, "bytes": 31391400}
+[rank0]:[W1102 13:00:52.595465906 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())

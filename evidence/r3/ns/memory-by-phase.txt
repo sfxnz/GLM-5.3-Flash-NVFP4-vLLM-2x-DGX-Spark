@@ -1,0 +1,21 @@
+== MemAvailable per phase (GiB): min @ time, first, last, swap first/max (UTC)
+spark1 LOAD     n=  3094 min= 14.60 @ 19:05:01  first=115.43 last= 22.39  swap_first=2.91 swap_max=6.37  span=18:52:20..19:05:28
+spark1 PROFILE  n=    99 min= 12.64 @ 19:05:53  first= 22.35 last= 12.64  swap_first=6.37 swap_max=6.37  span=19:05:28..19:05:53
+spark1 KV_READY n=   248 min=  7.25 @ 19:06:55  first= 13.63 last=  8.25  swap_first=6.37 swap_max=6.40  span=19:05:53..19:06:56
+spark1 SERVING  n=   236 min=  6.65 @ 19:17:05  first=  8.24 last=  9.23  swap_first=6.39 swap_max=6.39  span=19:06:57..19:21:16
+spark2 LOAD     n=  3106 min= 16.12 @ 18:57:14  first=117.74 last= 24.14  swap_first=0.40 swap_max=2.71  span=18:52:20..19:05:28
+spark2 PROFILE  n=    99 min= 14.50 @ 19:05:53  first= 24.14 last= 14.50  swap_first=2.71 swap_max=2.75  span=19:05:28..19:05:53
+spark2 KV_READY n=   249 min= 12.76 @ 19:06:01  first= 15.59 last= 13.53  swap_first=2.75 swap_max=2.75  span=19:05:53..19:06:56
+spark2 SERVING  n=   185 min= 13.33 @ 19:20:54  first= 13.52 last= 13.39  swap_first=2.75 swap_max=2.75  span=19:06:57..19:21:14
+== phase spans (first sample in phase, UTC)
+LOAD     from 2026-11-02T18:52:20.719Z
+PROFILE  from 2026-11-02T19:05:28.643Z
+KV_READY from 2026-11-02T19:05:53.861Z
+SERVING  from 2026-11-02T19:06:57.028Z
+== activity windows: min MemAvailable GiB per node (and swap growth)
+bench-fast                         19:06:58..19:12:52  spark1 min=7.95@19:08:24 swap 6.39->6.30 | spark2 min=13.45@19:08:24 swap 2.75->2.75
+bench-E                            19:12:52..19:14:48  spark1 min=7.46@19:14:46 swap 6.30->6.30 | spark2 min=13.72@19:14:36 swap 2.75->2.75
+count5                             19:14:48..19:15:12  spark1 min=7.44@19:14:54 swap 6.30->6.30 | spark2 min=13.69@19:15:07 swap 2.75->2.75
+tier0-compare                      19:15:12..19:21:18  spark1 min=6.65@19:17:05 swap 6.30->6.30 | spark2 min=13.33@19:20:54 swap 2.75->2.75
+== compilers: per node/kind: distinct pids, first..last, phases, peak single-proc RSS MiB, peak summed RSS MiB per sample
+== compiler-busy sample-seconds per node/phase (sampler lists compilers once a second) and peak summed RSS MiB

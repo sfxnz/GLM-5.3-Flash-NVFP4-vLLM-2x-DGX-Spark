@@ -1,0 +1,165 @@
+== 2026-11-02T13:38:05Z unit evidence/r3/b0 steps=probes,fast,E,prefix,utf8ab,t0rec=nvidia-09b04e5-r3b0,think=r3-b0 env: 
+==> Stop with: ./stop.sh
+run.sh rc=0 2026-11-02T13:52:10Z
+count {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop"}
+thinking_off {"content": "PING", "reasoning_chars": 0, "cot": false, "finish_reason": "stop"}
+PASS
+[probe-count rc=0]
+J@c2 c=2 [J/00,J/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+J@c2 c=2 [J/00,J/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+J@c2 c=2 [J/00,J/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+H c=2 [H/00,H/01] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+H c=2 [H/02,H/03] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+H c=2 [H/04,H/05] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+H c=2 [H/06,H/07] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+K@c1 c=1 [K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>
+K@c1 c=1 [K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>
+K@c1 c=1 [K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>
+K@c2 c=2 [K/00,K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+K@c2 c=2 [K/00,K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+K@c2 c=2 [K/00,K/00] FAILED URLError: <urlopen error [Errno 111] Connection refused>; URLError: <urlopen error [Errno 111] Connection refused>
+
+cell     c   n   tok/s            95% CI  step_ms acc_len  ttft_s     agg  prefill  valid
+-----------------------------------------------------------------------------------------
+A        1   4   31.87     [28.28,35.45]     69.6   2.224   0.282       -      196  INVALID (local swap +498 MiB)
+B        1   0       -                 -        -       -       -       -        -  ok
+J@c1     1   0       -                 -        -       -       -       -        -  ok
+J@c2     2   0       -                 -        -       -       -       -        -  ok
+H        2   0       -                 -        -       -       -       -        -  ok
+K@c1     1   0       -                 -        -       -       -       -        -  ok
+K@c2     2   0       -                 -        -       -       -       -        -  ok
+published decode score = cell A tok/s (prose, c=1); K is the legacy continuity row
+SUMMARY [{"group": "A", "cell": "A", "c": 1, "n_waves": 4, "n_failed": 4, "n_requests": 4, "tok_s": {"n": 4, "median": 31.458801692950015, "mean": 31.866908759563298, "stdev": 2.2540864331744768, "ci95": [28.280657244382706, 35.453160274743894]}, "stream_tok_s": {"n": 4, "median": 31.458801692950015, "mean": 31.866908759563298, "stdev": 2.2540864331744768, "ci95": [28.280657244382706, 35.453160274743894]}, "step_ms": {"n": 4, "median": 69.45078011589143, "mean": 69.63434491259125, "stdev": 1.6956144301074376, "ci95": [66.93662235429031, 72.33206747089218]}, "acceptance_len": {"n": 4, "median": 2.187390350877193, "mean": 2.224098911736265, "stdev": 0.2130481414845696, "ci95": [1.8851393186343146, 2.563058504838215]}, "agg_tok_s": null, "ttft_s": {"n": 4, "median": 0.28248346503823996, "mean": 0.2813176177733112, "stdev": 0.025478937262777834, "ci95": [0.24078062858823168, 0.32185460695839074]}, "prompt_tokens": {"n": 4, "median": 45.0, "mean": 45.5, "stdev": 1.9148542155126762, "ci95": [42.45346694311933, 48.54653305688067]}, "client_prefill_tok_s": {"n": 4, "median": 162.8907682501387, "mean": 162.96267234266548, "stdev": 18.887165936172586, "ci95": [132.91319133821492, 193.01215334711605]}, "server_prefill_tok_s": {"n": 4, "median": 195.10096988566087, "mean": 195.64045614452496, "stdev": 6.339231820551918, "ci95": [185.55473831802686, 205.72617397102306]}, "itl_ms": {"n": 4, "median": 69.49931201193147, "mean": 69.6779398584437, "stdev": 1.7193146230915983, "ci95": [66.94251029310496, 72.41336942378243]}, "per_pos": [0.6565874730021598, 0.32181425485961124, 0.14362850971922247, 0.052915766738660906, 0.024838012958963283, 0.005399568034557235, 0.004319654427645789], "sanity_max_err": 0.001953125, "sanity_ok": true, "short_requests": 0, "valid": false, "invalid_reason": "local swap +498 MiB"}, {"group": "B", "cell": "B", "c": 1, "n_waves": 0, "n_failed": 8, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}, {"group": "J@c1", "cell": "J", "c": 1, "n_waves": 0, "n_failed": 3, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}, {"group": "J@c2", "cell": "J", "c": 2, "n_waves": 0, "n_failed": 3, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}, {"group": "H", "cell": "H", "c": 2, "n_waves": 0, "n_failed": 4, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}, {"group": "K@c1", "cell": "K", "c": 1, "n_waves": 0, "n_failed": 3, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}, {"group": "K@c2", "cell": "K", "c": 2, "n_waves": 0, "n_failed": 3, "n_requests": 0, "tok_s": null, "stream_tok_s": null, "step_ms": null, "acceptance_len": null, "agg_tok_s": null, "ttft_s": null, "prompt_tokens": null, "client_prefill_tok_s": null, "server_prefill_tok_s": null, "itl_ms": null, "per_pos": [], "sanity_max_err": null, "sanity_ok": null, "short_requests": 0, "valid": true, "invalid_reason": null}]
+[bench-fast rc=1]
+             ^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/bench_decode.py", line 628, in main
+    served = served_models(base)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/bench_decode.py", line 588, in served_models
+    with urllib.request.urlopen(base + "/v1/models", timeout=30) as resp:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+[bench-E rc=1]
+Traceback (most recent call last):
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/evidence/r3-tools/prefix_probe.py", line 97, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/evidence/r3-tools/prefix_probe.py", line 66, in main
+    model = json.loads(urllib.request.urlopen(f"{args.url}/v1/models").read())["data"][0]["id"]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+[prefix-probe rc=1]
+                                ^^^^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 52, in model
+    self._model = self.get("/v1/models")["data"][0]["id"]
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 56, in get
+    with urllib.request.urlopen(self.url + path, timeout=60) as r:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+[utf8-ab rc=1]
+                                                                           ^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 52, in model
+    self._model = self.get("/v1/models")["data"][0]["id"]
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 56, in get
+    with urllib.request.urlopen(self.url + path, timeout=60) as r:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+[tier0-record rc=1]
+                                     ^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 52, in model
+    self._model = self.get("/v1/models")["data"][0]["id"]
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sfxnz/projects/ai-lab/recipes/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark-opt-r3/quality/common.py", line 56, in get
+    with urllib.request.urlopen(self.url + path, timeout=60) as r:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+[think rc=1]
+== 2026-11-02T13:53:56Z unit done (hold=0)
+PASS

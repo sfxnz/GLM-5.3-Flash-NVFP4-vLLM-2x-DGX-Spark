@@ -1,0 +1,46 @@
+ruler=v2 url=http://127.0.0.1:8000/v1/chat/completions model=nvidia/GLM-5.3-Flash-NVFP4 cells=A,B,J,H,K runs=1 tokens=512 git=24d7bd6adead90509cee4401be4c51cbfe9dfef3-dirty
+A c=1 [A/00] tok/s=34.88 step_ms=66.9 acc_len=2.342 ttft=0.289s tokens=[512]
+A c=1 [A/01] tok/s=31.03 step_ms=63.6 acc_len=1.992 ttft=0.282s tokens=[512]
+A c=1 [A/02] tok/s=36.22 step_ms=67.8 acc_len=2.457 ttft=0.254s tokens=[512]
+A c=1 [A/03] tok/s=31.76 step_ms=67.3 acc_len=2.142 ttft=0.276s tokens=[512]
+A c=1 [A/04] tok/s=32.42 step_ms=67.1 acc_len=2.179 ttft=0.243s tokens=[512]
+A c=1 [A/05] tok/s=29.14 step_ms=64.5 acc_len=1.882 ttft=0.262s tokens=[512]
+A c=1 [A/06] tok/s=35.44 step_ms=67.7 acc_len=2.408 ttft=0.255s tokens=[512]
+A c=1 [A/07] tok/s=36.97 step_ms=68.4 acc_len=2.535 ttft=0.257s tokens=[512]
+B c=1 [B/00] tok/s=46.58 step_ms=76.2 acc_len=3.590 ttft=0.270s tokens=[512]
+B c=1 [B/01] tok/s=44.46 step_ms=77.1 acc_len=3.477 ttft=0.276s tokens=[512]
+B c=1 [B/02] tok/s=59.78 step_ms=85.5 acc_len=5.150 ttft=0.241s tokens=[512]
+B c=1 [B/03] tok/s=55.14 step_ms=84.2 acc_len=4.645 ttft=0.298s tokens=[512]
+B c=1 [B/04] tok/s=56.24 step_ms=84.9 acc_len=4.841 ttft=0.231s tokens=[512]
+B c=1 [B/05] tok/s=59.42 step_ms=87.7 acc_len=5.265 ttft=0.260s tokens=[512]
+B c=1 [B/06] tok/s=43.92 step_ms=77.1 acc_len=3.397 ttft=0.298s tokens=[512]
+B c=1 [B/07] tok/s=55.03 step_ms=85.2 acc_len=4.743 ttft=0.292s tokens=[512]
+J@c1 c=1 [J/00] tok/s=92.56 step_ms=86.0 acc_len=8.000 ttft=0.210s tokens=[200]
+J@c1 c=1 [J/00] tok/s=93.12 step_ms=85.5 acc_len=8.000 ttft=0.272s tokens=[200]
+J@c1 c=1 [J/00] tok/s=92.72 step_ms=85.8 acc_len=8.000 ttft=0.272s tokens=[200]
+J@c2 c=2 [J/00,J/00] tok/s=80.60 step_ms=98.8 acc_len=8.000 ttft=0.387s tokens=[200,200]
+J@c2 c=2 [J/00,J/00] tok/s=80.71 step_ms=98.6 acc_len=8.000 ttft=0.312s tokens=[200,200]
+J@c2 c=2 [J/00,J/00] tok/s=80.75 step_ms=98.6 acc_len=8.000 ttft=0.318s tokens=[200,200]
+H c=2 [H/00,H/01] tok/s=24.13 step_ms=93.2 acc_len=2.243 ttft=0.401s tokens=[512,512]
+H c=2 [H/02,H/03] tok/s=23.28 step_ms=97.8 acc_len=2.285 ttft=0.394s tokens=[512,512]
+H c=2 [H/04,H/05] tok/s=22.27 step_ms=92.6 acc_len=2.073 ttft=0.345s tokens=[512,512]
+H c=2 [H/06,H/07] tok/s=24.56 step_ms=95.2 acc_len=2.346 ttft=0.354s tokens=[512,512]
+K@c1 c=1 [K/00] tok/s=30.51 step_ms=70.9 acc_len=2.186 ttft=0.223s tokens=[94]
+K@c1 c=1 [K/00] tok/s=29.26 step_ms=67.0 acc_len=1.980 ttft=0.265s tokens=[97]
+K@c1 c=1 [K/00] tok/s=34.12 step_ms=68.4 acc_len=2.356 ttft=0.253s tokens=[106]
+K@c2 c=2 [K/00,K/00] tok/s=23.06 step_ms=85.3 acc_len=1.980 ttft=0.279s tokens=[101,93]
+K@c2 c=2 [K/00,K/00] tok/s=23.93 step_ms=95.1 acc_len=2.297 ttft=0.287s tokens=[106,103]
+K@c2 c=2 [K/00,K/00] tok/s=26.18 step_ms=81.1 acc_len=2.143 ttft=0.284s tokens=[101,109]
+
+cell     c   n   tok/s            95% CI  step_ms acc_len  ttft_s     agg  prefill  valid
+-----------------------------------------------------------------------------------------
+A        1   8   33.48     [31.15,35.82]     66.7   2.242   0.259       -      206  ok
+B        1   8   52.57     [47.08,58.06]     82.2   4.389   0.273       -      194  ok
+J@c1     1   3   92.80     [92.08,93.52]     85.8   8.000   0.272       -      177  ok
+J@c2     2   3   80.69     [80.49,80.88]     98.7   8.000   0.318  161.36      139  ok
+H        2   4   23.56     [21.95,25.17]     94.7   2.237   0.349   45.36      162  ok
+K@c1     1   3   31.30     [25.03,37.56]     68.7   2.174   0.253       -      181  ok
+K@c2     2   3   24.39     [20.39,28.39]     87.2   2.140   0.284   46.59      155  ok
+published decode score = cell A tok/s (prose, c=1); K is the legacy continuity row
+K@c1 legacy-comparable median per-stream tok/s = 30.51 (the tok/s column is the mean of wave means)
+K@c2 legacy-comparable median per-stream tok/s = 24.34 (the tok/s column is the mean of wave means)

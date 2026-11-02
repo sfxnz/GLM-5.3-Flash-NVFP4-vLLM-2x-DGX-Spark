@@ -1,0 +1,136 @@
+Humming vs Marlin NVFP4 W4A16 routed-MoE microbench (r3 P1), spark1, 2026-11-02
+
+Question. Should r3 spend a serve boot on --moe-backend humming? Decision rule, fixed before
+running: boot only if Humming's NVFP4 W4A16 MoE time at M=8 beats Marlin's by more than 5%,
+outputs agree, and its JIT does not threaten UMA memory.
+
+Verdict: no boot. Measured, 8 runs. At M=8 (c=1 verify width), Humming is not more than 5%
+faster than Marlin in any configuration we can ship:
+- humming-kernels 0.1.12 (the image's), indexed GEMM (vLLM's default): -2.6% median over 3
+  runs, range -2.7% to -0.2% (slower).
+- humming-kernels 0.1.19 (sm121 heuristics), indexed: +1.4% median over 5 runs, range +1.0%
+  to +5.1%. Only the first run cleared 5%; the next four gave +1.0% to +1.7%.
+- 0.1.19 grouped GEMM (VLLM_HUMMING_MOE_GEMM_TYPE=grouped): +2.0%, range +0.7% to +3.3%.
+- At the realistic expert count (8p24: 8 rows drawn from a 24-expert pool, about what a prose
+  c=1 step touches per layer per the E5 census), 0.1.19 indexed is +2.0%, range +0.9% to +7.0%.
+The accuracy leg passes and the JIT leg is manageable (below), but the speed leg fails, so the
+rule says no boot.
+
+The one reproducible win is prefill. At M=4608 (one 4608-token chunk), 0.1.19 indexed is
++10.3% median over 5 runs (range +6.1% to +13.7%), 0.1.12 indexed +6.0% (range +5.2% to
++7.1%). Grouped GEMM gives nothing there (0.1.19 -0.0%, 0.1.12 -6.5%).
+
+Method (moe_bench.py, driver run_bench.sh)
+- The serve's own path. Each backend gets RoutedExperts layers from vLLM's FusedMoEFactory
+  under a VllmConfig with kernel_config.moe_backend = marlin or humming (what --moe-backend
+  sets), quant config ModelOptNvFp4Config with quant_algo NVFP4 (the checkpoint's), weights
+  converted by ModelOptNvFp4FusedMoE.process_weights_after_loading, called through
+  RoutedExperts.forward_modular with fixed top-8 routing. The boot log lines match a serve:
+  "Using 'MARLIN' / 'HUMMING' NvFp4 MoE backend", MarlinExperts, HummingIndexedExperts or
+  HummingGroupedExperts, Humming input schema a_dtype=None (BF16 activations, W4A16).
+- Shapes per TP=2 rank (from the checkpoint's config.json): 288 experts, top-8, hidden 4096,
+  moe_intermediate 2048 / 2 = 1024, so w13 [288, 2048, 4096] and w2 [288, 4096, 1024].
+  Random ModelOpt-format NVFP4 tensors (E2M1 codes, E4M3 scale per 16, FP32 weight_scale_2
+  per expert), identical for every backend (seeded per layer). 7,077,900 checkpoint bytes per
+  expert; 2.04 GB per layer.
+- 5 distinct layers (own weights, own routing) run back to back in every timed call, so the
+  working set is 283 MB at M=1 against a 24 MiB L2. Rows up to 24 timed as CUDA graph replays
+  (50 per repeat), M=4608 eagerly (4 calls per repeat). 7 repeats per backend per run, order
+  reversing every repeat (A B C, C B A, ...). Each run is a fresh container with a cold
+  Humming cache (HUMMING_CACHE_DIR=/tmp/humming-cache). 0.1.19 was pip-installed --no-deps into
+  throwaway containers; no image was committed or tagged.
+- Each run first measures DRAM ceilings on 1 GiB buffers (device copy, torch sum) and a dense
+  BF16 GEMM at 4608x4096x2048.
+- Runs, alternating versions: 0.1.12, 0.1.19, 0.1.12-r2, 0.1.19-r2, 0.1.19-r3, 0.1.12-r3,
+  0.1.19-r4, 0.1.19-r5 (12:48 to 13:02 UTC). Two short dry runs (12:44, 12:47) are not
+  reported. GPU work 12:44:55 to 13:02:30, spark1 only.
+
+Limiter (why not double)
+- Decode is bound by DRAM read bandwidth, for both kernels. The read ceiling (torch sum over
+  1 GiB) measured 216.8 to 235.6 GB/s across runs. Marlin streamed the touched experts at 95%
+  to 102% of the same run's read ceiling at M=8 (206 to 233 GB/s); Humming 0.1.19 at 96% to
+  102% (209 to 239 GB/s). The torch sum is a practical ceiling, not a hard one, but both
+  kernels sit on it; GB10's LPDDR5x theoretical peak is 273 GB/s. With Marlin already within
+  about 0% to 5% of what this box reads in practice, no W4A16 kernel can clear 5% at M=8
+  reliably, which is what the runs show.
+- Prefill is compute-bound. At M=4608 Marlin runs at 46 to 47 TFLOP/s, Humming 0.1.19 indexed
+  at 50 to 54, against 89 to 94 TFLOP/s for a dense BF16 GEMM of the same M. Both dequantize
+  FP4 to BF16 inside the mainloop; Humming's sm121 tiles recover part of the gap. That is
+  where its gain comes from.
+
+Noise and drift
+- Inside a run the repeat ranges are tight (about 1% to 3%). Between runs the Humming/Marlin
+  ratio moved by up to 4 points (0.1.19 M=8: +5.1% then +1.4%), so single-run claims are not
+  safe here; the verdict uses the median over runs and the range.
+- The box got slower during the session: the read ceiling fell from 235.6 GB/s (12:54) to
+  216.8 GB/s (13:01) and Marlin's M=8 median rose from 1.80 to 2.04 ms in step. Other agents
+  were active (CPU-only probe containers on glm53-sm121-v14, e.g. sleepy_ride with gpus=null;
+  kind_perlman exited before it could be inspected; node, chrome, python, and an hf download).
+  Load average 6.7 to 9.7 on 20 cores. Before every run docker ps showed no glm53-flash-nvfp4
+  and, from run 5 on, nvidia-smi --query-compute-apps (pid and name only) showed no GPU
+  process; during 0.1.19-r2 the only GPU process was this bench. Alternating backends inside
+  each run keeps the comparison fair under that drift.
+
+Accuracy (layer 0, every case, every run)
+- Against an FP32 reference on the dequantized checkpoint: relative Frobenius error at most
+  4.96e-3 (Humming) and 4.88e-3 (Marlin); max abs / max |ref| at most 8.76e-3 (Marlin, M=4608).
+  Humming vs Marlin output: Frobenius at most 6.03e-3. Gate was 0.02. Outputs agree.
+- Humming is not bitwise deterministic: its graph replay differed from its eager call by up to
+  7.8e-3 absolute (one BF16 ulp near the output magnitude) at some M (0.1.12 M=1, 2, 8, 16;
+  0.1.19 M=4, 8p24, 16). Marlin matched bitwise in every case. A Humming boot would need the
+  recipe's determinism checks (greedy count, kpool det) and Tier 0 rerun.
+- Did the work happen: graph outputs were read back and compared after replay, every output
+  matches the reference, and touched-expert counts come from the routing itself (8.0, 16.0,
+  30.2, 59.4, 105.2 and 288 unique experts per layer at M=1, 2, 4, 8, 16, 4608; 23.2 at 8p24).
+
+JIT and memory
+- Marlin compiles nothing (precompiled vLLM kernels).
+- Humming compiles its whole tuning table for a GEMM type on the first forward (NVRTC, one
+  nvrtc_compile subprocess per kernel); later rows compiled nothing new.
+  - 0.1.12: 15 cubins per GEMM type (31 in all, 13.8 MiB), first call 3.5 to 3.8 s, at most 8
+    compilers at once at about 205 MiB each, at most 1.5 GiB summed RSS, MemAvailable drop
+    during the first call at most 1.4 GiB.
+  - 0.1.19: 27 (indexed) and 29 (grouped) cubins (57 in all, 29.9 MiB), first call 4.4 to
+    4.6 s (indexed), at most 15 compilers at once at about 210 MiB each, at most 2.8 GiB summed
+    RSS, MemAvailable drop at most 2.6 GiB. Two short ptxas processes (20 MiB).
+- That is far from the flashinfer_cutlass JIT class that OOM'd spark2, but a 2.6 GiB transient
+  is 26% to 37% of the 7.1 to 9.9 GiB MemAvailable spark1 had after ready in the E5 boots, so
+  it must not land late. Caps exist in 0.1.19's code (read, not measured): workers =
+  min(kernels, CPUs, HUMMING_MAX_PARALLEL_BUILD_WORKERS), and HUMMING_DISABLE_PARALLEL_BUILD=1
+  forces one worker (humming/utils/cpu.py, humming/jit/runtime.py). A warm HUMMING_CACHE_DIR
+  should skip the compile on later boots (JIT_CACHE pattern).
+- Whole-host memory during the runs (mem.log, free -m every 2 s): peak used 53.9 GiB, minimum
+  available 67.8 GiB (13:00:18). Most of that is the bench's own weights (15 layers x 2.04 GB;
+  torch peak allocation 33.6 GiB), not the JIT.
+
+What it would mean in a serve (inference, not measured)
+- Decode: routed MoE was 33.6 ms of a 79.4 ms profiled step (E5 F3). +1.4% on that is about
+  0.5 ms per step, about +0.7% tok/s, inside the ±4% cross-boot band. Not measurable in a boot.
+- Prefill: per 4608-token chunk per rank, 42 MoE layers x about 1.8 ms saved = about 77 ms of
+  a chunk that takes about 2.9 s at r2's 1593 tok/s (32k), so about +2.7% on cell E at 32k and
+  less at 128k. Requires humming-kernels 0.1.19 in a new image (0.1.12's gain is +6%, about
+  +1.6% on cell E), MOE_BACKEND=humming with FORCE_UNSAFE_MOE=1, a run.sh change to pass
+  HUMMING_CACHE_DIR and HUMMING_MAX_PARALLEL_BUILD_WORKERS (EXTRA_ENV accepts only NCCL, VLLM,
+  PYTORCH, TORCH, CUDA, OMP, FLASHINFER, TRITON, TILELANG and GLM53 prefixes, run.sh:299;
+  VLLM_HUMMING_MOE_GEMM_TYPE would pass), a JIT cache mount, and Tier 0 plus determinism
+  checks. Low value; not recommended unless prefill becomes the target, and even then cell E
+  would need to show it.
+
+Caveats
+- Uniform random routing at M=1..16 touches more experts than real verify steps; 8p24 covers
+  the realistic count and gives the same answer.
+- Weights are random. W4A16 kernel time does not depend on weight values.
+- One rank emulated at TP=1 with the per-rank shard: no router, shared expert or all-reduce in
+  the timed region. MoE layers run back to back in the graph, not interleaved with attention.
+- Humming ran on its built-in heuristics (no autotune). VLLM_HUMMING_USE_F16_ACCUM was not
+  tried (it changes numerics). Marlin ran on vLLM defaults, as the serve runs it.
+
+Files
+- moe_bench.py: the bench; --table merges run JSONs into table.txt (CPU only).
+- run_bench.sh: one run in glm53-sm121-v14 with mem.log sampling; refuses to start when a
+  glm53-flash-nvfp4 container exists.
+- run-humming-<version>[-rN].log / .json: console and raw samples, summary, JIT, memory.
+- table.txt: python3 moe_bench.py --table run-humming-0.1.12.json run-humming-0.1.12-r2.json
+  run-humming-0.1.12-r3.json run-humming-0.1.19.json run-humming-0.1.19-r2.json
+  run-humming-0.1.19-r3.json run-humming-0.1.19-r4.json run-humming-0.1.19-r5.json
+- mem.log: free -h before and after each run, free -m and compiler RSS every 2 s.

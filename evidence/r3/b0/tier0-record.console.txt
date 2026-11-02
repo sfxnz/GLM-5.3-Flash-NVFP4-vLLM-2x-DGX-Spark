@@ -1,0 +1,30 @@
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+  nll 16/96
+  nll 32/96
+  nll 48/96
+  nll 64/96
+  nll 80/96
+  nll 96/96
+[nll] {"docs": 96, "tokens": 184990, "mean_nll": 0.484165, "rerun": {"abs_delta": 0.000101, "top1_agree": 0.984751, "kl": 0.00508895, "mean_nll": 0.484064}, "s": 351.0}
+[greedy] {"aa": {"hazard": 0.015455, "diverged": 17, "pairs": 20, "first_div": [6, 36, null, 20, 51, 88, null, 28, 66, 145, 29, null, 12, 7, 113, 71, 37, 41, 96, 34]}, "s": 140.2}
+[count] {"pass": true, "n_numbers": 200, "first_bad": null, "finish_reason": "stop", "s": 5.1}
+[kwargs] {"pass": true, "passed": 12, "total": 12, "s": 5.3}
+[utf8] {"error": "IndexError: string index out of range", "s": 52.8}
+[tools] {"n": 50, "json_valid": 1.0, "called": 1.0, "name_ok": 1.0, "args_ok": 0.96, "s": 45.4}
+[vision] {"pass": false, "passed": 12, "total": 13, "skipped": [], "s": 10.2}
+[needle] {"pass": true, "per_length": {"8192": 3, "32768": 3}, "s": 83.6}
+reference written: /home/sfxnz/projects/data/glm53-evals/ref/nvidia-09b04e5-r3b0.json
+FAIL utf8.error value=IndexError: string index out of range limit=None
+PASS kwargs.core value=10 limit=10
+PASS kwargs.thinking_alias value=2 limit=2
+PASS count value=200 limit=200
+FAIL vision value=12 limit=None
+PASS needle value={'8192': 3, '32768': 3} limit=>=2 each
+PASS tools.json_valid value=1.0 limit=0.98
+written: /home/sfxnz/projects/data/glm53-evals/runs/20261102T145232Z-tier0-record/tier0.json
+FAIL tier0 record: 5/7 criteria; failed utf8.error, vision
