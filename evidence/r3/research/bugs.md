@@ -310,3 +310,7 @@ EOF
 **Evidence (verified).** The three files that did not copy are `vllm/modelinfos/*.json` (model-inspection cache, regenerated in seconds) and `flashinfer_autotune_cache/.../autotune_configs.json`. R1's head log shows that file holds no tuning at all: `Loaded 0 configs`, autotune ran 4 s, `Saved 0 configs` (`evidence/r2/r1/head.log:117-122`). They are root-owned mode 0600 because vLLM and FlashInfer write them with `tempfile.mkstemp` plus `os.replace` (`flashinfer/autotuner/autotuner.py:2619-2639`), so a non-root `cp` skipped them. B6's single 128k sample of 1299 tok/s is not explained by them, and B6 was reverted on decode, not prefill. `run.sh` keys the cache by image ID (`jit_cache_host_dir`), which is the safe default. FlashInfer's `cached_ops` are keyed by version directory, not by source hash, so seeding across images is only safe when the new layer leaves FlashInfer untouched.
 
 **Residual.** The cache tree is root-owned, so cleanup needs sudo. Serve-time compiles are item 6. No run.sh change needed.
+
+## Correction after measurement (2026-11-02, r3 B0)
+
+The claim that DFlash2 prefix-cache hits never happen was wrong. On B0 (v14, no fix) a repeated 8k and 32k document hit 4608 and 32256 tokens, and turn-2 TTFT fell from 8.29 to 3.79 s and from 25.40 to 4.66 s (`evidence/r3/b0/prefix.json`). The 0.0% hit rate in r2 logs came from the bench's salted prompts. `PREFIX_CACHE_DFLASH` adds the last block the EAGLE drop removed: 32k turn 2 4.66 to 1.61 s (`evidence/r3/pv/prefix.json`).

@@ -151,3 +151,7 @@ Upstream moved GLM code into `models/glm5next/common/` and replaced the bespoke 
 - NVIDIA Model-Optimizer `docs/source/announcements/20261028-glm53-flash-iq2.rst` @ `584a80c`, lines 108-111 and 364. It says to serve with vLLM 0.31 or later, or with 0.30 plus `--no-enable-prefix-caching`. It does not name the PR. The v0.31.0 notes list three GLM-5.3 kpool corruption fixes (#57477, #58454, #58704), and our image covers all three (Already present). That the ModelOpt bug is one of them is inference. #57477's body describes the same symptom: a cached system prompt slowly corrupted by later requests.
 - Image files as cited, read from `glm53-sm121-v14` (9599a9fc5fe5) in CPU-only containers.
 - Local evidence: `evidence/r2/r3/head.log`, `evidence/e5-final/notes.txt` (F3 buckets), `evidence/e5-final/f3/buckets/prefill-rank0.txt`, `docker/README-v13.md`, `docker/README-v14.md`, `docker/patch_v11_dflash_kv_groups.py`, `run.sh`, `bench_decode.py`.
+
+## Correction after measurement (2026-11-02, r3 B0)
+
+The claim that DFlash2 prefix-cache hits never happen was wrong. On B0 (v14, no fix) a repeated 8k and 32k document hit 4608 and 32256 tokens, and turn-2 TTFT fell from 8.29 to 3.79 s and from 25.40 to 4.66 s (`evidence/r3/b0/prefix.json`). The 0.0% hit rate in r2 logs came from the bench's salted prompts. `PREFIX_CACHE_DFLASH` adds the last block the EAGLE drop removed: 32k turn 2 4.66 to 1.61 s (`evidence/r3/pv/prefix.json`).
