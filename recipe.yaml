@@ -83,8 +83,14 @@ serve:
     KPOOL_TAIL_FIX: 1                    # E3a
     ADAPTIVE_VERIFY: 1                   # E3b
     ADAPTIVE_VERIFY_TAU: 0.4             # r2 B5 (E4b 0.3; r2 B7 0.5 plateaus)
+    KDA_TRIM: 0                          # docker/README-v13.md
     # v14 switches (docker/README-v14.md), need a glm53-sm121-v14 image.
     DECODE_FIXES: 1                      # r2 B4
+    # v15 switches, need a glm53-sm121-v15 image. Each is off until its boot passes.
+    KDA_RECOVER: 0                       # docker/README-v15-kda-recover.md (needs SPEC=dflash2)
+    MLA_PLAN_NOSYNC: 0                   # docker/README-v15.md
+    PREFIX_CACHE_DFLASH: 0               # docker/README-v15.md
+    VIDEO_FRAMES_FIX: 0                  # docker/README-v15.md
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
@@ -114,6 +120,7 @@ readme:
     - Indexer tail ring: "`KPOOL_TAIL_FIX={KPOOL_TAIL_FIX}` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring"
     - Adaptive verify: "`ADAPTIVE_VERIFY={ADAPTIVE_VERIFY}`, `ADAPTIVE_VERIFY_TAU={ADAPTIVE_VERIFY_TAU}` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a (tau 0.2): prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. E4b tau 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. r2 B5 tau 0.4 vs 0.3: A +4.2%, H +4.9%, B +3.3%; r2 B7 tau 0.5 plateaued (A -0.5%, B -0.9%). Needs `SPEC=dflash2`; `0` turns it off"
     - Decode fixes: "`DECODE_FIXES={DECODE_FIXES}` (v14, `docker/README-v14.md`): `GLM53_ROUTER_DEDUPE=1` skips the model-side MoE router GEMM that the MoE runner recomputes and overwrites (42 GEMMs per step, exact), and `GLM53_HEADGATE_MM=1` runs the DSA indexer head-gate as one bf16 GEMM with fp32 output instead of an fp32 gemv (same products, fp32 accumulation; M=8 41 → 21 µs, M=4608 1135 → 166 µs). r2 B4: step A 73.5 → 72.8 ms, inside single-boot noise. `0` runs v13's code and is required on a v13 image"
+    - v15 switches: "each `0` / `1`, off until its boot passes; `1` sets its variable on both ranks. `KDA_TRIM={KDA_TRIM}` (v13, `GLM53_KDA_TRIM`, `docker/README-v13.md`): `fused_recurrent_kda` reads token-strided q/k/v/beta instead of copying them, bit-exact. The other four need a `glm53-sm121-v15` image (`docker/README-v15.md`). `KDA_RECOVER={KDA_RECOVER}` (`GLM53_KDA_RECOVER`, `docker/README-v15-kda-recover.md`): the DFlash2 verify stores no per-token fp32 KDA state, and a replay after sampling stores only the columns later steps read; needs `SPEC=dflash2`. `MLA_PLAN_NOSYNC={MLA_PLAN_NOSYNC}` (`GLM53_MLA_PLAN_NOSYNC`, vLLM #58684): the sparse-MLA plan drops its D2H sync per verify step. `PREFIX_CACHE_DFLASH={PREFIX_CACHE_DFLASH}` (`GLM53_PREFIX_CACHE_DFLASH`, vLLM #54163 and #55601): prefix-cache hits with DFlash2 in 4608-token units; it supersedes v13's `GLM53_DFLASH_PREFIX_CACHE_FIX`. `VIDEO_FRAMES_FIX={VIDEO_FRAMES_FIX}` (`GLM53_VIDEO_FRAMES_FIX`, vLLM #55647): video placeholder timestamps come from the pixel path's own sampler, one per temporal patch, so their count equals `grid_t`"
     - Chat template: "`chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule)"
     - JIT / compile cache: "on (`JIT_CACHE={JIT_CACHE}`), `{JIT_CACHE_DIR}/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables"
     - Reasoning / tools: "`{REASONING_PARSER}` / `glm47`"

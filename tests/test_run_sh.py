@@ -390,6 +390,86 @@ class V13Knobs(RunShCase):
         self.assertEqual(head.stdout, worker.stdout)
 
 
+class SwitchKnobs(RunShCase):
+    """On/off knobs that each own one GLM53_* variable: v13's KDA_TRIM and v15's four."""
+    OWNERS = {"KDA_TRIM": "GLM53_KDA_TRIM", "KDA_RECOVER": "GLM53_KDA_RECOVER",
+              "MLA_PLAN_NOSYNC": "GLM53_MLA_PLAN_NOSYNC", "PREFIX_CACHE_DFLASH": "GLM53_PREFIX_CACHE_DFLASH",
+              "VIDEO_FRAMES_FIX": "GLM53_VIDEO_FRAMES_FIX"}
+    V15_ONLY = ("KDA_RECOVER", "MLA_PLAN_NOSYNC", "PREFIX_CACHE_DFLASH", "VIDEO_FRAMES_FIX")
+    V15 = {"IMAGE": "glm53-sm121-v15", **{knob: "0" for knob in OWNERS}}
+
+    def switch_env(self, stdout):
+        return [e for e in glm53_env(stdout) if e.split("=", 1)[0] in self.OWNERS.values()]
+
+    def test_each_knob_sets_its_variable_on_both_ranks(self):
+        for knob, var in self.OWNERS.items():
+            for value, want in (("1", [f"{var}=1"]), ("0", [])):
+                with self.subTest(knob=knob, value=value):
+                    head = self.run_sh(**{**self.V15, knob: value})
+                    self.assertAccepted(head)
+                    self.assertEqual(self.switch_env(head.stdout), want)
+                    words = shell_words(worker_command(head.stdout))
+                    self.assertIn(f"{knob}={value}", words)
+                    env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "VALIDATE_ONLY": "1",
+                           **dict(w.split("=", 1) for w in words[1:-2])}
+                    worker = subprocess.run(["bash", str(RUN_SH)], env=env, capture_output=True, text=True, timeout=60)
+                    self.assertAccepted(worker)
+                    self.assertEqual(self.switch_env(worker.stdout), want)
+
+    def test_values_other_than_0_or_1_refused(self):
+        for knob in self.OWNERS:
+            for bad in ("2", "yes", "01"):
+                with self.subTest(knob=knob, bad=bad):
+                    self.assertRefused(self.run_sh(**{**self.V15, knob: bad}), f"{knob}={bad}: want exactly 0 or 1")
+
+    def test_empty_means_the_default(self):
+        default = self.run_sh(IMAGE="glm53-sm121-v15")
+        self.assertAccepted(default)
+        for knob in self.OWNERS:
+            with self.subTest(knob=knob):
+                self.assertEqual(self.run_sh(IMAGE="glm53-sm121-v15", **{knob: ""}).stdout, default.stdout)
+
+    def test_v15_knobs_need_a_v15_image(self):
+        for knob in self.V15_ONLY:
+            on = {**self.V15, knob: "1", "DECODE_FIXES": "0"}
+            with self.subTest(knob=knob):
+                for image in ("glm53-sm121-v13", "glm53-sm121-v14"):
+                    self.assertRefused(self.run_sh(**{**on, "IMAGE": image}), f"{knob}=1 needs a glm53-sm121-v15 image")
+                forced = self.run_sh(**{**on, "IMAGE": "glm53-sm121-v14", "FORCE_UNSAFE_IMAGE": "1"})
+                self.assertAccepted(forced)
+                self.assertEqual(self.switch_env(forced.stdout), [f"{self.OWNERS[knob]}=1"])
+                for image in ("glm53-sm121-v15", "glm53-sm121-v15-rc1"):
+                    self.assertAccepted(self.run_sh(**{**on, "IMAGE": image}))
+
+    def test_kda_trim_needs_a_v13_image(self):
+        on = {**V13Knobs.V11_ROLLBACK, **{knob: "0" for knob in self.OWNERS}, "KDA_TRIM": "1"}
+        self.assertRefused(self.run_sh(**on), "KDA_TRIM=1 needs a glm53-sm121-v13 image")
+        self.assertAccepted(self.run_sh(**on, FORCE_UNSAFE_IMAGE="1"))
+        for image in ("glm53-sm121-v13", "glm53-sm121-v14", "glm53-sm121-v15"):
+            with self.subTest(image=image):
+                proc = self.run_sh(**{**on, "IMAGE": image})
+                self.assertAccepted(proc)
+                self.assertEqual(self.switch_env(proc.stdout), ["GLM53_KDA_TRIM=1"])
+
+    def test_extra_env_cannot_set_a_switch_variable(self):
+        for knob, var in self.OWNERS.items():
+            with self.subTest(var=var):
+                self.assertRefused(self.run_sh(**self.V15, EXTRA_ENV=f"MAX_JOBS=2 {var}=1"),
+                                   f"EXTRA_ENV sets {var}, which run.sh sets from {knob} on both ranks. Set {knob} instead")
+        self.assertAccepted(self.run_sh(**self.V15, EXTRA_ENV="GLM53_LATE_MLA_PLAN=1"))
+
+    def test_kda_recover_needs_dflash2(self):
+        mtp = {**self.V15, "SPEC": "mtp", "ADAPTIVE_VERIFY": "0", **LIBERTAI}
+        self.assertRefused(self.run_sh(**{**mtp, "KDA_RECOVER": "1"}), "KDA_RECOVER=1 needs SPEC=dflash2")
+        self.assertAccepted(self.run_sh(**mtp))
+
+    def test_variables_are_the_ones_the_image_reads(self):
+        src = "".join(p.read_text() for p in (REPO / "docker").glob("patch_*.py"))
+        for var in self.OWNERS.values():
+            with self.subTest(var=var):
+                self.assertRegex(src, rf'os\.environ\.get\(\\?"{var}\\?"\) == \\?"1\\?"')
+
+
 class StubbedLaunch(RunShCase):
     """The real launch path (no VALIDATE_ONLY) with docker, sudo and curl stubbed.
 

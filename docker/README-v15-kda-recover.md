@@ -21,7 +21,7 @@ RUN touch /tmp/v15kr.stamp \
     && rm /tmp/v15kr.stamp
 ```
 
-`run.sh` has no knob for it yet. Set it per boot with `EXTRA_ENV='GLM53_KDA_RECOVER=1'`, as AGENTS.md says for GLM53_* switches that are not recipe knobs.
+`run.sh` sets it from the `KDA_RECOVER` recipe knob (`0` / `1`, off by default), which needs a `glm53-sm121-v15*` image and `SPEC=dflash2`. Set it per boot with `KDA_RECOVER=1`; `run.sh` refuses `GLM53_KDA_RECOVER` in `EXTRA_ENV`.
 
 ## Mechanism
 
@@ -104,7 +104,7 @@ The interpreter proves the index plumbing and the replay semantics. It does not 
 ## Live checks (spark1 and the pair)
 
 1. Inside the image on spark1, with no serve up: `docker run --rm --gpus all --entrypoint python3 -v "$PWD":/work -w /work glm53-sm121-v15 docker/gpu_check_v15_kda_recover.py`. It must print `ALL BITWISE EQUAL`. It also prints the per-step timing of both paths over 34 layers at c=1 and c=2.
-2. Do a plain v15 boot, then a v15 boot with `EXTRA_ENV='GLM53_KDA_RECOVER=1'`. On `bench_decode.py` cells A and H, the greedy outputs must be byte-identical prompt for prompt, with identical acceptance and a lower step time. Repeat for the multi-boot means the README table needs before changing `measured`.
+2. Do a plain v15 boot, then a v15 boot with `KDA_RECOVER=1`. On `bench_decode.py` cells A and H, the greedy outputs must be byte-identical prompt for prompt, with identical acceptance and a lower step time. Repeat for the multi-boot means the README table needs before changing `measured`.
 3. Prefix cache: send one prompt longer than 1152 tokens twice (the second is a cache hit) with the switch on. The greedy output must match the switch-off boot.
 4. Run the thinking-off smoke and the 200-integer greedy count. Read `free -h` MemAvailable after ready on both nodes and compare with the switch-off boot.
 5. Profile one prose step. The `kda` bucket should fall and no new idle should appear before the drafter.

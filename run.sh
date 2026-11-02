@@ -106,12 +106,26 @@ KPOOL_TAIL_FIX="${KPOOL_TAIL_FIX:-1}"
 # A +4.2%, H +4.9%, B +3.3%. r2 B7 at 0.5: A -0.5%, B -0.9% (plateau).
 ADAPTIVE_VERIFY="${ADAPTIVE_VERIFY:-1}"
 ADAPTIVE_VERIFY_TAU="${ADAPTIVE_VERIFY_TAU:-0.4}"
+# 1: fused_recurrent_kda reads token-strided q/k/v/beta instead of copying them
+# (GLM53_KDA_TRIM). Bit-exact.
+KDA_TRIM="${KDA_TRIM:-0}"
 # v14 switches (docker/README-v14.md), need a glm53-sm121-v14 image.
 # DECODE_FIXES=1: GLM53_ROUTER_DEDUPE=1 (skip the model-side MoE router GEMM the
 # runner recomputes) and GLM53_HEADGATE_MM=1 (indexer head-gate as one bf16 GEMM
 # with fp32 output instead of an fp32 gemv). 0 runs v13's code. The image's
 # GLM53_LATE_MLA_PLAN measured no gain (r2 B6); set it through EXTRA_ENV.
 DECODE_FIXES="${DECODE_FIXES:-1}"
+# v15 switches (docker/README-v15.md), need a glm53-sm121-v15 image. Each 1 sets
+# its GLM53_* variable on both ranks (switch_knobs below).
+# KDA_RECOVER=1: the DFlash2 verify stores no per-token KDA state; a replay after
+# sampling stores the columns later steps read (docker/README-v15-kda-recover.md).
+KDA_RECOVER="${KDA_RECOVER:-0}"
+# MLA_PLAN_NOSYNC=1: the sparse-MLA plan without its D2H sync (vLLM #58684).
+MLA_PLAN_NOSYNC="${MLA_PLAN_NOSYNC:-0}"
+# PREFIX_CACHE_DFLASH=1: prefix-cache hits with DFlash2 (vLLM #54163, #55601).
+PREFIX_CACHE_DFLASH="${PREFIX_CACHE_DFLASH:-0}"
+# VIDEO_FRAMES_FIX=1: video placeholder count equals the encoder's (vLLM #55647).
+VIDEO_FRAMES_FIX="${VIDEO_FRAMES_FIX:-0}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -255,6 +269,10 @@ if [[ "$ADAPTIVE_VERIFY" == 1 && "$SPEC" != dflash2 ]]; then
   echo "ADAPTIVE_VERIFY=1 needs SPEC=dflash2: the verify width comes from the DFlash2 drafter's selector scores (docker/README-v13.md). Set ADAPTIVE_VERIFY=0 with SPEC=$SPEC." >&2
   exit 1
 fi
+if [[ "$KDA_RECOVER" == 1 && "$SPEC" != dflash2 ]]; then
+  echo "KDA_RECOVER=1 needs SPEC=dflash2: the replay commits the DFlash2 verify rows (docker/README-v15-kda-recover.md). Set KDA_RECOVER=0 with SPEC=$SPEC." >&2
+  exit 1
+fi
 # GLM53_* env for both ranks, from the knobs above.
 glm53_env=()
 if [[ "$DRAFT_WEIGHTS" == nvfp4 ]]; then glm53_env+=(GLM53_NVFP4_W4A16=draft); fi
@@ -277,6 +295,31 @@ if [[ "$DECODE_FIXES" == 1 ]]; then
   fi
   glm53_env+=(GLM53_ROUTER_DEDUPE=1 GLM53_HEADGATE_MM=1)
 fi
+# On/off switches, one row each: the knob, the GLM53_* variable it owns, and the
+# image layer that added it (an image reads its own layer's switches and every
+# earlier layer's). The EXTRA_ENV check below refuses these variables too.
+switch_knobs=(
+  "KDA_TRIM GLM53_KDA_TRIM 13"
+  "KDA_RECOVER GLM53_KDA_RECOVER 15"
+  "MLA_PLAN_NOSYNC GLM53_MLA_PLAN_NOSYNC 15"
+  "PREFIX_CACHE_DFLASH GLM53_PREFIX_CACHE_DFLASH 15"
+  "VIDEO_FRAMES_FIX GLM53_VIDEO_FRAMES_FIX 15"
+)
+image_layer=0
+if [[ "$IMAGE" =~ ^glm53-sm121-v([0-9]+) ]]; then image_layer="${BASH_REMATCH[1]}"; fi
+for row in "${switch_knobs[@]}"; do
+  read -r knob var layer <<<"$row"
+  if [[ "${!knob}" != 0 && "${!knob}" != 1 ]]; then
+    echo "$knob=${!knob}: want exactly 0 or 1." >&2
+    exit 1
+  fi
+  [[ "${!knob}" == 1 ]] || continue
+  if (( image_layer < layer )) && [[ "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+    echo "$knob=1 needs a glm53-sm121-v$layer image (docker/README-v$layer.md); IMAGE=$IMAGE would ignore it. Build v$layer, or set $knob=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+    exit 1
+  fi
+  glm53_env+=("$var=1")
+done
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 ORCHESTRATE="${ORCHESTRATE:-auto}"
 # Extra vllm serve args, word-split on purpose (e.g. "--load-format dummy").
@@ -307,7 +350,13 @@ for pair in "${extra_env_pairs[@]}"; do
     GLM53_ADAPTIVE_VERIFY) knob=ADAPTIVE_VERIFY ;;
     GLM53_ADAPTIVE_VERIFY_TAU) knob=ADAPTIVE_VERIFY_TAU ;;
     GLM53_ROUTER_DEDUPE | GLM53_HEADGATE_MM) knob=DECODE_FIXES ;;
-    *) knob="" ;;
+    *)
+      knob=""
+      for row in "${switch_knobs[@]}"; do
+        read -r owner var _ <<<"$row"
+        if [[ "$name" == "$var" ]]; then knob="$owner"; fi
+      done
+      ;;
   esac
   if [[ -n "$knob" ]]; then
     echo "EXTRA_ENV sets $name, which run.sh sets from $knob on both ranks. Set $knob instead, so one setting owns $name." >&2
@@ -629,7 +678,8 @@ FORWARD_ENVS=(
   LANGUAGE_MODEL_ONLY MM_PROCESSOR_CACHE_GB MAX_NEW_TOKENS VLLM_USE_BREAKABLE_CUDAGRAPH CHAT_TEMPLATE
   KV_CACHE_MEMORY BLOCK_SIZE HF_CACHE SNAPSHOT_REV MOE_BACKEND LINEAR_BACKEND REASONING_PARSER
   DRAFT_MODEL DRAFT_REV SPEC JIT_CACHE JIT_CACHE_DIR
-  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU DECODE_FIXES
+  DRAFT_WEIGHTS TARGET_WEIGHT_GROUPS_INT8 PREFILL_DEQUANT_MIN_M KPOOL_TAIL_FIX ADAPTIVE_VERIFY ADAPTIVE_VERIFY_TAU KDA_TRIM DECODE_FIXES
+  KDA_RECOVER MLA_PLAN_NOSYNC PREFIX_CACHE_DFLASH VIDEO_FRAMES_FIX
   SNAPSHOT SNAPSHOT_IN_CONTAINER LIMIT_MM_PER_PROMPT HF_HUB_DISABLE_XET SPEC_CONFIG ENFORCE_EAGER
   COMPILATION_CONFIG SKIP_DOWNLOAD EXTRA_ARGS EXTRA_ENV
 )
