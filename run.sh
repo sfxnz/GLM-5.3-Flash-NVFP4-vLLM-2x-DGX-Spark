@@ -5,7 +5,7 @@ set -euo pipefail
 # BEGIN generated from recipe.yaml — edit recipe.yaml and run kit/render.py
 MODEL="${MODEL:-nvidia/GLM-5.3-Flash-NVFP4}"
 SERVED_NAME="${SERVED_NAME:-$MODEL}"
-IMAGE="${IMAGE:-glm53-sm121-v14}"
+IMAGE="${IMAGE:-glm53-sm121-v15}"
 CONTAINER_NAME="${CONTAINER_NAME:-glm53-flash-nvfp4}"
 PORT="${PORT:-8000}"
 MASTER_PORT="${MASTER_PORT:-29521}"
@@ -79,7 +79,8 @@ JIT_CACHE="${JIT_CACHE:-1}"
 JIT_CACHE_DIR="${JIT_CACHE_DIR:-$HOME/projects/data/glm53-jit-cache}"
 # v13 switches (docker/README-v13.md). Each one that is on becomes GLM53_* env on
 # both ranks, and needs a glm53-sm121-v13 image. Off adds nothing. v11 rollback:
-# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+# IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0
+# DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0.
 # DRAFT_WEIGHTS: bf16, or nvfp4 for the DFlash2 drafter's linears in NVFP4 W4A16
 # (GLM53_NVFP4_W4A16=draft). E2e: the target is untouched, step A -4 ms, Tier 1
 # 856 vs 857 of 1010.
@@ -119,13 +120,13 @@ DECODE_FIXES="${DECODE_FIXES:-1}"
 # its GLM53_* variable on both ranks (switch_knobs below).
 # KDA_RECOVER=1: the DFlash2 verify stores no per-token KDA state; a replay after
 # sampling stores the columns later steps read (docker/README-v15-kda-recover.md).
-KDA_RECOVER="${KDA_RECOVER:-0}"
+KDA_RECOVER="${KDA_RECOVER:-1}"
 # MLA_PLAN_NOSYNC=1: the sparse-MLA plan without its D2H sync (vLLM #58684).
-MLA_PLAN_NOSYNC="${MLA_PLAN_NOSYNC:-0}"
+MLA_PLAN_NOSYNC="${MLA_PLAN_NOSYNC:-1}"
 # PREFIX_CACHE_DFLASH=1: prefix-cache hits with DFlash2 (vLLM #54163, #55601).
-PREFIX_CACHE_DFLASH="${PREFIX_CACHE_DFLASH:-0}"
+PREFIX_CACHE_DFLASH="${PREFIX_CACHE_DFLASH:-1}"
 # VIDEO_FRAMES_FIX=1: video placeholder count equals the encoder's (vLLM #55647).
-VIDEO_FRAMES_FIX="${VIDEO_FRAMES_FIX:-0}"
+VIDEO_FRAMES_FIX="${VIDEO_FRAMES_FIX:-1}"
 # END generated
 hub_slug="models--${MODEL//\//--}"
 SNAPSHOT="${SNAPSHOT:-${HF_CACHE}/hub/${hub_slug}/snapshots/${SNAPSHOT_REV}}"
@@ -197,7 +198,7 @@ if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
-  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 (about 6.9 GiB per rank), which does not fit beside the routed experts on a 2x Spark. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
+  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 (about 6.9 GiB per rank), which does not fit beside the routed experts on a 2x Spark. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 KDA_RECOVER=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
@@ -285,7 +286,7 @@ if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM5
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
 # v14 is v13 plus its own layer, so it reads every v13 switch.
 if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$IMAGE" != glm53-sm121-v15* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
-  echo "IMAGE=$IMAGE is not a glm53-sm121-v13, v14 or v15 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13, v14 or v15 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
 fi
 if [[ "$DECODE_FIXES" == 1 ]]; then

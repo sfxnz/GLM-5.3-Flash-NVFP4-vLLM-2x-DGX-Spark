@@ -114,10 +114,10 @@ v14 adds one more Python-only layer on top of v13 (`patch_v14_decode.py`, [`dock
 
 [incoai/GLM-5.3-Flash-DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) is a 1B block-diffusion draft model that predicts a whole block per pass. Upstream reports it beating GLM's native MTP on acceptance length across every task they measured. Decoding is lossless; our greedy outputs matched MTP's byte for byte.
 
-DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well, and `ADAPTIVE_VERIFY=0`, because adaptive verify reads DFlash2's selector scores:
+DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the LibertAI pack as well, plus `ADAPTIVE_VERIFY=0` and `KDA_RECOVER=0`, because adaptive verify reads DFlash2's selector scores and the KDA replay commits DFlash2's verify rows:
 
 ```bash
-MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 ./run.sh
+MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 KDA_RECOVER=0 ./run.sh
 ```
 
 `run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16, about 6.9 GiB per rank, which does not fit. `1d00738` (like `da920bb`) lists layer 45 in its quant ignore lists, so the old load failure is gone; the memory reason stands. LibertAI's MTP experts are NVFP4.
@@ -186,7 +186,7 @@ Stop both ranks from the head:
 <!-- BEGIN generated defaults from recipe.yaml — edit recipe.yaml and run kit/render.py -->
 | Setting | Value |
 |---|---|
-| Image | `glm53-sm121-v14` (local; chain v8 → v9 → v10 → v11 → v13 → v14, see Build the image for the rollbacks) |
+| Image | `glm53-sm121-v15` (local; chain v8 → v9 → v10 → v11 → v13 → v14, see Build the image for the rollbacks) |
 | Model | `nvidia/GLM-5.3-Flash-NVFP4` (served under `SERVED_NAME`, which defaults to `$MODEL`) |
 | `--tensor-parallel-size` / `--nnodes` | 2 / 2 |
 | `--max-model-len` | 327680 |
@@ -203,7 +203,7 @@ Stop both ranks from the head:
 | Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag) |
 | `--block-size` | 2304 |
 | CUDA graphs | on, capture ladder 1/2/4 + (7+1) x 1..2 (`ENFORCE_EAGER=1` reverts to `--enforce-eager`) |
-| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`) |
+| Speculative | DFlash2-7 (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0 KDA_RECOVER=0`) |
 | Draft | `incoai/GLM-5.3-Flash-DFlash2` @ `7d74cdd881ed7e32c31175984a67823127b66cfe` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter) |
 | Drafter weights | `DRAFT_WEIGHTS=nvfp4`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off |
 | Target INT8 | `TARGET_WEIGHT_GROUPS_INT8="shared,mla,kda_o,kda_in,lm_head"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. `none` keeps them BF16 (an empty value falls back to the default). FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010 |
@@ -211,7 +211,7 @@ Stop both ranks from the head:
 | Indexer tail ring | `KPOOL_TAIL_FIX=1` (`GLM53_KPOOL_TAIL_FIX`): a per-request DSA indexer tail ring sized for the verify window, so rejected drafts and the other request no longer write committed pool keys (this matters above 2048 tokens). E3a: needles 3/3 at 8k, 32k and 128k; decode-built pools match prefill within the prefill A/A; step time within noise. `0` keeps v11's ring |
 | Adaptive verify | `ADAPTIVE_VERIFY=1`, `ADAPTIVE_VERIFY_TAU=0.4` (`GLM53_ADAPTIVE_VERIFY`, `_TAU`): verify only the leading drafts whose running DFlash2 confidence stays at or above tau, at fixed shapes (lossless). E3b vs E3a (tau 0.2): prose A +14.9%, H +20.0%, code B +5.3%, thinking T +10.1%, structured J flat; Tier 0 nll and greedy at the A/A. E4b tau 0.3 vs 0.2: A +5.2%, H +8.0%, B +4.3%, T +2.1%. r2 B5 tau 0.4 vs 0.3: A +4.2%, H +4.9%, B +3.3%; r2 B7 tau 0.5 plateaued (A -0.5%, B -0.9%). Needs `SPEC=dflash2`; `0` turns it off |
 | Decode fixes | `DECODE_FIXES=1` (v14, `docker/README-v14.md`): `GLM53_ROUTER_DEDUPE=1` skips the model-side MoE router GEMM that the MoE runner recomputes and overwrites (42 GEMMs per step, exact), and `GLM53_HEADGATE_MM=1` runs the DSA indexer head-gate as one bf16 GEMM with fp32 output instead of an fp32 gemv (same products, fp32 accumulation; M=8 41 → 21 µs, M=4608 1135 → 166 µs). r2 B4: step A 73.5 → 72.8 ms, inside single-boot noise. `0` runs v13's code and is required on a v13 image |
-| v15 switches | each `0` / `1`, off until its boot passes; `1` sets its variable on both ranks. `KDA_TRIM=0` (v13, `GLM53_KDA_TRIM`, `docker/README-v13.md`): `fused_recurrent_kda` reads token-strided q/k/v/beta instead of copying them, bit-exact. The other four need a `glm53-sm121-v15` image (`docker/README-v15.md`). `KDA_RECOVER=0` (`GLM53_KDA_RECOVER`, `docker/README-v15-kda-recover.md`): the DFlash2 verify stores no per-token fp32 KDA state, and a replay after sampling stores only the columns later steps read; needs `SPEC=dflash2`. `MLA_PLAN_NOSYNC=0` (`GLM53_MLA_PLAN_NOSYNC`, vLLM #58684): the sparse-MLA plan drops its D2H sync per verify step. `PREFIX_CACHE_DFLASH=0` (`GLM53_PREFIX_CACHE_DFLASH`, vLLM #54163 and #55601): prefix-cache hits with DFlash2 in 4608-token units; it supersedes v13's `GLM53_DFLASH_PREFIX_CACHE_FIX`. `VIDEO_FRAMES_FIX=0` (`GLM53_VIDEO_FRAMES_FIX`, vLLM #55647): video placeholder timestamps come from the pixel path's own sampler, one per temporal patch, so their count equals `grid_t` |
+| v15 switches | each `0` / `1`, off until its boot passes; `1` sets its variable on both ranks. `KDA_TRIM=0` (v13, `GLM53_KDA_TRIM`, `docker/README-v13.md`): `fused_recurrent_kda` reads token-strided q/k/v/beta instead of copying them, bit-exact. The other four need a `glm53-sm121-v15` image (`docker/README-v15.md`). `KDA_RECOVER=1` (`GLM53_KDA_RECOVER`, `docker/README-v15-kda-recover.md`): the DFlash2 verify stores no per-token fp32 KDA state, and a replay after sampling stores only the columns later steps read; needs `SPEC=dflash2`. `MLA_PLAN_NOSYNC=1` (`GLM53_MLA_PLAN_NOSYNC`, vLLM #58684): the sparse-MLA plan drops its D2H sync per verify step. `PREFIX_CACHE_DFLASH=1` (`GLM53_PREFIX_CACHE_DFLASH`, vLLM #54163 and #55601): prefix-cache hits with DFlash2 in 4608-token units; it supersedes v13's `GLM53_DFLASH_PREFIX_CACHE_FIX`. `VIDEO_FRAMES_FIX=1` (`GLM53_VIDEO_FRAMES_FIX`, vLLM #55647): video placeholder timestamps come from the pixel path's own sampler, one per temporal patch, so their count equals `grid_t` |
 | Chat template | `chat_template.jinja` (honors `enable_thinking` and its `thinking` alias, the glm45 parser's rule) |
 | JIT / compile cache | on (`JIT_CACHE=1`), `$HOME/projects/data/glm53-jit-cache/<image id>/` per node, mounted at `/jit-cache`; `JIT_CACHE=0` disables |
 | Reasoning / tools | `glm45` / `glm47` |

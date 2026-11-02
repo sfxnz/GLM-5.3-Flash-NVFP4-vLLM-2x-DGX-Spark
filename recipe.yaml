@@ -19,8 +19,8 @@ model:
 image:
   base: vllm/vllm-openai:glm53-flash-arm64-cu130
   digest: null
-  local_tag: &image glm53-sm121-v14
-  build: docker/Dockerfile.sm121-v8 -> v9 -> v10 -> v11 -> v13 -> v14
+  local_tag: &image glm53-sm121-v15
+  build: docker/Dockerfile.sm121-v8 -> v9 -> v10 -> v11 -> v13 -> v14 -> v15
 
 engine:
   name: vllm
@@ -76,21 +76,21 @@ serve:
     JIT_CACHE: 1
     JIT_CACHE_DIR: $HOME/projects/data/glm53-jit-cache
     # v13 switches (docker/README-v13.md). run.sh turns them into GLM53_* env on both ranks.
-    # v11 rollback: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0.
+    # v11 rollback: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0 KDA_RECOVER=0 MLA_PLAN_NOSYNC=0 PREFIX_CACHE_DFLASH=0 VIDEO_FRAMES_FIX=0.
     DRAFT_WEIGHTS: nvfp4                 # E2e
     TARGET_WEIGHT_GROUPS_INT8: shared,mla,kda_o,kda_in,lm_head  # E4a
     PREFILL_DEQUANT_MIN_M: 512           # r2 B3 (E6 reverted it at 1152-row chunks)
     KPOOL_TAIL_FIX: 1                    # E3a
     ADAPTIVE_VERIFY: 1                   # E3b
     ADAPTIVE_VERIFY_TAU: 0.4             # r2 B5 (E4b 0.3; r2 B7 0.5 plateaus)
-    KDA_TRIM: 0                          # docker/README-v13.md
+    KDA_TRIM: 0                          # docker/README-v13.md (r3 KT: -0.19 ms, inside noise)
     # v14 switches (docker/README-v14.md), need a glm53-sm121-v14 image.
     DECODE_FIXES: 1                      # r2 B4
     # v15 switches, need a glm53-sm121-v15 image. Each is off until its boot passes.
-    KDA_RECOVER: 0                       # docker/README-v15-kda-recover.md (needs SPEC=dflash2)
-    MLA_PLAN_NOSYNC: 0                   # docker/README-v15.md
-    PREFIX_CACHE_DFLASH: 0               # docker/README-v15.md
-    VIDEO_FRAMES_FIX: 0                  # docker/README-v15.md
+    KDA_RECOVER: 1                       # docker/README-v15-kda-recover.md (needs SPEC=dflash2); r3 KR
+    MLA_PLAN_NOSYNC: 1                   # docker/README-v15.md; r3 NS
+    PREFIX_CACHE_DFLASH: 1               # docker/README-v15.md; r3 PV
+    VIDEO_FRAMES_FIX: 1                  # docker/README-v15.md; r3 PV
 
 readme:
   # Rows of the README "Defaults" table. {NAME} is replaced by serve.env.NAME.
@@ -112,7 +112,7 @@ readme:
     - Output ceiling: "`--override-generation-config '{\"max_new_tokens\": {MAX_NEW_TOKENS}}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag)"
     - "`--block-size`": "{BLOCK_SIZE}"
     - CUDA graphs: "on, capture ladder 1/2/4 + ({NUM_SPECULATIVE_TOKENS}+1) x 1..{MAX_NUM_SEQS} (`ENFORCE_EAGER=1` reverts to `--enforce-eager`)"
-    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0`)"
+    - Speculative: "DFlash2-{NUM_SPECULATIVE_TOKENS} (`NUM_SPECULATIVE_TOKENS=5 MAX_NUM_SEQS=4` for four-way; MTP-4 rollback is the LibertAI pack plus `SPEC=mtp ADAPTIVE_VERIFY=0 KDA_RECOVER=0`)"
     - Draft: "`{DRAFT_MODEL}` @ `{DRAFT_REV}` (`DRAFT_REV=<full sha>` overrides; see DFlash2 drafter)"
     - Drafter weights: "`DRAFT_WEIGHTS={DRAFT_WEIGHTS}`: the DFlash2 linears in NVFP4 W4A16 (`GLM53_NVFP4_W4A16=draft`). The target verifies every draft, so output is unchanged. E2e: step A −4 ms, Tier 0 nll and greedy at the A/A, Tier 1 856 vs 857 of 1010. `bf16` turns it off"
     - Target INT8: "`TARGET_WEIGHT_GROUPS_INT8=\"{TARGET_WEIGHT_GROUPS_INT8}\"`: comma list of target groups (`shared`, `mla`, `kda_o`, `kda_in`, `lm_head`) in INT8 W8A16 (`GLM53_INT8_W8A16`); `draft` is refused. `none` keeps them BF16 (an empty value falls back to the default). FP8 and NVFP4 on target groups failed Tier 0 on KL (E2a-E2d). INT8 g128 on all five (E4a vs E3b): step A −17 ms, prose A +24.9%, code B +21.1%, structured J +17.6%; Tier 0 at the cross-boot A/A; Tier 1 863 vs 857 of 1010"
