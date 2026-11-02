@@ -266,12 +266,12 @@ if [[ "$KPOOL_TAIL_FIX" == 1 ]]; then glm53_env+=(GLM53_KPOOL_TAIL_FIX=1); fi
 if [[ "$ADAPTIVE_VERIFY" == 1 ]]; then glm53_env+=(GLM53_ADAPTIVE_VERIFY=1 "GLM53_ADAPTIVE_VERIFY_TAU=$ADAPTIVE_VERIFY_TAU"); fi
 # Older images do not read GLM53_*, so a switch there would silently do nothing.
 # v14 is v13 plus its own layer, so it reads every v13 switch.
-if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
-  echo "IMAGE=$IMAGE is not a glm53-sm121-v13 or v14 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
+if (( ${#glm53_env[@]} > 0 )) && [[ "$IMAGE" != glm53-sm121-v13* && "$IMAGE" != glm53-sm121-v14* && "$IMAGE" != glm53-sm121-v15* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  echo "IMAGE=$IMAGE is not a glm53-sm121-v13, v14 or v15 image and would ignore ${glm53_env[*]}. The v11 rollback turns the switches off: IMAGE=glm53-sm121-v11 DRAFT_WEIGHTS=bf16 TARGET_WEIGHT_GROUPS_INT8=none PREFILL_DEQUANT_MIN_M=0 KPOOL_TAIL_FIX=0 ADAPTIVE_VERIFY=0 DECODE_FIXES=0. FORCE_UNSAFE_IMAGE=1 overrides." >&2
   exit 1
 fi
 if [[ "$DECODE_FIXES" == 1 ]]; then
-  if [[ "$IMAGE" != glm53-sm121-v14* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
+  if [[ "$IMAGE" != glm53-sm121-v14* && "$IMAGE" != glm53-sm121-v15* && "$FORCE_UNSAFE_IMAGE" != 1 ]]; then
     echo "DECODE_FIXES=1 needs a glm53-sm121-v14 image (docker/README-v14.md); IMAGE=$IMAGE would ignore it. Build v14, or set DECODE_FIXES=0 for a v13 image. FORCE_UNSAFE_IMAGE=1 overrides." >&2
     exit 1
   fi

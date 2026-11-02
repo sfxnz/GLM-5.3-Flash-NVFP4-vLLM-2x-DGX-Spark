@@ -275,10 +275,11 @@ class V13Knobs(RunShCase):
                 continue  # only read when ADAPTIVE_VERIFY=1
             with self.subTest(name=name):
                 env = {**self.V11_ROLLBACK, name: value}
-                self.assertRefused(self.run_sh(**env), "is not a glm53-sm121-v13 or v14 image")
+                self.assertRefused(self.run_sh(**env), "is not a glm53-sm121-v13, v14 or v15 image")
                 self.assertAccepted(self.run_sh(**env, FORCE_UNSAFE_IMAGE="1"))
                 self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v13-rc1"}))
                 self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v14"}))
+                self.assertAccepted(self.run_sh(**{**env, "IMAGE": "glm53-sm121-v15"}))
 
     def test_bad_values_refused(self):
         cases = [("DRAFT_WEIGHTS", "fp8", "want bf16 or nvfp4"), ("DRAFT_WEIGHTS", "NVFP4", "want bf16 or nvfp4"),
