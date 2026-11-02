@@ -120,7 +120,7 @@ DFlash2 is the default drafter (`SPEC=dflash2`). The MTP-4 rollback needs the Li
 MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0 ./run.sh
 ```
 
-`run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16 that are not in the quant ignore list, so they cannot load (NVFP4 params expected) or fit (~6.9 GiB per rank). LibertAI's MTP experts are NVFP4.
+`run.sh` refuses `SPEC=mtp` on the nvidia pack unless `FORCE_UNSAFE_SPEC=1`. Its layer-45 MTP weights are 13.84 GiB of BF16, about 6.9 GiB per rank, which does not fit. `1d00738` (like `da920bb`) lists layer 45 in its quant ignore lists, so the old load failure is gone; the memory reason stands. LibertAI's MTP experts are NVFP4.
 
 `run.sh` downloads the draft weights (~2.2 GiB) at the pinned `DRAFT_REV` (a full commit sha, see Defaults) and passes `{"method":"dflash","model":<draft>,"num_speculative_tokens":$NUM_SPECULATIVE_TOKENS}` to both ranks. Default is 7. CUDA graph sizes are derived as 1/2/4 plus `(num_spec+1)×{1..MAX_NUM_SEQS}`. `DRAFT_REV` sets both the host and container snapshot paths, and the head forwards it to the worker. Two newer revisions have the same `config.json` as the pin, so they are weights-only updates: `bf582e4eacc1810f76656d1811693ff6c6737d2a` (2026-08-31) and `dc77ff1c99eeb2df044ee3d4f0094eb033fee410` (2026-08-28). E1b ran `bf582e4` against the pin: paired per-prompt acceptance moved A −1.0% [−3.9, +1.5] and B +1.7% [−2.0, +5.9], so the default stays on `7d74cdd` ([`evidence/e1b-v13-warmcache-draft-bf582e4/notes.txt`](evidence/e1b-v13-warmcache-draft-bf582e4/notes.txt)). `DRAFT_REV=bf582e4eacc1810f76656d1811693ff6c6737d2a ./run.sh` picks it.
 
@@ -197,7 +197,7 @@ Stop both ranks from the head:
 | `--kv-cache-memory` | `4445787956` (4.14 GiB) |
 | `--moe-backend` | `marlin`, routed experts only (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2) |
 | `--linear-backend` | `marlin`, dense quantized linears (the nvidia pack's layer 0-2 MLP is NVFP4; `run.sh` refuses other values, whose NVFP4 GEMMs JIT on sm_121) |
-| Checkpoint | `09b04e5e74bca08ca8549fc736d4cdd8624bfde3` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back) |
+| Checkpoint | `1d00738646cbb0c6d0a9eb403dac5f366f1473a7` (official NVIDIA ModelOpt 0.47.0, the 2026-10-28 routed-expert re-export; the earlier `09b04e5` export had an uncalibrated `weight_scale_2` on about a third of the experts and reasoned longer. r3 X1, thinking-on subset of 100: 85 vs 82 correct, completion tokens -7.7%. `SNAPSHOT_REV=09b04e5e74bca08ca8549fc736d4cdd8624bfde3` rolls back the weights; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back the pack) |
 | Vision | on (`LANGUAGE_MODEL_ONLY=0`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`) |
 | `--mm-processor-cache-gb` | 1 (vLLM default is 4; caps processed image/video tensors cached in the head's EngineCore on UMA) |
 | Output ceiling | `--override-generation-config '{"max_new_tokens": 65536}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag) |

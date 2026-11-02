@@ -5,7 +5,7 @@
 
 model:
   id: &model nvidia/GLM-5.3-Flash-NVFP4
-  revision: &revision 09b04e5e74bca08ca8549fc736d4cdd8624bfde3
+  revision: &revision 1d00738646cbb0c6d0a9eb403dac5f366f1473a7
   served_name: *model
   family: GLM-5.3-Flash
   params: 320B total / 18B active
@@ -100,7 +100,7 @@ readme:
     - "`--kv-cache-memory`": "`{KV_CACHE_MEMORY}` (4.14 GiB)"
     - "`--moe-backend`": "`{MOE_BACKEND}`, routed experts only (`run.sh` refuses `flashinfer_cutlass`; it OOM'd spark2)"
     - "`--linear-backend`": "`{LINEAR_BACKEND}`, dense quantized linears (the nvidia pack's layer 0-2 MLP is NVFP4; `run.sh` refuses other values, whose NVFP4 GEMMs JIT on sm_121)"
-    - Checkpoint: "`{SNAPSHOT_REV}` (official NVIDIA ModelOpt 0.47.0; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back)"
+    - Checkpoint: "`{SNAPSHOT_REV}` (official NVIDIA ModelOpt 0.47.0, the 2026-10-28 routed-expert re-export; the earlier `09b04e5` export had an uncalibrated `weight_scale_2` on about a third of the experts and reasoned longer. r3 X1, thinking-on subset of 100: 85 vs 82 correct, completion tokens -7.7%. `SNAPSHOT_REV=09b04e5e74bca08ca8549fc736d4cdd8624bfde3` rolls back the weights; `MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177` rolls back the pack)"
     - Vision: "on (`LANGUAGE_MODEL_ONLY={LANGUAGE_MODEL_ONLY}`; the pack is `Glm5NextForConditionalGeneration` with `vision_config`)"
     - "`--mm-processor-cache-gb`": "{MM_PROCESSOR_CACHE_GB} (vLLM default is 4; caps processed image/video tensors cached in the head's EngineCore on UMA)"
     - Output ceiling: "`--override-generation-config '{\"max_new_tokens\": {MAX_NEW_TOKENS}}'` (clamps every request; `generation_config.json` T=1.0 / top_p 0.95 still apply; `MAX_NEW_TOKENS=0` drops the flag)"

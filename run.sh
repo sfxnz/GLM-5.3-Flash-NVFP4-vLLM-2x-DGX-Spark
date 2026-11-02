@@ -56,7 +56,7 @@ HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 HF_HOME_IN_CONTAINER="/cache/huggingface"
 # Official NVIDIA ModelOpt pin. LibertAI rollback is
 # MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177
-SNAPSHOT_REV="${SNAPSHOT_REV:-09b04e5e74bca08ca8549fc736d4cdd8624bfde3}"
+SNAPSHOT_REV="${SNAPSHOT_REV:-1d00738646cbb0c6d0a9eb403dac5f366f1473a7}"
 MOE_BACKEND="${MOE_BACKEND:-marlin}"
 # --moe-backend covers routed experts only. --linear-backend covers the dense
 # NVFP4 linears (nvidia pack layers 0-2 MLP); auto picks a JIT FP4 GEMM on sm_121.
@@ -183,7 +183,7 @@ if [[ ! "$MAX_NEW_TOKENS" =~ ^(0|[1-9][0-9]*)$ ]]; then
   exit 1
 fi
 if [[ "$SPEC" == mtp && "$MODEL" == nvidia/GLM-5.3-Flash-NVFP4 && "$FORCE_UNSAFE_SPEC" != 1 ]]; then
-  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 and not in the quant ignore list, so they cannot load or fit. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
+  echo "SPEC=mtp on $MODEL: its layer-45 MTP weights are 13.84 GiB BF16 (about 6.9 GiB per rank), which does not fit beside the routed experts on a 2x Spark. MTP rollback is the LibertAI pack: MODEL=LibertAIDAI/GLM-5.3-Flash-NVFP4 SNAPSHOT_REV=caca4e6a4ebbd66f159d3d2fc256683fd6e27177 SPEC=mtp ADAPTIVE_VERIFY=0. FORCE_UNSAFE_SPEC=1 overrides." >&2
   exit 1
 fi
 if [[ "$LANGUAGE_MODEL_ONLY" != 0 && "$LANGUAGE_MODEL_ONLY" != 1 ]]; then
