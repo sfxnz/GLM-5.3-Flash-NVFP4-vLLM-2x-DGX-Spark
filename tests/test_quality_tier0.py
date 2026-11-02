@@ -125,6 +125,9 @@ class JudgeTests(unittest.TestCase):
         # E4: a superscript first cell used to raise ValueError instead of scoring the row as missing
         sup = table + "\n| ³ | 9 | 27 | 三 |"
         self.assertTrue(tier0.judge_utf8({"content": sup, "finish_reason": "stop"})["pass"])
+        # r3 B0: a corrupted table that ran past row 99 raised IndexError instead of failing
+        runaway = tier0.judge_utf8({"content": table + "\n| 120 | 14400 | 1728000 | 一百二十 |", "finish_reason": "length"})
+        self.assertEqual((runaway["pass"], runaway["complete"]), (False, False))
 
     def test_tool_item(self):
         item = {"id": "t", "expect": {"name": "f", "args": {"city": "Paris", "n": 2}}, "ignore": ["note"]}

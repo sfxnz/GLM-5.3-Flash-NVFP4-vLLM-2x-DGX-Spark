@@ -268,6 +268,8 @@ def judge_utf8(out: dict) -> dict:
             rows[int(cells[0])] = cells
     sq_err = cube_err = cn_err = 0
     for n, cells in rows.items():
+        if not 1 <= n <= 40:  # a runaway table's row 100 used to crash chinese_numeral; `complete` already fails it
+            continue
         sq_err += cells[1].replace(",", "") != str(n * n)
         cube_err += cells[2].replace(",", "") != str(n ** 3)
         cn_err += cells[3] != chinese_numeral(n)
