@@ -1,5 +1,9 @@
 [gMASK]<sop>
-{%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else 'max' -%}
+{#- Thinking off with no low/high effort renders Low, not Max: Max beside a closed think block corrupted dense numeric output (evidence/r3/b0 utf8 A/B). -#}
+{%- set _head_thinking = thinking if thinking is defined else none -%}
+{%- set _head_enable_thinking = enable_thinking if enable_thinking is defined else none -%}
+{%- set _head_thinking_on = (_head_thinking is none and _head_enable_thinking is none) or _head_thinking or _head_enable_thinking -%}
+{%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else ('max' if _head_thinking_on else 'low') -%}
 {%- if effective_reasoning_effort is not none -%}<|system|>Reasoning Effort: {{ effective_reasoning_effort | capitalize }}{%- endif -%}
 {%- set clear_thinking = clear_thinking if clear_thinking is defined else false -%}
 {%- if tools -%}

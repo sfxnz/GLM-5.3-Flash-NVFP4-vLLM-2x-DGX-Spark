@@ -19,8 +19,17 @@ LOCAL = REPO / "chat_template.jinja"
 HUB = Path(__file__).resolve().parent / "data" / "nvidia_hub_chat_template.jinja"
 GEN_START = "{%- if add_generation_prompt -%}\n"
 
-# The only documented difference from the Hub template: the generation prompt
-# closes an empty think block when thinking is off, using the parser's rule.
+# The two documented differences from the Hub template, both keyed on the parser's thinking rule: the
+# generation prompt closes an empty think block when thinking is off, and the system effort line then says
+# Low instead of Max unless low or high was requested (Max beside a closed think block corrupted tables).
+HUB_EFFORT_LINE = "{%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else 'max' -%}\n"
+LOCAL_EFFORT_LINES = (
+    "{#- Thinking off with no low/high effort renders Low, not Max: Max beside a closed think block corrupted dense numeric output (evidence/r3/b0 utf8 A/B). -#}\n"
+    "{%- set _head_thinking = thinking if thinking is defined else none -%}\n"
+    "{%- set _head_enable_thinking = enable_thinking if enable_thinking is defined else none -%}\n"
+    "{%- set _head_thinking_on = (_head_thinking is none and _head_enable_thinking is none) or _head_thinking or _head_enable_thinking -%}\n"
+    "{%- set effective_reasoning_effort = reasoning_effort if reasoning_effort is defined and reasoning_effort in ['low', 'high'] else ('max' if _head_thinking_on else 'low') -%}\n"
+)
 LOCAL_GEN_BLOCK = """{%- if add_generation_prompt -%}
     <|assistant|>
     {#- vLLM's glm45/glm47 parser: on when both kwargs are unset, else thinking or enable_thinking. -#}
@@ -83,8 +92,13 @@ class KwargMatrix(unittest.TestCase):
                 out = render(LOCAL, **kwargs)
                 want = "<|assistant|><think>" if parser_thinking(kwargs) else "<|assistant|><think></think>"
                 self.assertTrue(out.endswith(want), out[-60:])
-                label = {"low": "Low", "high": "High"}.get(effort, "Max")
+                label = {"low": "Low", "high": "High"}.get(effort, "Max" if parser_thinking(kwargs) else "Low")
                 self.assertTrue(out.startswith(f"[gMASK]<sop><|system|>Reasoning Effort: {label}"), out[:60])
+
+    def test_thinking_off_default_matches_clean_ab_arm(self):
+        # The r3 utf8 A/B's clean thinking-off arm sent enable_thinking false with reasoning_effort low.
+        self.assertEqual(render(LOCAL, enable_thinking=False), render(LOCAL, enable_thinking=False, reasoning_effort="low"))
+        self.assertEqual(render(LOCAL, enable_thinking=True), render(HUB, enable_thinking=True))
 
     def test_thinking_true_overrides_server_default(self):
         # Server default {"enable_thinking": false} merged with a request {"thinking": true}.
@@ -110,7 +124,9 @@ class HubParity(unittest.TestCase):
         self.assertEqual(hub.count(GEN_START), 1)
         local_head, local_tail = local.split(GEN_START)
         hub_head, hub_tail = hub.split(GEN_START)
-        self.assertEqual(local_head, hub_head, "chat_template.jinja drifted from the Hub template outside the generation prompt")
+        self.assertEqual(hub_head.count(HUB_EFFORT_LINE), 1)
+        self.assertEqual(local_head, hub_head.replace(HUB_EFFORT_LINE, LOCAL_EFFORT_LINES),
+                         "chat_template.jinja drifted from the Hub template outside the two documented differences")
         self.assertEqual(GEN_START + local_tail, LOCAL_GEN_BLOCK)
         self.assertEqual(GEN_START + hub_tail, HUB_GEN_BLOCK)
 
